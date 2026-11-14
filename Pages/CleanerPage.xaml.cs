@@ -440,7 +440,7 @@ public sealed partial class CleanerPage : Page
         int totalItems = results.Sum(item => item.DetectedCount);
         long totalSize = results.Where(item => item.IsSizeKnown).Sum(item => item.DetectedSizeBytes);
         string sizePart = totalSize > 0 ? $"，可释放约 {CleanerService.FormatSize(totalSize)}" : string.Empty;
-        return $"扫描完成：{categoriesWithFindings} 个类别发现可清理内容（共 {totalItems} 项{sizePart}）。可点击右侧“明细”预览，确认后点击“开始清理”。";
+        return $"扫描完成：{categoriesWithFindings} 个类别发现可清理内容（共 {totalItems} 项{sizePart}）。可点击“查看明细”预览，确认后点击“清理选中项”。";
     }
 
     private static string BuildCleanSummary(IReadOnlyList<CleanerItem> results)

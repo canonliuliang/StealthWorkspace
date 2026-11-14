@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Stealth: an offset aperture">
+  <rect x="64" y="64" width="896" height="896" rx="208" fill="#152622"/>
+  <g fill="#91E5CD">
+    <path d="M320 224H704Q752 224 752 272V368H416V480H272V272Q272 224 320 224Z"/>
+    <path d="M704 800H320Q272 800 272 752V656H608V544H752V752Q752 800 704 800Z"/>
+  </g>
+</svg>

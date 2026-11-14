@@ -345,11 +345,14 @@ public sealed partial class SettingsPage : Page
         SetBusy(true);
         try
         {
-            var verify = await Task.Run(() => VaultService.Instance.VerifyPassword(oldPassword));
+            using var verify = await VaultService.Instance.VerifyPasswordAsync(oldPassword);
             if (verify.Status != VaultUnlockStatus.Success || verify.IsDecoy)
             {
                 verify.ForgetKey();
-                ShowInfo("当前主密码不正确。", InfoBarSeverity.Error);
+                ShowInfo(verify.Status == VaultUnlockStatus.LockedOut
+                    ? $"尝试次数过多，请等待 {Math.Max(1, verify.RetryAfterSeconds)} 秒后重试。"
+                    : verify.Status == VaultUnlockStatus.Corrupted ? verify.Message : "当前主密码不正确。",
+                    verify.Status == VaultUnlockStatus.LockedOut ? InfoBarSeverity.Warning : InfoBarSeverity.Error);
                 return;
             }
             verify.ForgetKey();
@@ -525,6 +528,8 @@ public sealed partial class SettingsPage : Page
         SettingsInfoBar.Message = message;
         SettingsInfoBar.Severity = severity;
         UiMotion.Open(SettingsInfoBar);
+        DispatcherQueue.TryEnqueue(() => SettingsInfoBar.StartBringIntoView(
+            new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 }));
     }
 
     private void ShowProgress(string prefix, double value)

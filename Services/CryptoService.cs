@@ -249,6 +249,18 @@ public static class CryptoService
         byte[] masterKey,
         IProgress<double>? progress = null,
         CancellationToken cancellationToken = default)
+        => EncryptFileCore(sourceFilePath, destEncryptedPath, masterKey, progress, cancellationToken, null);
+
+    internal static byte[] EncryptFileWithDigest(string sourceFilePath, string destEncryptedPath, byte[] masterKey,
+        IProgress<double>? progress, CancellationToken cancellationToken)
+    {
+        using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        EncryptFileCore(sourceFilePath, destEncryptedPath, masterKey, progress, cancellationToken, digest);
+        return digest.GetHashAndReset();
+    }
+
+    private static void EncryptFileCore(string sourceFilePath, string destEncryptedPath, byte[] masterKey,
+        IProgress<double>? progress, CancellationToken cancellationToken, IncrementalHash? digest)
     {
         if (masterKey == null || masterKey.Length != KeySize) throw new ArgumentException("Invalid vault key.", nameof(masterKey));
 
@@ -288,6 +300,7 @@ public static class CryptoService
                 int toRead = (int)Math.Min(DefaultChunkSize, plainLength - processed);
                 int read = ReadAtLeast(input, plainBuffer, toRead);
                 if (read != toRead) throw new IOException("源文件在加密过程中被修改或截断。");
+                digest?.AppendData(plainBuffer, 0, read);
 
                 RandomNumberGenerator.Fill(nonce);
                 byte[] aad = BuildAad(MagicV2, plainLength, DefaultChunkSize, fileSalt, index, read);
@@ -341,7 +354,7 @@ public static class CryptoService
 
         try
         {
-            using var output = new FileStream(destEncryptedPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            using var output = new FileStream(destEncryptedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
             output.Write(MagicV2);
             Span<byte> headerBytes = stackalloc byte[HeaderSizeV2 - 8];
             BinaryPrimitives.WriteInt32LittleEndian(headerBytes.Slice(0, 4), 2);
@@ -588,63 +601,28 @@ public static class CryptoService
     #region Shredding
 
     /// <summary>
-    /// Overwrites a file with zeroes, 0xFF and random data (configurable number of
-    /// passes), flushes to the physical device, renames it to an opaque name and
-    /// finally deletes it. Best-effort on SSDs/file systems that use copy-on-write.
+    /// Overwrites and removes a regular, singly linked file through one exclusive handle.
+    /// Reparse points and hard links are retained. Failed overwrite never falls back
+    /// to ordinary deletion. Physical erasure remains best-effort on SSD/COW storage.
     /// </summary>
     public static bool ShredFile(string filePath, int? passCount = null)
     {
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath)) return false;
-
-        int passes = Math.Clamp(passCount ?? GetConfiguredPasses(), 1, 7);
-
-        try
-        {
-            File.SetAttributes(filePath, FileAttributes.Normal);
-            long fileLength = new FileInfo(filePath).Length;
-
-            using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Write, FileShare.None,
-                       bufferSize: 64 * 1024, FileOptions.WriteThrough))
-            {
-                byte[] buffer = new byte[Math.Min(Math.Max(fileLength, 1), 1024 * 1024)];
-                for (int pass = 0; pass < passes; pass++)
-                {
-                    if (pass == 0) Array.Clear(buffer);
-                    else if (pass == 1) Array.Fill(buffer, (byte)0xFF);
-                    else RandomNumberGenerator.Fill(buffer);
-
-                    stream.Position = 0;
-                    long remaining = fileLength;
-                    while (remaining > 0)
-                    {
-                        int toWrite = (int)Math.Min(remaining, buffer.Length);
-                        stream.Write(buffer, 0, toWrite);
-                        remaining -= toWrite;
-                    }
-                    stream.Flush(true);
-                }
-                Array.Clear(buffer);
-            }
-
-            // Rename first so the original directory entry no longer points at the data.
-            string directory = Path.GetDirectoryName(filePath) ?? AppPaths.DataRoot;
-            string tempName = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".tmp");
-            File.Move(filePath, tempName);
-            File.Delete(tempName);
-            return true;
-        }
+        try { return SafeShred.OverwriteAndDelete(filePath, Math.Clamp(passCount ?? GetConfiguredPasses(), 1, 7)); }
         catch (Exception ex)
         {
-            AppLog.Warn($"粉碎文件失败: {ex.GetType().Name}");
-            try
-            {
-                if (File.Exists(filePath)) File.Delete(filePath);
-                return !File.Exists(filePath);
-            }
-            catch
-            {
-                return false;
-            }
+            AppLog.Warn($"粉碎文件失败，未执行普通删除: {ex.GetType().Name}");
+            return false;
+        }
+    }
+
+    internal static bool ShredImportedFile(string filePath, SafeShred.FileIdentity expected, byte[] digest)
+    {
+        try { return SafeShred.OverwriteAndDelete(filePath, GetConfiguredPasses(), expected, digest); }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"导入后的原件已改变或无法安全粉碎，原件已保留: {ex.GetType().Name}");
+            return false;
         }
     }
 

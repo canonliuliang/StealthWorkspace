@@ -81,7 +81,9 @@ jobs:
           $checksums | ForEach-Object { Get-Content $_.FullName } | Set-Content artifacts/SHA256SUMS.txt -Encoding ascii
           $packages = @(Get-ChildItem artifacts/downloads -Recurse -Filter '*.zip' | ForEach-Object FullName)
           if ($packages.Count -ne 2) { throw 'Expected both portable packages.' }
-          gh release create $env:RELEASE_TAG @packages artifacts/SHA256SUMS.txt --title "Stealth $env:RELEASE_TAG" --notes-file docs/RELEASE-NOTES.md --prerelease --verify-tag
+          $title = (Get-Content docs/RELEASE-TITLE.txt -Raw).Trim()
+          if ([string]::IsNullOrWhiteSpace($title) -or $title.Length -gt 120 -or $title.Contains("`n")) { throw 'Release title must be one concise line.' }
+          gh release create $env:RELEASE_TAG @packages artifacts/SHA256SUMS.txt --title $title --notes-file docs/RELEASE-NOTES.md --prerelease --verify-tag
           if ($LASTEXITCODE -ne 0) { throw 'GitHub Release creation failed.' }
           gh workflow run pages.yml --ref main
           if ($LASTEXITCODE -ne 0) { throw 'Release is published, but website dispatch failed; rerun Official website manually.' }

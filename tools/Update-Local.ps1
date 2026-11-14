@@ -4,7 +4,10 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-if (!$PublishDirectory) { $PublishDirectory = Join-Path $projectRoot 'bin\Release\net8.0-windows10.0.26100.0\win-arm64\publish' }
+if (!$PublishDirectory) {
+    $architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
+    $PublishDirectory = Join-Path $projectRoot "bin\Release\net10.0-windows10.0.26100.0\win-$architecture\publish"
+}
 $candidateRoot = (Resolve-Path -LiteralPath $CandidateDirectory).Path.TrimEnd('\')
 $publishRoot = (Resolve-Path -LiteralPath $PublishDirectory).Path.TrimEnd('\')
 $workspacePrefix = $projectRoot.TrimEnd('\') + '\'

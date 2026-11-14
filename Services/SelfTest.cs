@@ -67,6 +67,7 @@ public static class SelfTest
     {
         var results = new List<string>();
         var failures = new List<string>();
+        int skipped = 0;
         string baseDir = GetOutputPath(args) is { } outPath
             ? Path.GetDirectoryName(outPath) ?? AppContext.BaseDirectory
             : AppContext.BaseDirectory;
@@ -82,8 +83,20 @@ public static class SelfTest
             try { Console.WriteLine(line); } catch { }
         }
 
+        void Skip(string name, string detail)
+        {
+            string line = $"SKIP  {name}  |  {detail}";
+            results.Add(line);
+            skipped++;
+            try { Console.WriteLine(line); } catch { }
+        }
+
         try
         {
+            CollectionSelfTest.Run(Report);
+            await VaultIntegritySelfTest.RunAsync(testRoot, Report, Skip);
+            await LegacyVaultMigrationSelfTest.RunAsync(testRoot, Report);
+            SettingsMigrationSelfTest.Run(testRoot, Report);
             var logWatch = System.Diagnostics.Stopwatch.StartNew();
             for (int i = 0; i < 100; i++) AppLog.Info("Isolated logging performance fixture " + i);
             logWatch.Stop();
@@ -261,7 +274,7 @@ public static class SelfTest
                 {
                     using var tamperedStream = CryptoService.OpenReadStream(tampered, masterKey);
                     byte[] buffer = new byte[4096];
-                    tamperedStream.Read(buffer, 0, buffer.Length);
+                tamperedStream.ReadExactly(buffer);
                 }
                 catch (CryptographicException)
                 {
@@ -371,9 +384,9 @@ public static class SelfTest
                 Report(vault.ApplyUnlock(realUnlock), "Master unlock");
                 Report(vault.VisibleItems.Count == 1, "Real vault item visible");
 
+                vault.Lock();
                 var decoyUnlock = vault.VerifyPassword("Decoy#123456");
                 Report(decoyUnlock.Status == VaultUnlockStatus.Success && decoyUnlock.IsDecoy, "Decoy password recognized");
-                vault.Lock();
                 Report(vault.ApplyUnlock(decoyUnlock), "Decoy unlock");
                 Report(vault.IsDecoyMode && vault.VisibleItems.Count == 0, "Decoy vault is separate/empty");
 
@@ -452,6 +465,10 @@ public static class SelfTest
         }
         finally
         {
+            try { await RemovalSelfTest.RunAsync(testRoot, Report, Skip); }
+            catch (Exception ex) { Report(false, "Removal follow-up regression", ex.ToString()); }
+            try { await AuditSelfTest.RunAsync(testRoot, Report); }
+            catch (Exception ex) { Report(false, "Security audit regression", ex.ToString()); }
             try { await BackupSelfTest.RunAsync(testRoot, Report); }
             catch (Exception ex) { Report(false, "Backup/restore regression", ex.ToString()); }
             await AppLog.FlushAsync(TimeSpan.FromSeconds(5));
@@ -460,7 +477,7 @@ public static class SelfTest
 
         var summary = new StringBuilder();
         summary.AppendLine("StealthWorkspace self-test " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
-        summary.AppendLine($"Passed: {results.Count - failures.Count}  Failed: {failures.Count}");
+        summary.AppendLine($"Passed: {results.Count - failures.Count - skipped}  Failed: {failures.Count}  Skipped: {skipped}");
         summary.AppendLine(new string('-', 60));
         foreach (string line in results) summary.AppendLine(line);
         if (failures.Count > 0)
@@ -567,11 +584,16 @@ public static class SmokeTest
     public static string? OutputPath { get; private set; }
     public static bool Interactive { get; private set; }
     public static bool InteractiveFixture { get; private set; }
+    public static int UiWidth { get; private set; } = 1100;
+    public static int UiHeight { get; private set; } = 740;
+    public static string? UiTheme { get; private set; }
     public static string? BrowserProbeUrl { get; private set; }
     public static bool ReferenceBrowserProbe { get; private set; }
     public static int BrowserSoakMinutes { get; private set; }
     public static bool ReopenMedia { get; private set; }
     public static bool ExperienceTest { get; private set; }
+    public static bool ShutdownAudit { get; private set; }
+    public static bool ShutdownDuringInitialization { get; private set; }
     public static bool BrowserAudit { get; private set; }
     public static bool RenderAudit { get; private set; }
     public static bool RecoveryAuditOnly { get; private set; }
@@ -584,12 +606,21 @@ public static class SmokeTest
         UiSmoke = SelfTest.IsUiSmokeRequested(args);
         Interactive = args.Contains("--ui-interactive");
         InteractiveFixture = UiSmoke && Interactive && args.Contains("--ui-fixture");
+        if (UiSmoke)
+        {
+            if (int.TryParse(args.SkipWhile(a => a != "--ui-width").Skip(1).FirstOrDefault(), out int width)) UiWidth = Math.Clamp(width, 480, 2000);
+            if (int.TryParse(args.SkipWhile(a => a != "--ui-height").Skip(1).FirstOrDefault(), out int height)) UiHeight = Math.Clamp(height, 480, 1600);
+            UiTheme = args.SkipWhile(a => a != "--ui-theme").Skip(1).FirstOrDefault() is "Light" ? "Light" :
+                args.SkipWhile(a => a != "--ui-theme").Skip(1).FirstOrDefault() is "Dark" ? "Dark" : null;
+        }
         BrowserProbeUrl = args.SkipWhile(a => a != "--browser-probe-url").Skip(1).FirstOrDefault();
         ReferenceBrowserProbe = BrowserProbeUrl != null && args.Contains("--browser-reference-probe");
         if (int.TryParse(args.SkipWhile(a => a != "--browser-soak-minutes").Skip(1).FirstOrDefault(), out int minutes))
             BrowserSoakMinutes = Math.Clamp(minutes, 1, 120);
         ReopenMedia = args.Contains("--media-reopen");
         ExperienceTest = args.Contains("--experience-test");
+        ShutdownDuringInitialization = args.Contains("--shutdown-audit-pending");
+        ShutdownAudit = ShutdownDuringInitialization || args.Contains("--shutdown-audit");
         RecoveryAuditOnly = args.Contains("--browser-recovery-audit");
         BrowserAudit = RecoveryAuditOnly || args.Contains("--browser-audit");
         RenderAudit = args.Contains("--browser-render-audit");
@@ -669,7 +700,7 @@ public static class SmokeTest
             }
 
             bool ok = ready && !anyUnhandled && pagesOk && webViewOk && (!UiSmoke || completed);
-            builder.AppendLine(RenderAudit ? "RENDER AUDIT: " + (Lines.Any(l => l.Contains("render audit complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserAudit ? "AUDIT RESULT: " + (Lines.Any(l => l.Contains("audit complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : ExperienceTest ? "EXPERIENCE RESULT: " + (Lines.Any(l => l.Contains("experience complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserSoakMinutes > 0 ? "SOAK RESULT: " + (Lines.Any(l => l.Contains("soak complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserProbeUrl != null ? "NETWORK PROBE: completed; inspect metrics separately" : Interactive ? "MANUAL SESSION: completed; inspect UI evidence separately" : "SMOKE RESULT: " + (ok ? "OK" : "FAILED"));
+            builder.AppendLine(ShutdownAudit ? "SHUTDOWN AUDIT: " + (Lines.Any(l => (l.Contains("shutdown audit: live WebView", StringComparison.Ordinal) || l.Contains("shutdown audit: initializing WebView", StringComparison.Ordinal))) && Lines.Any(l => l.Contains("closing: vault locked=True", StringComparison.Ordinal)) && Lines.Any(l => l.Contains("closing: browser profiles removed=True", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : RenderAudit ? "RENDER AUDIT: " + (Lines.Any(l => l.Contains("render audit complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserAudit ? "AUDIT RESULT: " + (Lines.Any(l => l.Contains("audit complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : ExperienceTest ? "EXPERIENCE RESULT: " + (Lines.Any(l => l.Contains("experience complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserSoakMinutes > 0 ? "SOAK RESULT: " + (Lines.Any(l => l.Contains("soak complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserProbeUrl != null ? "NETWORK PROBE: completed; inspect metrics separately" : Interactive ? "MANUAL SESSION: completed; inspect UI evidence separately" : "SMOKE RESULT: " + (ok ? "OK" : "FAILED"));
             string? dir = Path.GetDirectoryName(OutputPath);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
             File.WriteAllText(OutputPath, builder.ToString(), Encoding.UTF8);

@@ -20,7 +20,8 @@ public sealed partial class BrowserTabControl
                 .Select(folder => System.IO.Path.Combine(Environment.GetFolderPath(folder), "Microsoft", "Edge", "Application", "msedge.exe"))
                 .FirstOrDefault(System.IO.File.Exists);
             if (executable == null) { ShowBrowserError("未找到 Microsoft Edge", "请确认本机已安装 Edge。"); return; }
-            var launch = new ProcessStartInfo(executable) { UseShellExecute = true };
+            // .NET 8 supports ArgumentList with either mode. A known executable needs no shell association.
+            var launch = new ProcessStartInfo(executable) { UseShellExecute = false };
             launch.ArgumentList.Add("--inprivate");
             launch.ArgumentList.Add("--new-window");
             launch.ArgumentList.Add(uri.AbsoluteUri);

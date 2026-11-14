@@ -497,6 +497,17 @@ public static class BrowserProfileManager
                 if (!string.IsNullOrEmpty(ownedDirectory))
                 {
                     AddPendingDeletion(ownedDirectory!);
+                    // Closed WinRT WebView/environment wrappers can retain an EBWebView
+                    // directory handle until finalization. Reclaim only at session teardown,
+                    // after every controller is closed; never pause normal browsing for GC.
+                    if (Volatile.Read(ref _environmentUsers) == 0)
+                    {
+                        await Task.Run(() =>
+                        {
+                            GC.Collect();
+                            GC.WaitForPendingFinalizers();
+                        }).ConfigureAwait(false);
+                    }
                 }
 
                 // 3) Retry every directory we still owe the file system. The WebView2

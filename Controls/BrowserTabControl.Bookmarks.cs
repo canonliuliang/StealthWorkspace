@@ -78,6 +78,6 @@ public sealed partial class BrowserTabControl
         _bookmarkToRename = null;
         _bookmarkDialog?.Hide();
         BookmarksFlyout.Hide();
-        BookmarksListView.ItemsSource = null;
+        if (BookmarksListView != null) BookmarksListView.ItemsSource = null;
     }
 }

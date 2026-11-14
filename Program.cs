@@ -50,18 +50,13 @@ public static class Program
         {
             bool uiSmoke = SelfTest.IsUiSmokeRequested(args);
             string? dataRoot = SelfTest.GetDataRootArgument(args);
-            if (uiSmoke)
-            {
-                // Never touch the real user vault while walking pages in a test run.
-                dataRoot ??= Path.Combine(Environment.CurrentDirectory, "ui-smoke-data");
-                string? testLegacy = SelfTest.GetArgumentValue(args, "--test-legacy-root");
-                AppPaths.SetDataRootOverride(testLegacy == null ? dataRoot :
-                    AppPaths.ResolveDataRoot(testLegacy, dataRoot, dataRoot + "-fallback"));
-            }
-            else if (!string.IsNullOrWhiteSpace(dataRoot))
-            {
-                AppPaths.SetDataRootOverride(dataRoot);
-            }
+            // Every diagnostic process uses its own data root, including a bare
+            // --smoke-test. Its separate instance mutex must never expose live data.
+            if (string.IsNullOrWhiteSpace(dataRoot))
+                dataRoot = Path.Combine(Path.GetTempPath(), "StealthWorkspace.Diagnostics", Guid.NewGuid().ToString("N"));
+            string? testLegacy = uiSmoke ? SelfTest.GetArgumentValue(args, "--test-legacy-root") : null;
+            AppPaths.SetDataRootOverride(testLegacy == null ? dataRoot :
+                AppPaths.ResolveDataRoot(testLegacy, dataRoot, dataRoot + "-fallback"));
 
             SmokeTest.Enable(args);
         }

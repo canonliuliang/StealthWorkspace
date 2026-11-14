@@ -794,7 +794,6 @@ public class CleanerService
                 var info = new FileInfo(file);
                 if (!info.Exists)
                 {
-                    deleted++;
                     continue;
                 }
 
@@ -903,8 +902,8 @@ public class CleanerService
 
             try
             {
-                Windows.ApplicationModel.DataTransfer.Clipboard.ClearHistory();
-                historyCleared = true;
+                historyCleared = Windows.ApplicationModel.DataTransfer.Clipboard.ClearHistory();
+                historyUnavailable = !Windows.ApplicationModel.DataTransfer.Clipboard.IsHistoryEnabled();
             }
             catch (Exception ex)
             {
@@ -1040,9 +1039,11 @@ public class CleanerService
                 return true;
             }
 
+            if (!SafeFileSystem.IsPlainPath(file)) return false;
+
             if (shred)
             {
-                if (CryptoService.ShredFile(file) || !File.Exists(file))
+                if (CryptoService.ShredFile(file))
                 {
                     return true;
                 }
@@ -1361,70 +1362,15 @@ public class CleanerService
         }
 
         DateTime cutoff = DateTime.UtcNow - TempFileMinimumAge;
-
-        try
+        var files = SafeFileSystem.EnumerateFiles(tempDirectory, deepClean, out enumerationFailures,
+            dir => Path.GetFileName(dir).StartsWith(WebProfilePrefix, StringComparison.OrdinalIgnoreCase));
+        foreach (string file in files)
         {
-            foreach (string file in Directory.GetFiles(tempDirectory, "*", SearchOption.TopDirectoryOnly))
+            try
             {
-                try
-                {
-                    var info = new FileInfo(file);
-                    if (!info.Exists) continue;
-                    if ((info.Attributes & FileAttributes.ReparsePoint) != 0) continue;
-                    if (!deepClean && info.LastWriteTimeUtc >= cutoff) continue;
-                    eligible.Add(file);
-                }
-                catch (Exception ex)
-                {
-                    enumerationFailures++;
-                    AppLog.Warn("读取临时文件信息失败：" + ex.GetType().Name);
-                }
+                if (deepClean || File.GetLastWriteTimeUtc(file) < cutoff) eligible.Add(file);
             }
-        }
-        catch (Exception ex)
-        {
-            enumerationFailures++;
-            AppLog.Error("枚举 %TEMP% 根目录失败", ex);
-        }
-
-        if (!deepClean) return eligible;
-
-        try
-        {
-            foreach (string subDir in Directory.GetDirectories(tempDirectory, "*", SearchOption.TopDirectoryOnly))
-            {
-                string dirName = Path.GetFileName(subDir);
-                if (dirName.StartsWith(WebProfilePrefix, StringComparison.OrdinalIgnoreCase)) continue;
-
-                try
-                {
-                    if ((File.GetAttributes(subDir) & FileAttributes.ReparsePoint) != 0) continue;
-
-                    foreach (string file in Directory.EnumerateFiles(subDir, "*", SearchOption.AllDirectories))
-                    {
-                        try
-                        {
-                            var info = new FileInfo(file);
-                            if ((info.Attributes & FileAttributes.ReparsePoint) != 0) continue;
-                            eligible.Add(file);
-                        }
-                        catch
-                        {
-                            enumerationFailures++;
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    enumerationFailures++;
-                    AppLog.Warn("枚举 %TEMP% 子目录失败：" + ex.GetType().Name);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            enumerationFailures++;
-            AppLog.Error("枚举 %TEMP% 子目录列表失败", ex);
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { enumerationFailures++; }
         }
 
         return eligible;
@@ -1442,7 +1388,7 @@ public class CleanerService
 
                 try
                 {
-                    if ((File.GetAttributes(subDir) & FileAttributes.ReparsePoint) != 0) continue;
+                    if (!SafeFileSystem.IsPlainPath(subDir)) continue;
                     if (!Directory.EnumerateFileSystemEntries(subDir).Any())
                     {
                         Directory.Delete(subDir, false);
@@ -1470,19 +1416,8 @@ public class CleanerService
 
         foreach (string dir in candidateDirs)
         {
-            if (!Directory.Exists(dir)) continue;
-            try
-            {
-                foreach (string file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
-                {
-                    files.Add(file);
-                }
-            }
-            catch (Exception ex)
-            {
-                enumerationFailures++;
-                AppLog.Warn("扫描错误报告目录失败", ex);
-            }
+            files.AddRange(SafeFileSystem.EnumerateFiles(dir, true, out int failures));
+            enumerationFailures += failures;
         }
 
         return files;
@@ -1495,15 +1430,7 @@ public class CleanerService
         string dir = AppPaths.IsolatedDownloadsRoot;
         if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return files;
 
-        try
-        {
-            files.AddRange(Directory.GetFiles(dir, "*", SearchOption.TopDirectoryOnly));
-        }
-        catch (Exception ex)
-        {
-            enumerationFailures++;
-            AppLog.Error("扫描隔离下载目录失败", ex);
-        }
+        files.AddRange(SafeFileSystem.EnumerateFiles(dir, false, out enumerationFailures));
 
         return files;
     }
@@ -1526,6 +1453,12 @@ public class CleanerService
         return total;
     }
 
+    private static bool IsCurrentSession(Process process)
+    {
+        using var current = Process.GetCurrentProcess();
+        return process.SessionId == current.SessionId;
+    }
+
     private static bool IsExplorerRunning()
     {
         try
@@ -1538,11 +1471,12 @@ public class CleanerService
                 {
                     try
                     {
-                        if (!process.HasExited) running = true;
+                        if (IsCurrentSession(process) && !process.HasExited) running = true;
                     }
                     catch
                     {
-                        running = true;
+                        // Inaccessible foreign processes do not prove our desktop is running.
+                        AppLog.Warn("无法检查当前会话资源管理器状态");
                     }
                 }
             }
@@ -1575,7 +1509,7 @@ public class CleanerService
             {
                 try
                 {
-                    if (process.HasExited) continue;
+                    if (!IsCurrentSession(process) || process.HasExited) continue;
                     process.Kill();
                     process.WaitForExit(5000);
                 }

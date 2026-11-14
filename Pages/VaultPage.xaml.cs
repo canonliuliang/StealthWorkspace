@@ -18,7 +18,10 @@ namespace StealthWorkspace.Pages;
 
 public sealed partial class VaultPage : Page
 {
-    private readonly ObservableCollection<VaultItem> _displayedItems = new();
+    private readonly ObservableRangeCollection<VaultItem> _displayedItems = new();
+    private readonly DispatcherTimer _searchDebounce = new() { Interval = TimeSpan.FromMilliseconds(120) };
+    private bool _totalsDirty = true;
+    private long _totalBytes;
     private bool _loaded;
     private bool _busy;
     private bool _picking;
@@ -30,6 +33,13 @@ public sealed partial class VaultPage : Page
     private readonly HashSet<Image> _thumbnailImages = new();
     private VaultViewState? _restoreState;
     internal IEnumerable<VaultItem> DisplayedItems => _displayedItems;
+    internal void FlushPendingSearch()
+    {
+        if (!_searchDebounce.IsEnabled) return;
+        _searchDebounce.Stop();
+        ApplyFilterAndSearch();
+        if (_loaded) UpdateUIState();
+    }
     internal VaultViewState CaptureViewState() => new(SearchBox.Text ?? "", MediaFilter.SelectedIndex, (MediaGridView.SelectedItem as VaultItem)?.Id);
     internal void SetSmokeFilter(string query, int filter)
     {
@@ -52,6 +62,13 @@ public sealed partial class VaultPage : Page
     public VaultPage()
     {
         InitializeComponent();
+        _searchDebounce.Tick += (_, _) =>
+        {
+            _searchDebounce.Stop();
+            if (!_loaded) return;
+            ApplyFilterAndSearch();
+            UpdateUIState();
+        };
         Loaded += VaultPage_Loaded;
         Unloaded += VaultPage_Unloaded;
     }
@@ -60,6 +77,7 @@ public sealed partial class VaultPage : Page
     {
         if (_loaded) return;
         _loaded = true;
+        _totalsDirty = true;
         _thumbnailLifetime = new CancellationTokenSource();
 
         MediaGridView.ItemsSource = _displayedItems;
@@ -81,6 +99,7 @@ public sealed partial class VaultPage : Page
 
     private void VaultPage_Unloaded(object sender, RoutedEventArgs e)
     {
+        _searchDebounce.Stop();
         VaultService.Instance.VisibleItems.CollectionChanged -= VisibleItems_CollectionChanged;
         VaultService.Instance.Locked -= CancelImport;
         CancelImport();
@@ -184,6 +203,7 @@ public sealed partial class VaultPage : Page
 
     private void VisibleItems_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        _totalsDirty = true;
         if (!_loaded || _busy) return;
         ApplyFilterAndSearch();
         UpdateUIState();
@@ -197,10 +217,16 @@ public sealed partial class VaultPage : Page
         ToolTipService.SetToolTip(VaultBadge, "AES-256-GCM 分块加密 · 播放全程内存解密");
 
         int totalCount = VaultService.Instance.VisibleItems.Count;
-        long totalBytes = VaultService.Instance.VisibleItems.Sum(x => x.FileSizeBytes);
+        if (_totalsDirty)
+        {
+            _totalBytes = VaultService.Instance.VisibleItems.Sum(x => x.FileSizeBytes);
+            _totalsDirty = false;
+        }
 
-        StatsSummaryText.Text = $"共 {totalCount} 项 · 原始大小 {FormatBytes(totalBytes)} · 显示 {_displayedItems.Count} 项";
+        StatsSummaryText.Text = $"共 {totalCount} 项 · 原始大小 {FormatBytes(_totalBytes)} · 显示 {_displayedItems.Count} 项";
         EmptyNotice.Visibility = _displayedItems.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        EmptyTitleText.Text = totalCount == 0 ? "你的媒体，留在这里" : "没有匹配的媒体";
+        EmptyDescriptionText.Text = totalCount == 0 ? "拖入图片或视频，或点击「导入文件」开始。" : "尝试其他文件名，或将媒体类型切换为「全部媒体」。";
     }
 
     private static string FormatBytes(long bytes)
@@ -231,34 +257,33 @@ public sealed partial class VaultPage : Page
             return true;
         }).ToList();
 
-        bool changed = !_displayedItems.SequenceEqual(filtered);
-
-        // Preserve existing containers and decoded thumbnails when importing a batch.
-        var matching = filtered.ToHashSet();
-        for (int i = _displayedItems.Count - 1; i >= 0; i--)
-            if (!matching.Contains(_displayedItems[i])) _displayedItems.RemoveAt(i);
-        for (int i = 0; i < filtered.Count; i++)
-        {
-            if (i < _displayedItems.Count && ReferenceEquals(_displayedItems[i], filtered[i])) continue;
-            _displayedItems.Insert(i, filtered[i]);
-        }
+        var selected = MediaGridView.SelectedItem as VaultItem;
+        // Small imports preserve decoded containers; large searches emit one reset.
+        _displayedItems.Reconcile(filtered);
+        if (selected != null && filtered.Contains(selected)) MediaGridView.SelectedItem = selected;
 
         if (EmptyNotice != null)
         {
             EmptyNotice.Visibility = _displayedItems.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
-        // One transition for the result set, not one animation per thumbnail.
-        if (changed && IsLoaded) UiMotion.Enter(MediaGridView, 0, 0);
     }
 
     private void SearchBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
     {
+        _searchDebounce.Stop();
+        if (!_loaded) return;
+        if (args.Reason == AutoSuggestionBoxTextChangeReason.UserInput && VaultService.Instance.VisibleItems.Count > 250)
+        {
+            _searchDebounce.Start();
+            return;
+        }
         ApplyFilterAndSearch();
         if (_loaded) UpdateUIState();
     }
 
     private void MediaFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        _searchDebounce.Stop();
         ApplyFilterAndSearch();
         if (_loaded) UpdateUIState();
     }

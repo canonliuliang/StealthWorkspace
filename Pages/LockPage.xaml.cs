@@ -87,7 +87,7 @@ public sealed partial class LockPage : Page
         try
         {
             // PBKDF2 (600k iterations) must never run on the UI thread.
-            var result = await Task.Run(() => VaultService.Instance.VerifyPassword(password));
+            using var result = await VaultService.Instance.VerifyPasswordAsync(password);
 
             switch (result.Status)
             {
@@ -212,7 +212,12 @@ public sealed partial class LockPage : Page
             SetupConfirmPwd.Password = string.Empty;
             SetupDecoyPwd.Password = string.Empty;
             SetupDecoyConfirmPwd.Password = string.Empty;
-            MainWindow.Current?.OnUnlocked();
+            if (VaultService.Instance.IsUnlocked) MainWindow.Current?.OnUnlocked();
+            else
+            {
+                CheckVaultState();
+                ShowMessage("保险箱已创建，请重新输入密码解锁。", InfoBarSeverity.Informational);
+            }
         }
         catch (Exception ex)
         {
@@ -245,8 +250,8 @@ public sealed partial class LockPage : Page
         {
             XamlRoot = XamlRoot,
             Title = "重置保险箱？",
-            Content = "此操作会永久销毁保险箱内的全部加密媒体与配置，且无法恢复。\n\n只有在确认密码遗失或配置损坏时才应继续。",
-            PrimaryButtonText = "永久销毁",
+            Content = "此操作会删除当前保险箱内的全部加密媒体与配置，无法通过应用撤销。\n\n旧版迁移副本、导出文件和外部备份不会一并删除。\n\n只有在确认密码遗失或配置损坏时才应继续。",
+            PrimaryButtonText = "删除并重置",
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Close
         };

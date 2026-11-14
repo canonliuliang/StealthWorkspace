@@ -20,6 +20,8 @@ Stealth 将临时网页会话与本地加密媒体管理放在一个 Windows 应
 
 新安装通常位于 `%LOCALAPPDATA%\StealthWorkspace\Data`。旧安装可能继续使用 `%LOCALAPPDATA%\Microsoft\Windows\SystemDiagnostics\Data`，或程序旁的 `WorkspaceData`。只读旧目录迁移时保留原副本，删除或卸载之前检查这些位置。
 
+从程序旁 `StealthVault_Store` 迁移旧保险箱时，会先复制并检查媒体，再提交新索引，原目录保留以便恢复。重置只删除当前保险箱；旧目录、导出文件和外部备份不会一并删除。重置会保存禁止自动导入旧目录的状态，防止旧副本在下次启动时重新出现。
+
 - `system_catalog.dat` / `.bak`：保险箱配置与索引。
 - `settings.dat` / `.bak`：设置与收藏。
 - `MediaVault`：加密媒体。

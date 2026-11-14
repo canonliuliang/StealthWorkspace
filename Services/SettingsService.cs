@@ -80,13 +80,21 @@ public class SettingsService
 
     public event Action? SettingsChanged;
 
-    public SettingsService()
+    public SettingsService() : this(AppPaths.EnsureDataRoot(),
+        AppPaths.HasDataRootOverride ? null : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "StealthVault_Store", "settings.json"))
     {
-        AppPaths.EnsureDataRoot();
-        _settingsFilePath = AppPaths.SettingsPath;
-        _settingsBackupPath = _settingsFilePath + ".bak";
+    }
 
-        MigrateOldSettingsIfPresent();
+    // Explicit paths keep migration fault tests away from the real user data and
+    // installed application's legacy directory. Production uses the constructor above.
+    internal SettingsService(string dataRoot, string? legacySettingsFile)
+    {
+        _settingsFilePath = Path.Combine(Path.GetFullPath(dataRoot), "settings.dat");
+        _settingsBackupPath = _settingsFilePath + ".bak";
+        try { Directory.CreateDirectory(Path.GetDirectoryName(_settingsFilePath)!); }
+        catch { /* Reads/default settings still work if persistence is unavailable. */ }
+
+        if (legacySettingsFile != null) MigrateOldSettingsIfPresent(legacySettingsFile);
         Data = LoadSettings();
         Normalize();
         if (!LoadFailed && !Data.BrowserFirstExperience)
@@ -97,27 +105,38 @@ public class SettingsService
         }
     }
 
-    private void MigrateOldSettingsIfPresent()
+    private void MigrateOldSettingsIfPresent(string oldSettings)
     {
         try
         {
-            string oldStore = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "StealthVault_Store");
-            string oldSettings = Path.Combine(oldStore, "settings.json");
             if (!File.Exists(oldSettings)) return;
+            string oldStore = Path.GetDirectoryName(Path.GetFullPath(oldSettings))!;
+            string json = File.ReadAllText(oldSettings, Encoding.UTF8);
+            var loaded = SafeDeserialize(json);
+            // A malformed source may still be manually recoverable. Keep it even
+            // if the app can create fresh defaults alongside it.
+            if (loaded == null)
+            {
+                AppLog.Warn("旧设置无法解析，已保留原文件");
+                return;
+            }
 
             if (!File.Exists(_settingsFilePath))
             {
-                string json = File.ReadAllText(oldSettings, Encoding.UTF8);
-                var loaded = SafeDeserialize(json);
-                if (loaded != null)
+                Data = loaded;
+                Normalize();
+                if (!SaveSettings())
                 {
-                    Data = loaded;
-                    Normalize();
-                    SaveSettings();
+                    AppLog.Warn("旧设置迁移尚未保存，已保留原文件以便重试");
+                    return;
                 }
             }
 
-            // The legacy file is plaintext; always remove it once handled.
+            // Cleanup is the last phase: a successful write alone is not enough.
+            // Verify the replacement can be decrypted and parsed before removing
+            // the only readable copy. Existing corrupt encrypted settings also
+            // must not cause an unrelated legacy copy to be discarded.
+            if (TryLoadFrom(_settingsFilePath) == null) return;
             try { File.Delete(oldSettings); } catch { }
             try
             {
@@ -167,8 +186,8 @@ public class SettingsService
             byte[] encrypted = File.ReadAllBytes(path);
             if (encrypted.Length == 0) return null;
             byte[] decrypted = ProtectedData.Unprotect(encrypted, null, DataProtectionScope.CurrentUser);
-            string json = Encoding.UTF8.GetString(decrypted);
-            return SafeDeserialize(json);
+            try { return SafeDeserialize(Encoding.UTF8.GetString(decrypted)); }
+            finally { CryptographicOperations.ZeroMemory(decrypted); }
         }
         catch (Exception ex)
         {
@@ -202,7 +221,9 @@ public class SettingsService
                 Normalize();
                 string json = JsonSerializer.Serialize(Data);
                 byte[] plaintext = Encoding.UTF8.GetBytes(json);
-                byte[] encrypted = ProtectedData.Protect(plaintext, null, DataProtectionScope.CurrentUser);
+                byte[] encrypted;
+                try { encrypted = ProtectedData.Protect(plaintext, null, DataProtectionScope.CurrentUser); }
+                finally { CryptographicOperations.ZeroMemory(plaintext); }
 
                 string tempPath = _settingsFilePath + ".tmp";
                 File.WriteAllBytes(tempPath, encrypted);
@@ -245,7 +266,7 @@ public class SettingsService
     {
         try
         {
-            string backup = Path.Combine(AppPaths.DataRoot, $"{prefix}-{DateTime.Now:yyyyMMdd-HHmmss}.dat");
+            string backup = Path.Combine(Path.GetDirectoryName(path)!, $"{prefix}-{DateTime.Now:yyyyMMdd-HHmmss}.dat");
             File.Move(path, backup, overwrite: true);
         }
         catch
@@ -305,7 +326,9 @@ public class SettingsService
     public bool IsBookmarked(string url)
     {
         if (string.IsNullOrWhiteSpace(url)) return false;
-        return Data.Bookmarks.Any(b => BrowserAddress.SamePage(b.Url, url));
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var current))
+            return Data.Bookmarks.Any(b => string.Equals(b.Url, url, StringComparison.Ordinal));
+        return Data.Bookmarks.Any(b => BrowserAddress.SamePage(current, b.Url));
     }
 
     public bool AddBookmark(string title, string url)

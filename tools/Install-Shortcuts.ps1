@@ -4,7 +4,7 @@ if (!$PublishDirectory) {
     if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'StealthWorkspace.exe')) { $PublishDirectory = $PSScriptRoot }
     else {
         $architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
-        $PublishDirectory = Join-Path $PSScriptRoot "..\bin\Release\net8.0-windows10.0.26100.0\win-$architecture\publish"
+        $PublishDirectory = Join-Path $PSScriptRoot "..\bin\Release\net10.0-windows10.0.26100.0\win-$architecture\publish"
     }
 }
 $publishRoot = (Resolve-Path -LiteralPath $PublishDirectory).Path

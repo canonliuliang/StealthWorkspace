@@ -6,6 +6,15 @@ internal static class BrowserAddress
     {
         if (!Uri.TryCreate(left, UriKind.Absolute, out var a) || !Uri.TryCreate(right, UriKind.Absolute, out var b))
             return string.Equals(left, right, StringComparison.Ordinal);
+        return SamePage(a, b);
+    }
+
+    // Reuse a parsed current address when matching an entire bookmark list.
+    internal static bool SamePage(Uri left, string right) =>
+        Uri.TryCreate(right, UriKind.Absolute, out var parsed) && SamePage(left, parsed);
+
+    internal static bool SamePage(Uri a, Uri b)
+    {
         // Hosts are case-insensitive. Paths, query values and fragments are not.
         return a.Scheme == b.Scheme && a.IdnHost.Equals(b.IdnHost, StringComparison.OrdinalIgnoreCase) && a.Port == b.Port &&
             a.UserInfo == b.UserInfo && a.GetComponents(UriComponents.PathAndQuery | UriComponents.Fragment, UriFormat.UriEscaped) ==

@@ -7,8 +7,7 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:services="using:StealthWorkspace.Services"
     mc:Ignorable="d">
-
-    <Grid Padding="28" RowSpacing="12">
+    <Grid Padding="24" RowSpacing="16" Background="{ThemeResource StealthCanvasBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -17,191 +16,92 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Header Hero Dashboard -->
-        <Border Grid.Row="0"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1"
-                CornerRadius="12"
-                Padding="22,18">
-            <Grid ColumnSpacing="18">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-
-                <!-- Status Icon Shield -->
-                <Grid Grid.Column="0" Width="52" Height="52">
-                    <Ellipse Fill="{ThemeResource AccentFillColorTertiaryBrush}" />
-                    <FontIcon Glyph="&#xE74D;" FontSize="22" Foreground="{ThemeResource AccentFillColorDefaultBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                </Grid>
-
-                <!-- Status Text Summary -->
-                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
-                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                        <TextBlock Text="系统反取证与痕迹清理" Style="{ThemeResource SubtitleTextBlockStyle}" FontWeight="SemiBold" />
-                        <Border Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                BorderThickness="1"
-                                CornerRadius="8"
-                                Padding="8,2"
-                                VerticalAlignment="Center">
-                            <TextBlock x:Name="StatsBadgeText"
-                                       Text="待扫描"
-                                       FontSize="11"
-                                       FontWeight="SemiBold"
-                                       Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
-                        </Border>
-                    </StackPanel>
-                    <TextBlock Text="覆盖缩略图缓存、最近文档与跳转列表、资源管理器搜索/运行/对话框历史、播放器/远程桌面记录、回收站、临时文件、错误报告、剪贴板及 DNS 缓存。"
-                               Style="{ThemeResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               TextWrapping="Wrap" />
-                </StackPanel>
-
-                <!-- Operation Buttons -->
-                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                    <Button x:Name="ScanBtn" Content="重新扫描" Click="ScanBtn_Click" Padding="14,7" />
-                    <Button x:Name="CleanBtn" Content="开始清理" Style="{ThemeResource AccentButtonStyle}" Click="CleanBtn_Click" Padding="18,7" />
+        <Grid RowSpacing="16">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <StackPanel Spacing="6">
+                <TextBlock Text="痕迹清理" Style="{StaticResource StealthPageTitleStyle}" />
+                <TextBlock Text="先扫描，再选择要清理的活动记录与缓存。" Style="{StaticResource StealthCaptionStyle}" />
+            </StackPanel>
+            <Grid Grid.Row="1" ColumnSpacing="12">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <Border Background="{ThemeResource StealthBrandSubtleBrush}" CornerRadius="8" Padding="12,6" HorizontalAlignment="Left" VerticalAlignment="Center">
+                    <TextBlock x:Name="StatsBadgeText" Text="待扫描" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource StealthBrandBrush}" TextWrapping="Wrap" />
+                </Border>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="ScanBtn" Content="重新扫描" Click="ScanBtn_Click" Padding="14,8" />
+                    <Button x:Name="CleanBtn" Content="清理选中项" Style="{ThemeResource AccentButtonStyle}" Click="CleanBtn_Click" Padding="18,8" />
                 </StackPanel>
             </Grid>
-        </Border>
+        </Grid>
 
-        <!-- Operation InfoBar -->
-        <InfoBar x:Name="StatusInfoBar" Grid.Row="1" IsOpen="False" IsClosable="True" Severity="Informational" />
+        <InfoBar x:Name="StatusInfoBar" Grid.Row="1" IsOpen="False" IsClosable="True" Severity="Informational" AutomationProperties.LiveSetting="Polite" />
 
-        <!-- Quick Presets & Advanced Options Toolbar -->
-        <Border Grid.Row="2"
-                Background="{ThemeResource LayerFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1"
-                CornerRadius="8"
-                Padding="14,10">
-            <Grid RowSpacing="8">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-
-                <!-- Row 0: Quick Selection Presets + ProgressRing -->
-                <Grid Grid.Row="0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-
-                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                        <TextBlock Text="快速勾选：" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
-                        <Button x:Name="PresetPrivacyBtn" Content="推荐隐私擦除" Click="PresetPrivacyBtn_Click" Style="{ThemeResource SubtleButtonStyle}" Padding="10,4" FontSize="12" />
-                        <Button x:Name="SelectAllBtn" Content="全选" Click="SelectAllBtn_Click" Style="{ThemeResource SubtleButtonStyle}" Padding="10,4" FontSize="12" />
-                        <Button x:Name="DeselectAllBtn" Content="取消全选" Click="DeselectAllBtn_Click" Style="{ThemeResource SubtleButtonStyle}" Padding="10,4" FontSize="12" />
-                    </StackPanel>
-
-                    <ProgressRing x:Name="OpProgressRing" Grid.Column="1" IsActive="False" Width="20" Height="20" VerticalAlignment="Center" />
-                </Grid>
-
-                <!-- Row 1: Advanced Strategy Checkboxes -->
-                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="18" VerticalAlignment="Center">
-                    <CheckBox x:Name="RestartExplorerCheck"
-                              Content="允许短暂重启资源管理器（解锁缩略图缓存）"
-                              IsChecked="False"
-                              FontSize="12" />
-                    <CheckBox x:Name="DeepTempCheck"
-                              Content="深度清理 %TEMP%（包含 24 小时内文件及子目录）"
-                              IsChecked="False"
-                              Checked="DeepTempCheck_Changed"
-                              Unchecked="DeepTempCheck_Changed"
-                              FontSize="12" />
-                    <CheckBox x:Name="SecureShredCheck"
-                              Content="对删除文件执行覆写粉碎（防数据恢复，耗时更长）"
-                              IsChecked="False"
-                              FontSize="12" />
+        <StackPanel Grid.Row="2" Spacing="8">
+            <Grid ColumnSpacing="8">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                    <Button x:Name="PresetPrivacyBtn" Content="推荐项目" Click="PresetPrivacyBtn_Click" Style="{ThemeResource SubtleButtonStyle}" FontSize="13" />
+                    <Button x:Name="SelectAllBtn" Content="全选" Click="SelectAllBtn_Click" Style="{ThemeResource SubtleButtonStyle}" FontSize="13" />
+                    <Button x:Name="DeselectAllBtn" Content="取消全选" Click="DeselectAllBtn_Click" Style="{ThemeResource SubtleButtonStyle}" FontSize="13" />
                 </StackPanel>
+                <ProgressRing x:Name="OpProgressRing" Grid.Column="1" IsActive="False" Width="20" Height="20" VerticalAlignment="Center" />
             </Grid>
-        </Border>
+            <Expander Header="高级清理选项" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                <StackPanel Spacing="8">
+                    <CheckBox x:Name="RestartExplorerCheck" IsChecked="False" FontSize="13" AutomationProperties.Name="允许短暂重启资源管理器，以释放占用的缩略图缓存">
+                        <TextBlock Text="允许短暂重启资源管理器，以释放占用的缩略图缓存。" TextWrapping="Wrap" />
+                    </CheckBox>
+                    <CheckBox x:Name="DeepTempCheck" IsChecked="False" Checked="DeepTempCheck_Changed" Unchecked="DeepTempCheck_Changed" FontSize="13" AutomationProperties.Name="深度清理临时目录，包含 24 小时内的文件及子目录">
+                        <TextBlock Text="深度清理临时目录，包含 24 小时内的文件及子目录。" TextWrapping="Wrap" />
+                    </CheckBox>
+                    <CheckBox x:Name="SecureShredCheck" IsChecked="False" FontSize="13" AutomationProperties.Name="删除前尝试覆写文件，耗时更长，无法保证数据不可恢复">
+                        <TextBlock Text="删除前尝试覆写文件，耗时更长；无法保证所有存储介质上的数据不可恢复。" TextWrapping="Wrap" />
+                    </CheckBox>
+                </StackPanel>
+            </Expander>
+        </StackPanel>
 
-        <!-- Categories List -->
-        <ListView x:Name="CleanerListView"
-                  Grid.Row="3"
-                  SelectionMode="None"
+        <ListView x:Name="CleanerListView" Grid.Row="3" SelectionMode="None"
                   Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                  BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                  BorderThickness="1"
-                  CornerRadius="10">
+                  BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12"
+                  ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="可清理的活动记录与缓存">
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="Padding" Value="0" />
+                </Style>
+            </ListView.ItemContainerStyle>
             <ListView.ItemTemplate>
                 <DataTemplate x:DataType="services:CleanerItem">
-                    <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="0,0,0,1"
-                            Padding="14,12">
-                        <Grid ColumnSpacing="14">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-
-                            <CheckBox Grid.Column="0" IsChecked="{x:Bind IsSelected, Mode=TwoWay}" MinWidth="28" VerticalAlignment="Center" />
-
-                            <Border Grid.Column="1"
-                                    Width="34" Height="34"
-                                    CornerRadius="8"
-                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-                                    VerticalAlignment="Center">
-                                <FontIcon Glyph="{x:Bind IconGlyph}" FontSize="15" Foreground="{ThemeResource AccentFillColorDefaultBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="16">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="36" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <CheckBox IsChecked="{x:Bind IsSelected, Mode=TwoWay}" MinWidth="28" VerticalAlignment="Top" AutomationProperties.Name="{x:Bind Name}" />
+                            <Border Grid.Column="1" Width="36" Height="36" CornerRadius="10" Background="{ThemeResource StealthBrandSubtleBrush}" VerticalAlignment="Top">
+                                <FontIcon Glyph="{x:Bind IconGlyph}" FontSize="16" Foreground="{ThemeResource StealthBrandBrush}" />
                             </Border>
-
-                            <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="3">
-                                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                    <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" FontSize="13.5" />
-                                    <Border Background="{ThemeResource LayerFillColorDefaultBrush}"
-                                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                            BorderThickness="1"
-                                            CornerRadius="4"
-                                            Padding="6,1"
-                                            VerticalAlignment="Center">
-                                        <TextBlock Text="{x:Bind GroupName}" FontSize="10" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                    </Border>
-                                </StackPanel>
-                                <TextBlock Text="{x:Bind Description}" FontSize="11.5" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                            <StackPanel Grid.Column="2" Spacing="6">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="3">
+                                        <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" FontSize="14" TextWrapping="Wrap" />
+                                        <TextBlock Text="{x:Bind GroupName}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{x:Bind DisplaySize}" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource StealthBrandBrush}" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                </Grid>
+                                <TextBlock Text="{x:Bind Description}" Style="{StaticResource StealthCaptionStyle}" />
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBlock Text="{x:Bind Status}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                    <Button Grid.Column="1" Content="查看明细" Tag="{x:Bind}" IsEnabled="{x:Bind HasDetails}" Click="DetailsBtn_Click" Style="{ThemeResource SubtleButtonStyle}" FontSize="12" ToolTipService.ToolTip="查看本次扫描到的文件或注册表条目样本" />
+                                </Grid>
                             </StackPanel>
-
-                            <Border Grid.Column="3" Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="6" Padding="8,4" VerticalAlignment="Center">
-                                <TextBlock Text="{x:Bind DisplaySize}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
-                            </Border>
-
-                            <Border Grid.Column="4" Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}" CornerRadius="6" Padding="10,4" VerticalAlignment="Center">
-                                <TextBlock Text="{x:Bind Status}"
-                                           FontSize="11.5"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                           TextWrapping="Wrap"
-                                           MaxWidth="280" />
-                            </Border>
-
-                            <Button Grid.Column="5"
-                                    Content="明细"
-                                    Tag="{x:Bind}"
-                                    IsEnabled="{x:Bind HasDetails}"
-                                    Click="DetailsBtn_Click"
-                                    Style="{ThemeResource SubtleButtonStyle}"
-                                    Padding="10,5"
-                                    FontSize="12"
-                                    VerticalAlignment="Center"
-                                    ToolTipService.ToolTip="查看本次扫描到的具体文件或注册表条目样本" />
                         </Grid>
                     </Border>
                 </DataTemplate>
             </ListView.ItemTemplate>
         </ListView>
 
-        <!-- Footer Summary -->
-        <TextBlock x:Name="SummaryText" Grid.Row="4"
-                   Text="就绪：正在准备扫描系统隐私痕迹..."
-                   Style="{ThemeResource CaptionTextBlockStyle}"
-                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                   TextWrapping="Wrap" />
+        <TextBlock x:Name="SummaryText" Grid.Row="4" Text="正在准备扫描…" Style="{StaticResource StealthCaptionStyle}" AutomationProperties.LiveSetting="Polite" />
     </Grid>
 </Page>

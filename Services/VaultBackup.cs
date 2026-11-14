@@ -25,6 +25,7 @@ public partial class VaultService
             {
                 EnsureUnlocked(requireReal: true);
                 if (File.Exists(_rotationJournalPath)) throw new InvalidOperationException("请等待密码更换完成后再备份。");
+                if (!IsDefinitelyMissing(RemovalJournalPath)) throw new InvalidOperationException("请先完成待重试的删除或重置，再创建备份。");
                 byte[] plain = JsonSerializer.SerializeToUtf8Bytes(_config!);
                 try { catalog = ProtectedData.Protect(plain, null, DataProtectionScope.CurrentUser); }
                 finally { CryptographicOperations.ZeroMemory(plain); }
@@ -77,6 +78,7 @@ public partial class VaultService
     // Restore only into an empty vault: an existing vault is never silently replaced.
     public async Task<int> RestoreBackupAsync(string source, CancellationToken token = default)
     {
+        using var operation = await EnterMutationAsync(token);
         EnsureEmptyRestoreTarget();
         string staging = Path.Combine(_vaultRoot, ".restore-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(staging);
@@ -117,7 +119,8 @@ public partial class VaultService
         lock (_sync)
         {
             if (HasVault || IsUnlocked || File.Exists(_configPath) || File.Exists(_configBackupPath) ||
-                File.Exists(_rotationJournalPath) || (Directory.Exists(_mediaFolder) && Directory.EnumerateFileSystemEntries(_mediaFolder).Any()))
+                File.Exists(_rotationJournalPath) || !IsDefinitelyMissing(RemovalJournalPath)
+                || (Directory.Exists(_mediaFolder) && Directory.EnumerateFileSystemEntries(_mediaFolder).Any()))
                 throw new InvalidOperationException("恢复需要空保险箱，已有数据不会被覆盖。请保留现有保险箱后，在首次设置页面恢复备份。");
         }
     }

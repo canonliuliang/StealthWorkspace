@@ -66,6 +66,8 @@ Stealth_WebProfile*/
 StealthVault_Store/
 *-data/
 system_catalog.dat*
+rotate.dat*
+remove.dat*
 settings.dat*
 *.svault
 *.svbackup
@@ -74,6 +76,8 @@ app-log-dump.txt
 selftest-result.txt
 ui-smoke-data/
 .migrated
+.legacy-import-disabled*
+.legacy-migration-*/
 
 # Credentials, signing material and local exports
 .env

@@ -12,7 +12,7 @@
     Drop="VaultPage_Drop"
     mc:Ignorable="d">
 
-    <Grid Padding="16" RowSpacing="12">
+    <Grid Padding="24" RowSpacing="20" Background="{ThemeResource StealthCanvasBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -29,20 +29,20 @@
 
             <StackPanel Spacing="6">
                 <StackPanel Spacing="4">
-                    <TextBlock Text="媒体库" Style="{ThemeResource TitleTextBlockStyle}" FontWeight="SemiBold" />
+                    <TextBlock Text="媒体库" Style="{StaticResource StealthPageTitleStyle}" />
                     <Border x:Name="VaultBadge" CornerRadius="6" Padding="8,3" HorizontalAlignment="Left"
                             Background="{ThemeResource SubtleFillColorSecondaryBrush}"
                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1">
-                        <TextBlock x:Name="VaultBadgeText" Text="默认存储" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium" />
+                        <TextBlock x:Name="VaultBadgeText" Text="默认存储" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium" />
                     </Border>
                 </StackPanel>
-                <TextBlock x:Name="StatsSummaryText" Text="本地工作区 · 内存流管理"
-                           Style="{ThemeResource CaptionTextBlockStyle}"
+                <TextBlock x:Name="StatsSummaryText" Text="图片与视频，保存在你的加密空间。"
+                           Style="{StaticResource StealthCaptionStyle}"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
             </StackPanel>
 
-            <Button x:Name="ImportButton" Grid.Column="1" Margin="10,0,0,0"
+            <Button x:Name="ImportButton" Grid.Column="1" Margin="10,0,0,0" AutomationProperties.Name="导入文件"
                     Style="{ThemeResource AccentButtonStyle}" Click="ImportFile_Click" VerticalAlignment="Center">
                 <StackPanel Orientation="Horizontal" Spacing="6">
                     <FontIcon Glyph="&#xE710;" FontSize="13" />
@@ -52,7 +52,7 @@
         </Grid>
 
         <StackPanel Grid.Row="1" Spacing="6">
-            <AutoSuggestBox x:Name="SearchBox" PlaceholderText="搜索文件名" QueryIcon="Find"
+            <AutoSuggestBox x:Name="SearchBox" PlaceholderText="搜索文件名" QueryIcon="Find" AutomationProperties.Name="搜索媒体文件"
                             TextChanged="SearchBox_TextChanged" />
             <Grid ColumnSpacing="8">
                 <Grid.ColumnDefinitions>
@@ -87,17 +87,17 @@
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                     BorderThickness="1"
                     CornerRadius="12"
-                    Padding="10"
+                    Padding="24"
                     VerticalAlignment="Stretch" HorizontalAlignment="Stretch"
                     Visibility="Collapsed">
-                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="5">
-                    <Grid Width="32" Height="32" HorizontalAlignment="Center">
-                        <Ellipse Fill="{ThemeResource AccentFillColorTertiaryBrush}" />
-                        <FontIcon Glyph="&#xE8B7;" FontSize="16" Foreground="{ThemeResource AccentFillColorDefaultBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="360" Spacing="12">
+                    <Grid Width="56" Height="56" HorizontalAlignment="Center">
+                        <Ellipse Fill="{ThemeResource StealthBrandSubtleBrush}" />
+                        <FontIcon Glyph="&#xE8B7;" FontSize="24" Foreground="{ThemeResource StealthBrandBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Grid>
-                    <TextBlock Text="没有可显示的媒体" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" HorizontalAlignment="Center" />
-                    <TextBlock Text="可拖入图片或视频，也可点击「导入文件」。" TextWrapping="Wrap" TextAlignment="Center"
-                               Style="{ThemeResource CaptionTextBlockStyle}"
+                    <TextBlock x:Name="EmptyTitleText" Text="这里还没有媒体" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="EmptyDescriptionText" Text="拖入图片或视频，或点击「导入文件」，开始整理你的私人收藏。" TextWrapping="Wrap" TextAlignment="Center"
+                               Style="{StaticResource StealthCaptionStyle}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                HorizontalAlignment="Center" />
                 </StackPanel>
@@ -134,23 +134,23 @@
                                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                 BorderThickness="1"
                                 CornerRadius="10"
-                                Width="132"
-                                Height="143"
-                                Padding="6"
-                                Margin="0,0,6,6">
+                                Width="168"
+                                Height="188"
+                                Padding="10"
+                                Margin="0,0,8,8">
                             <!-- Right Click Context Menu -->
                             <Border.ContextFlyout>
                                 <MenuFlyout>
                                     <MenuFlyoutItem Text="打开媒体" Icon="Play" Tag="{x:Bind Id}" Click="FlyoutPlay_Click" />
                                     <MenuFlyoutItem Text="解密导出至磁盘" Icon="Share" Tag="{x:Bind Id}" Click="FlyoutExport_Click" />
                                     <MenuFlyoutSeparator />
-                                    <MenuFlyoutItem Text="彻底粉碎删除" Icon="Delete" Tag="{x:Bind Id}" Click="FlyoutDelete_Click" Foreground="OrangeRed" />
+                                    <MenuFlyoutItem Text="彻底粉碎删除" Icon="Delete" Tag="{x:Bind Id}" Click="FlyoutDelete_Click" Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
                                 </MenuFlyout>
                             </Border.ContextFlyout>
 
                             <Grid RowSpacing="4">
                                 <Grid.RowDefinitions>
-                                    <RowDefinition Height="76" />
+                                    <RowDefinition Height="100" />
                                     <RowDefinition Height="*" />
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
@@ -158,13 +158,13 @@
                                 <!-- Card Header: Icon & Media Badge -->
                                 <Grid Grid.Row="0">
                                     <Border CornerRadius="6"
-                                            Background="{ThemeResource AccentFillColorTertiaryBrush}">
+                                            Background="{ThemeResource StealthBrandSubtleBrush}">
                                         <FontIcon Glyph="{x:Bind DisplayIconGlyph}" FontSize="18" Foreground="{ThemeResource AccentFillColorDefaultBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                     </Border>
                                     <Image x:Name="MediaThumbnail" Stretch="UniformToFill" Loaded="Thumbnail_Loaded"
                                            Unloaded="Thumbnail_Unloaded" DataContextChanged="Thumbnail_DataContextChanged" />
                                     <Border HorizontalAlignment="Right" VerticalAlignment="Top" Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="4" Padding="6,2">
-                                        <TextBlock Text="{x:Bind FileExtension}" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock Text="{x:Bind FileExtension}" FontSize="12" FontWeight="Bold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                     </Border>
                                 </Grid>
 
@@ -187,7 +187,7 @@
 
         <StackPanel Grid.Row="3" Spacing="4">
             <TextBlock x:Name="StatusText" Text="就绪" TextWrapping="Wrap"
-                       Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                       Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             <ProgressBar x:Name="ImportProgressBar" Visibility="Collapsed" />
             <Button x:Name="CancelImportButton" Content="取消导入" Click="CancelImport_Click" Visibility="Collapsed" />
             <StackPanel x:Name="FailureActions" Orientation="Horizontal" Spacing="8" Visibility="Collapsed">

@@ -26,34 +26,6 @@ public class VaultConfig
     public List<VaultItem> DecoyItems { get; set; } = new();
 }
 
-public enum VaultUnlockStatus
-{
-    Success,
-    WrongPassword,
-    LockedOut,
-    NoVault,
-    Corrupted,
-    Error
-}
-
-public sealed class VaultUnlockResult
-{
-    public VaultUnlockStatus Status { get; init; }
-    public bool IsDecoy { get; init; }
-    public int RetryAfterSeconds { get; init; }
-    public string Message { get; init; } = string.Empty;
-    internal byte[]? Key { get; set; }
-
-    internal void ForgetKey()
-    {
-        if (Key != null)
-        {
-            CryptographicOperations.ZeroMemory(Key);
-            Key = null;
-        }
-    }
-}
-
 /// <summary>
 /// Two-space encrypted vault (real + optional decoy), stored under a camouflaged
 /// per-user hidden directory.
@@ -71,10 +43,6 @@ public partial class VaultService
     private static VaultService? _instance;
     public static VaultService Instance => _instance ??= new VaultService();
 
-    private const int MaxFailedAttemptsBeforeDelay = 5;
-    private const int LockoutSecondsShort = 30;
-    private const int LockoutSecondsLong = 300;
-    private const int RotationFileSuffix = 2;
     private const int MinPasswordLength = 6;
 
     private readonly string _vaultRoot;
@@ -82,6 +50,7 @@ public partial class VaultService
     private readonly string _configPath;
     private readonly string _configBackupPath;
     private readonly string _rotationJournalPath;
+    private readonly string? _legacyMigrationSource;
     private readonly object _sync = new();
 
     private VaultConfig? _config;
@@ -89,17 +58,21 @@ public partial class VaultService
     private bool _isUnlocked;
     private bool _isDecoyMode;
     private bool _corrupted;
+    private bool _loadedFromBackup;
     private string _loadError = string.Empty;
 
-    private int _failedAttempts;
-    private DateTime _lockoutUntilUtc = DateTime.MinValue;
 
     public VaultService() : this(null)
     {
     }
 
     /// <summary>Test/diagnostic constructor allowing an isolated data root.</summary>
-    public VaultService(string? dataRootOverride)
+    public VaultService(string? dataRootOverride) : this(dataRootOverride, null)
+    {
+    }
+
+    /// <summary>Explicit legacy source used only by isolated migration fixtures.</summary>
+    internal VaultService(string? dataRootOverride, string? legacyStore)
     {
         _vaultRoot = string.IsNullOrWhiteSpace(dataRootOverride) ? AppPaths.EnsureDataRoot() : dataRootOverride!;
         _mediaFolder = Path.Combine(_vaultRoot, "MediaVault");
@@ -122,9 +95,12 @@ public partial class VaultService
             AppLog.Error("初始化保险箱目录失败", ex);
         }
 
-        MigrateOldVaultIfPresent();
-        LoadConfig();
+        if (legacyStore == null && string.IsNullOrWhiteSpace(dataRootOverride) && !AppPaths.HasDataRootOverride)
+            legacyStore = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "StealthVault_Store");
+        _legacyMigrationSource = legacyStore;
+        LoadConfigWithLegacyMigration();
         RecoverPendingRotation();
+        RecoverPendingRemoval();
     }
 
     #region Public state
@@ -146,7 +122,7 @@ public partial class VaultService
         {
             lock (_sync)
             {
-                return _corrupted || (_config != null && IsHexHash(_config.RealHashHex));
+                return _corrupted || File.Exists(RemovalJournalPath) || (_config != null && IsHexHash(_config.RealHashHex));
             }
         }
     }
@@ -172,8 +148,9 @@ public partial class VaultService
     public void ReloadConfig()
     {
         Lock();
-        LoadConfig();
-        RecoverPendingRotation();
+        if (!_mutationGate.Wait(0)) return;
+        try { LoadConfigWithLegacyMigration(); RecoverPendingRotation(); RecoverPendingRemoval(); }
+        finally { _mutationGate.Release(); }
     }
 
     public ObservableCollection<VaultItem> VisibleItems { get; } = new();
@@ -183,200 +160,12 @@ public partial class VaultService
 
     #endregion
 
-    #region Unlock / Lock
-
-    /// <summary>
-    /// Verifies a password off the UI thread and returns an opaque result. The caller
-    /// must dispose the key by calling <see cref="ApplyUnlock"/> (or the result's
-    /// internal key is zeroed when the result is finalized). Never mutates UI state.
-    /// </summary>
-    public VaultUnlockResult VerifyPassword(string password)
-    {
-        try
-        {
-            lock (_sync)
-            {
-                if (_corrupted)
-                {
-                    return new VaultUnlockResult
-                    {
-                        Status = VaultUnlockStatus.Corrupted,
-                        Message = "保险箱配置损坏，无法验证密码。"
-                    };
-                }
-
-                if (_config == null || !IsHexHash(_config.RealHashHex))
-                {
-                    return new VaultUnlockResult { Status = VaultUnlockStatus.NoVault, Message = "尚未创建保险箱。" };
-                }
-
-                DateTime now = DateTime.UtcNow;
-                if (now < _lockoutUntilUtc)
-                {
-                    return new VaultUnlockResult
-                    {
-                        Status = VaultUnlockStatus.LockedOut,
-                        RetryAfterSeconds = Math.Max(1, (int)Math.Ceiling((_lockoutUntilUtc - now).TotalSeconds))
-                    };
-                }
-
-                if (string.IsNullOrEmpty(password))
-                {
-                    return new VaultUnlockResult { Status = VaultUnlockStatus.WrongPassword, Message = "请输入密码。" };
-                }
-
-                byte[]? key = null;
-                try
-                {
-                    key = CryptoService.DeriveKey(password, Convert.FromHexString(_config.RealSaltHex), _config.Iterations);
-                    if (CryptoService.VerifyKeyHash(key, _config.RealHashHex))
-                    {
-                        ResetThrottle();
-                        // Ownership of the key is transferred to the result; the finally
-                        // block must not zero it (that would silently unlock with a key of
-                        // all zeroes and make every decryption fail).
-                        var success = new VaultUnlockResult
-                        {
-                            Status = VaultUnlockStatus.Success,
-                            IsDecoy = false,
-                            Key = key
-                        };
-                        key = null;
-                        return success;
-                    }
-                    CryptographicOperations.ZeroMemory(key);
-                    key = null;
-
-                    if (IsHexHash(_config.DecoyHashHex) && IsHexSalt(_config.DecoySaltHex))
-                    {
-                        key = CryptoService.DeriveKey(password, Convert.FromHexString(_config.DecoySaltHex),
-                            _config.DecoyIterations > 0 ? _config.DecoyIterations : CryptoService.DefaultIterations);
-                        if (CryptoService.VerifyKeyHash(key, _config.DecoyHashHex))
-                        {
-                            ResetThrottle();
-                            var decoySuccess = new VaultUnlockResult
-                            {
-                                Status = VaultUnlockStatus.Success,
-                                IsDecoy = true,
-                                Key = key
-                            };
-                            key = null;
-                            return decoySuccess;
-                        }
-                    }
-                }
-                catch (Exception ex) when (ex is FormatException or CryptographicException)
-                {
-                    AppLog.Error("保险箱密码验证异常", ex);
-                    return new VaultUnlockResult { Status = VaultUnlockStatus.Error, Message = "保险箱数据不可用。" };
-                }
-                finally
-                {
-                    if (key != null) CryptographicOperations.ZeroMemory(key);
-                }
-
-                return RegisterFailure(now);
-            }
-        }
-        catch (Exception ex)
-        {
-            AppLog.Error("保险箱密码验证失败", ex);
-            return new VaultUnlockResult { Status = VaultUnlockStatus.Error, Message = "发生内部错误。" };
-        }
-    }
-
-    /// <summary>Applies a successful verification on the UI thread and loads the visible item list.</summary>
-    public bool ApplyUnlock(VaultUnlockResult result)
-    {
-        if (result == null || result.Status != VaultUnlockStatus.Success || result.Key == null)
-        {
-            result?.ForgetKey();
-            return false;
-        }
-
-        try
-        {
-            lock (_sync)
-            {
-                if (_currentKey != null)
-                {
-                    CryptographicOperations.ZeroMemory(_currentKey);
-                }
-
-                _currentKey = result.Key;
-                result.Key = null;
-                _isUnlocked = true;
-                _isDecoyMode = result.IsDecoy;
-                RefreshVisibleItemsLocked();
-            }
-
-            Unlocked?.Invoke();
-            return true;
-        }
-        catch (Exception ex)
-        {
-            AppLog.Error("应用解锁状态失败", ex);
-            result.ForgetKey();
-            return false;
-        }
-    }
-
-    public void Lock()
-    {
-        bool wasUnlocked;
-        lock (_sync)
-        {
-            wasUnlocked = _isUnlocked;
-            _isUnlocked = false;
-            _isDecoyMode = false;
-            if (_currentKey != null)
-            {
-                CryptographicOperations.ZeroMemory(_currentKey);
-                _currentKey = null;
-            }
-            VisibleItems.Clear();
-        }
-
-        if (wasUnlocked)
-        {
-            Locked?.Invoke();
-        }
-    }
-
-    private VaultUnlockResult RegisterFailure(DateTime now)
-    {
-        _failedAttempts++;
-        int retryAfter = 0;
-        if (_failedAttempts >= MaxFailedAttemptsBeforeDelay)
-        {
-            int seconds = _failedAttempts >= 10 ? LockoutSecondsLong : LockoutSecondsShort;
-            _lockoutUntilUtc = now.AddSeconds(seconds);
-            retryAfter = seconds;
-            AppLog.Warn($"保险箱连续验证失败 {_failedAttempts} 次，已临时锁定 {seconds} 秒");
-        }
-
-        return new VaultUnlockResult
-        {
-            Status = retryAfter > 0 ? VaultUnlockStatus.LockedOut : VaultUnlockStatus.WrongPassword,
-            RetryAfterSeconds = retryAfter,
-            Message = retryAfter > 0
-                ? $"尝试次数过多，请在 {retryAfter} 秒后重试。"
-                : "密码错误，请重试。"
-        };
-    }
-
-    private void ResetThrottle()
-    {
-        _failedAttempts = 0;
-        _lockoutUntilUtc = DateTime.MinValue;
-    }
-
-    #endregion
-
     #region Vault creation / password management
 
     public async Task InitializeVaultAsync(string masterPassword, string? decoyPassword = null, IProgress<double>? progress = null)
     {
+        long setupEpoch = CaptureUnlockEpoch();
+        using var operation = await EnterMutationAsync();
         ValidateNewPassword(masterPassword, nameof(masterPassword));
         if (!string.IsNullOrEmpty(decoyPassword))
         {
@@ -390,37 +179,26 @@ public partial class VaultService
             if (HasVaultCore) throw new InvalidOperationException("保险箱已存在，不能重复初始化。");
         }
 
-        progress?.Report(0.05);
-        (byte[] realSalt, byte[] realKey) = await Task.Run(() =>
-        {
-            byte[] salt = CryptoService.GenerateRandomBytes(CryptoService.SaltSize);
-            byte[] key = CryptoService.DeriveKey(masterPassword, salt, CryptoService.DefaultIterations);
-            return (salt, key);
-        });
-
-        progress?.Report(0.6);
-
-        byte[]? decoySalt = null;
+        byte[] realKey = Array.Empty<byte>();
         byte[]? decoyKey = null;
-        if (!string.IsNullOrEmpty(decoyPassword))
-        {
-            (decoySalt, decoyKey) = await Task.Run(() =>
-            {
-                byte[] salt = CryptoService.GenerateRandomBytes(CryptoService.SaltSize);
-                byte[] key = CryptoService.DeriveKey(decoyPassword!, salt, CryptoService.DefaultIterations);
-                return (salt, key);
-            });
-        }
-
-        progress?.Report(0.9);
-
+        bool opened = false;
         try
         {
+            progress?.Report(0.05);
+            byte[] realSalt = CryptoService.GenerateRandomBytes(CryptoService.SaltSize);
+            realKey = await Task.Run(() => CryptoService.DeriveKey(masterPassword, realSalt, CryptoService.DefaultIterations));
+            progress?.Report(0.6);
+            byte[]? decoySalt = null;
+            if (!string.IsNullOrEmpty(decoyPassword))
+            {
+                decoySalt = CryptoService.GenerateRandomBytes(CryptoService.SaltSize);
+                decoyKey = await Task.Run(() => CryptoService.DeriveKey(decoyPassword, decoySalt, CryptoService.DefaultIterations));
+            }
+            progress?.Report(0.9);
             lock (_sync)
             {
                 if (HasVaultCore) throw new InvalidOperationException("保险箱已存在，不能重复初始化。");
-
-                _config = new VaultConfig
+                var candidate = new VaultConfig
                 {
                     Version = 2,
                     RealSaltHex = Convert.ToHexString(realSalt),
@@ -428,27 +206,29 @@ public partial class VaultService
                     Iterations = CryptoService.DefaultIterations,
                     Items = new List<VaultItem>()
                 };
-
                 if (decoySalt != null && decoyKey != null)
                 {
-                    _config.DecoySaltHex = Convert.ToHexString(decoySalt);
-                    _config.DecoyHashHex = Convert.ToHexString(CryptoService.HashKey(decoyKey));
-                    _config.DecoyIterations = CryptoService.DefaultIterations;
-                    _config.DecoyItems = new List<VaultItem>();
+                    candidate.DecoySaltHex = Convert.ToHexString(decoySalt);
+                    candidate.DecoyHashHex = Convert.ToHexString(CryptoService.HashKey(decoyKey));
+                    candidate.DecoyIterations = CryptoService.DefaultIterations;
                 }
-
-                SaveConfigOrThrow();
+                // Publish only after the catalog write succeeds. A failed first
+                // setup remains empty and retryable in the same application session.
+                SaveConfigOrThrow(candidate);
+                _config = candidate;
                 _corrupted = false;
                 _loadError = string.Empty;
-
-                ReplaceCurrentKey(realKey);
-                realKey = Array.Empty<byte>();
-                _isUnlocked = true;
+                opened = _unlockEpoch == setupEpoch;
+                if (opened)
+                {
+                    ReplaceCurrentKey(realKey);
+                    realKey = Array.Empty<byte>();
+                }
+                _unlockEpoch++;
+                _isUnlocked = opened;
                 _isDecoyMode = false;
-                RefreshVisibleItemsLocked();
             }
-
-            Unlocked?.Invoke();
+            PublishVaultState(unlocked: opened, notify: opened);
             progress?.Report(1.0);
         }
         finally
@@ -465,9 +245,12 @@ public partial class VaultService
     /// </summary>
     public async Task ChangeMasterPasswordAsync(string newPassword, IProgress<double>? progress = null, CancellationToken cancellationToken = default)
     {
+        using var operation = await EnterMutationAsync(cancellationToken);
         ValidateNewPassword(newPassword, nameof(newPassword));
         EnsureUnlocked(requireReal: true);
         var items = SnapshotCurrentItems(out VaultConfig config, decoy: false);
+        await RejectOtherSpacePasswordAsync(newPassword, config.DecoySaltHex, config.DecoyHashHex,
+            config.DecoyIterations, cancellationToken);
         byte[] oldKey = CloneCurrentKey();
 
         byte[] newSalt = CryptoService.GenerateRandomBytes(CryptoService.SaltSize);
@@ -488,9 +271,9 @@ public partial class VaultService
                 if (stillUnlocked)
                 {
                     ReplaceCurrentKey(appliedKey);
-                    RefreshVisibleItemsLocked();
                 }
             }
+            RefreshVisibleItems();
 
             if (!stillUnlocked)
             {
@@ -520,6 +303,7 @@ public partial class VaultService
         IProgress<double>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        using var operation = await EnterMutationAsync(cancellationToken);
         ValidateNewPassword(decoyPassword, nameof(decoyPassword));
         EnsureUnlocked(requireReal: true);
 
@@ -545,6 +329,8 @@ public partial class VaultService
 
         try
         {
+            await RejectOtherSpacePasswordAsync(decoyPassword, config.RealSaltHex, config.RealHashHex,
+                config.Iterations, cancellationToken);
             newKey = await Task.Run(() => CryptoService.DeriveKey(decoyPassword, newSalt, CryptoService.DefaultIterations), cancellationToken);
 
             if (alreadyExists)
@@ -563,33 +349,9 @@ public partial class VaultService
                     return candidate;
                 }, cancellationToken);
 
-                if (decoyItems.Count > 0)
-                {
-                    await RotateAsync(config, decoyItems, decoy: true, oldDecoyKey, newKey, newSalt,
-                        CryptoService.DefaultIterations, progress, cancellationToken);
-                }
-                else
-                {
-                    lock (_sync)
-                    {
-                        config.DecoySaltHex = Convert.ToHexString(newSalt);
-                        config.DecoyHashHex = Convert.ToHexString(CryptoService.HashKey(newKey));
-                        config.DecoyIterations = CryptoService.DefaultIterations;
-                        SaveConfigOrThrow();
-                    }
-                }
             }
-            else
-            {
-                lock (_sync)
-                {
-                    config.DecoySaltHex = Convert.ToHexString(newSalt);
-                    config.DecoyHashHex = Convert.ToHexString(CryptoService.HashKey(newKey));
-                    config.DecoyIterations = CryptoService.DefaultIterations;
-                    config.DecoyItems ??= new List<VaultItem>();
-                    SaveConfigOrThrow();
-                }
-            }
+            await RotateAsync(config, decoyItems, decoy: true, oldDecoyKey ?? Array.Empty<byte>(), newKey,
+                newSalt, CryptoService.DefaultIterations, progress, cancellationToken);
 
             progress?.Report(1.0);
         }
@@ -603,66 +365,18 @@ public partial class VaultService
     /// <summary>Removes the decoy vault and destroys its encrypted media.</summary>
     public async Task ClearDecoyAsync()
     {
+        using var operation = await EnterMutationAsync(allowPendingRemoval: true);
         EnsureUnlocked(requireReal: true);
-
-        List<string> toDelete = new();
-        lock (_sync)
-        {
-            if (_config == null) return;
-            toDelete = _config.DecoyItems.Select(i => i.StoredFileName).Where(IsSafeFileName).ToList();
-        }
-
-        await Task.Run(() =>
-        {
-            foreach (string name in toDelete)
-            {
-                try { CryptoService.ShredFile(Path.Combine(_mediaFolder, name), 1); } catch { }
-            }
-        });
-
-        lock (_sync)
-        {
-            if (_config == null) return;
-            _config.DecoyItems.Clear();
-            _config.DecoySaltHex = string.Empty;
-            _config.DecoyHashHex = string.Empty;
-            _config.DecoyIterations = 0;
-            SaveConfigOrThrow();
-        }
+        List<string> files;
+        lock (_sync) files = _config!.DecoyItems.Select(item => item.StoredFileName).ToList();
+        await ExecuteRemovalAsync(BeginRemoval("clear-decoy", files));
     }
 
     public async Task ResetVaultAsync()
     {
+        using var operation = await EnterMutationAsync(allowPendingRecovery: true, allowPendingRemoval: true);
         Lock();
-
-        await Task.Run(() =>
-        {
-            try
-            {
-                if (File.Exists(_configPath)) File.Delete(_configPath);
-                if (File.Exists(_configBackupPath)) File.Delete(_configBackupPath);
-                if (File.Exists(_rotationJournalPath)) File.Delete(_rotationJournalPath);
-                if (Directory.Exists(_mediaFolder))
-                {
-                    foreach (string file in Directory.GetFiles(_mediaFolder))
-                    {
-                        try { File.Delete(file); } catch { }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                AppLog.Error("重置保险箱失败", ex);
-            }
-        });
-
-        lock (_sync)
-        {
-            _config = new VaultConfig();
-            _corrupted = false;
-            _loadError = string.Empty;
-            VisibleItems.Clear();
-        }
+        await ResetWithJournalAsync();
     }
 
     #endregion
@@ -676,6 +390,7 @@ public partial class VaultService
         CancellationToken cancellationToken = default,
         Action<bool>? reportOriginalRemoval = null)
     {
+        using var operation = await EnterMutationAsync(cancellationToken);
         EnsureUnlocked();
         if (string.IsNullOrWhiteSpace(sourcePath)) throw new ArgumentException("文件路径为空。", nameof(sourcePath));
 
@@ -683,8 +398,17 @@ public partial class VaultService
         if (!File.Exists(fullSourcePath)) throw new FileNotFoundException("源文件不存在。", fullSourcePath);
         if (IsInsideVault(fullSourcePath)) throw new InvalidOperationException("不能把保险箱自身的文件再次导入。");
 
-        bool decoy = IsDecoyMode;
-        byte[] key = CloneCurrentKey();
+        bool decoy;
+        long epoch;
+        byte[] key;
+        lock (_sync)
+        {
+            key = CloneCurrentKey();
+            decoy = _isDecoyMode;
+            epoch = _unlockEpoch;
+        }
+        byte[]? sourceDigest = null;
+        SafeShred.FileIdentity? sourceIdentity = null;
 
         string id = Guid.NewGuid().ToString("N");
         string destName = id + ".svault";
@@ -695,14 +419,25 @@ public partial class VaultService
         {
             Directory.CreateDirectory(_mediaFolder);
             var fileInfo = new FileInfo(fullSourcePath);
-            long length = fileInfo.Length;
-
-            progress?.Report(0);
-            await Task.Run(() => CryptoService.EncryptFile(fullSourcePath, tempPath, key, progress, cancellationToken), cancellationToken);
+            long length;
+            // Pin the actual source while its metadata and bytes are read. The identity
+            // and digest later bind optional removal to these exact imported bytes.
+            using (var sourcePin = new FileStream(fullSourcePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                length = sourcePin.Length;
+                if (shredOriginal) sourceIdentity = SafeShred.CaptureIdentity(sourcePin.SafeFileHandle);
+                progress?.Report(0);
+                await Task.Run(() =>
+                {
+                    if (shredOriginal)
+                        sourceDigest = CryptoService.EncryptFileWithDigest(fullSourcePath, tempPath, key, progress, cancellationToken);
+                    else CryptoService.EncryptFile(fullSourcePath, tempPath, key, progress, cancellationToken);
+                }, cancellationToken);
+            }
             cancellationToken.ThrowIfCancellationRequested();
 
             // Re-check state: the user might have locked the vault while encrypting.
-            if (!IsUnlocked || IsDecoyMode != decoy)
+            if (!IsCurrentUnlockSession(epoch, decoy))
             {
                 TryDelete(tempPath);
                 throw new InvalidOperationException("保险箱已锁定，导入已取消。");
@@ -727,7 +462,7 @@ public partial class VaultService
             {
                 try
                 {
-                    if (!_isUnlocked || _isDecoyMode != decoy || _config == null)
+                    if (!_isUnlocked || _isDecoyMode != decoy || _unlockEpoch != epoch || _config == null)
                         throw new InvalidOperationException("保险箱状态已改变，导入已取消。");
 
                     CurrentItemListLocked(decoy).Add(item);
@@ -748,15 +483,13 @@ public partial class VaultService
                 throw new InvalidOperationException("保存保险箱配置失败，导入已取消。");
             }
 
-            if (IsUnlocked && IsDecoyMode == decoy)
-            {
-                VisibleItems.Add(item);
-            }
+            RefreshVisibleItems();
 
             if (shredOriginal)
             {
-                bool removed = !cancellationToken.IsCancellationRequested && IsUnlocked && IsDecoyMode == decoy
-                    && await Task.Run(() => CryptoService.ShredFile(fullSourcePath));
+                bool removed = !cancellationToken.IsCancellationRequested && IsCurrentUnlockSession(epoch, decoy)
+                    && sourceIdentity != null && sourceDigest != null
+                    && await Task.Run(() => CryptoService.ShredImportedFile(fullSourcePath, sourceIdentity.Value, sourceDigest));
                 reportOriginalRemoval?.Invoke(removed);
             }
 
@@ -775,6 +508,7 @@ public partial class VaultService
         finally
         {
             CryptographicOperations.ZeroMemory(key);
+            if (sourceDigest != null) CryptographicOperations.ZeroMemory(sourceDigest);
         }
     }
 
@@ -784,32 +518,42 @@ public partial class VaultService
         IProgress<double>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        using var operation = await EnterMutationAsync(cancellationToken);
         EnsureUnlocked();
         ValidateItem(item);
 
         string sourcePath = Path.Combine(_mediaFolder, item.StoredFileName);
         if (!File.Exists(sourcePath)) throw new FileNotFoundException("保险箱内找不到该媒体文件。", sourcePath);
+        ValidateStoredLength(item, CryptoService.ReadHeader(sourcePath).PlainLength);
 
         string target = Path.GetFullPath(targetFilePath);
+        if (IsInsideVault(target)) throw new InvalidOperationException("请选择保险箱目录以外的位置导出文件。");
         string directory = Path.GetDirectoryName(target) ?? throw new ArgumentException("无效的导出路径。", nameof(targetFilePath));
         Directory.CreateDirectory(directory);
+        if (!SafeFileSystem.IsPlainPath(directory))
+            throw new InvalidOperationException("导出目录包含链接或无法访问，请选择普通文件夹。");
 
-        bool decoy = IsDecoyMode;
-        string tempTarget = target + ".part";
-        byte[] key = CloneCurrentKey();
+        string tempTarget = target + "." + Guid.NewGuid().ToString("N") + ".part";
+        byte[] key;
+        long epoch;
+        lock (_sync)
+        {
+            key = CloneCurrentKey();
+            epoch = _unlockEpoch;
+        }
 
         try
         {
             progress?.Report(0);
             await Task.Run(() => CryptoService.DecryptToFile(sourcePath, tempTarget, key, progress, cancellationToken), cancellationToken);
 
-            if (!IsUnlocked || IsDecoyMode != decoy)
+            lock (_sync)
             {
-                TryDelete(tempTarget);
-                throw new InvalidOperationException("保险箱已锁定，导出已取消。");
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!_isUnlocked || _unlockEpoch != epoch)
+                    throw new InvalidOperationException("保险箱状态已改变，导出已取消。");
+                File.Move(tempTarget, target, overwrite: true);
             }
-
-            File.Move(tempTarget, target, overwrite: true);
             progress?.Report(1.0);
         }
         finally
@@ -837,7 +581,9 @@ public partial class VaultService
 
         try
         {
-            return new VaultMediaStream(path, key);
+            var stream = new VaultMediaStream(path, key);
+            try { ValidateStoredLength(item, stream.Length); return stream; }
+            catch { stream.Dispose(); throw; }
         }
         finally
         {
@@ -862,6 +608,7 @@ public partial class VaultService
 
         try
         {
+            ValidateStoredLength(item, CryptoService.ReadHeader(path).PlainLength);
             return CryptoService.DecryptToMemoryStream(path, key, maxBytes);
         }
         finally
@@ -872,29 +619,15 @@ public partial class VaultService
 
     public async Task DeleteItemAsync(VaultItem item)
     {
+        using var operation = await EnterMutationAsync(allowPendingRemoval: true);
         EnsureUnlocked();
         ValidateItem(item);
-
         bool decoy = IsDecoyMode;
-        string storedName = item.StoredFileName;
-
         lock (_sync)
         {
-            var list = CurrentItemListLocked(decoy);
-            if (!list.Remove(item)) return;
-            try
-            {
-                SaveConfigOrThrow();
-            }
-            catch
-            {
-                list.Add(item);
-                throw;
-            }
+            if (!CurrentItemListLocked(decoy).Contains(item)) return;
         }
-
-        VisibleItems.Remove(item);
-        await Task.Run(() => CryptoService.ShredFile(Path.Combine(_mediaFolder, storedName), 1));
+        await ExecuteRemovalAsync(BeginRemoval(decoy ? "decoy-item" : "real-item", new List<string> { item.StoredFileName }));
     }
 
     #endregion
@@ -902,11 +635,12 @@ public partial class VaultService
     #region Maintenance
 
     /// <summary>
-    /// Removes leftovers from interrupted imports/rotations and encrypted files that are
-    /// no longer referenced by either vault. Called at startup, off the UI thread.
+    /// Removes only aged temporary files when the catalog is trustworthy and idle.
+    /// Unreferenced encrypted payloads are retained for recovery, never guessed to be garbage.
     /// </summary>
     public void SweepOrphanedMedia()
     {
+        if (!_mutationGate.Wait(0)) return;
         try
         {
             if (!Directory.Exists(_mediaFolder)) return;
@@ -914,6 +648,8 @@ public partial class VaultService
             HashSet<string> referenced;
             lock (_sync)
             {
+                if (_corrupted || _loadedFromBackup || _config == null || !IsHexHash(_config.RealHashHex)
+                    || !IsHexSalt(_config.RealSaltHex) || File.Exists(_rotationJournalPath) || File.Exists(RemovalJournalPath)) return;
                 referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 if (_config != null)
                 {
@@ -933,7 +669,8 @@ public partial class VaultService
                     bool staleAge = DateTime.UtcNow - File.GetLastWriteTimeUtc(file) > TimeSpan.FromHours(1);
 
                     if (referenced.Contains(name)) continue;
-                    if (!staleTemp && !staleAge) continue;
+                    if (!staleTemp || !staleAge) continue;
+                    if (!SafeFileSystem.IsPlainPath(file)) continue;
 
                     File.Delete(file);
                     removed++;
@@ -953,6 +690,7 @@ public partial class VaultService
         {
             AppLog.Error("清理保险箱残留失败", ex);
         }
+        finally { _mutationGate.Release(); }
     }
 
     #endregion
@@ -1007,10 +745,12 @@ public partial class VaultService
                 string oldName = item.StoredFileName;
                 string oldPath = Path.Combine(_mediaFolder, oldName);
                 if (!File.Exists(oldPath)) throw new FileNotFoundException("保险箱文件缺失，无法更换密码。", oldPath);
+                ValidateStoredLength(item, CryptoService.ReadHeader(oldPath).PlainLength);
 
-                string newName = $"{item.Id}.r{RotationFileSuffix}.svault";
+                string newName = $"{Guid.NewGuid():N}.rotated.svault";
                 string newPath = Path.Combine(_mediaFolder, newName);
-                if (File.Exists(newPath)) TryDelete(newPath);
+                if (string.Equals(oldPath, newPath, StringComparison.OrdinalIgnoreCase) || File.Exists(newPath))
+                    throw new IOException("密码更换目标必须是新的文件，原文件已保留。");
 
                 long itemBytes = Math.Max(0, item.FileSizeBytes);
                 long processedSnapshot = processed;
@@ -1020,8 +760,8 @@ public partial class VaultService
                     progress?.Report(Math.Clamp(overall * 0.95, 0, 0.95));
                 });
 
-                await Task.Run(() => CryptoService.ReEncryptFile(oldPath, newPath, oldKey, newKey, chunkProgress, cancellationToken), cancellationToken);
                 createdFiles.Add(newPath);
+                await Task.Run(() => CryptoService.ReEncryptFile(oldPath, newPath, oldKey, newKey, chunkProgress, cancellationToken), cancellationToken);
                 planned.Add((item, oldName, newName));
                 journal.Files.Add(new RotationFilePair { OldName = oldName, NewName = newName });
                 processed += itemBytes;
@@ -1081,20 +821,30 @@ public partial class VaultService
                 }
             }
 
-            // Config is committed: old files are now unreferenced garbage.
+            // Keep the fallback catalog consistent before deleting its old payloads.
+            // If this copy fails, retain both generations and the recovery journal.
+            try { File.Copy(_configPath, _configBackupPath, overwrite: true); }
+            catch (Exception ex)
+            {
+                AppLog.Warn("新密码已提交，配置备份更新失败；两代媒体和恢复记录均已保留", ex);
+                return;
+            }
+            bool cleanupComplete = true;
             foreach (var (_, oldName, _) in planned)
             {
                 try
                 {
-                    CryptoService.ShredFile(Path.Combine(_mediaFolder, oldName), 1);
+                    string oldPath = Path.Combine(_mediaFolder, oldName);
+                    if (File.Exists(oldPath) && !CryptoService.ShredFile(oldPath, 1)) cleanupComplete = false;
                 }
                 catch (Exception ex)
                 {
                     AppLog.Warn($"更换密码后旧文件清理失败: {ex.GetType().Name}");
+                    cleanupComplete = false;
                 }
             }
 
-            DeleteJournal();
+            if (cleanupComplete) DeleteJournal();
             progress?.Report(1.0);
         }
         catch
@@ -1140,26 +890,25 @@ public partial class VaultService
         try
         {
             if (!File.Exists(_rotationJournalPath)) return;
+            lock (_sync)
+                if (_corrupted || _loadedFromBackup || _config == null || !IsHexHash(_config.RealHashHex)
+                    || !IsHexSalt(_config.RealSaltHex)) return;
 
             RotationJournal? journal;
             try
             {
                 byte[] cipher = File.ReadAllBytes(_rotationJournalPath);
                 byte[] plain = ProtectedData.Unprotect(cipher, null, DataProtectionScope.CurrentUser);
-                journal = JsonSerializer.Deserialize<RotationJournal>(Encoding.UTF8.GetString(plain));
+                try { journal = JsonSerializer.Deserialize<RotationJournal>(plain); }
+                finally { CryptographicOperations.ZeroMemory(plain); }
             }
             catch (Exception ex)
             {
-                AppLog.Warn($"密码更换日志损坏，已丢弃: {ex.GetType().Name}");
-                DeleteJournal();
+                AppLog.Warn("密码更换日志不可读取，已保留全部媒体与恢复记录", ex);
                 return;
             }
 
-            if (journal == null || journal.Files.Count == 0)
-            {
-                DeleteJournal();
-                return;
-            }
+            if (journal?.Files == null || !IsHexHash(journal.NewHashHex) || !IsHexSalt(journal.NewSaltHex)) return;
 
             bool committed;
             lock (_sync)
@@ -1168,19 +917,28 @@ public partial class VaultService
                             (journal.IsDecoy
                                 ? string.Equals(_config.DecoyHashHex, journal.NewHashHex, StringComparison.OrdinalIgnoreCase)
                                 : string.Equals(_config.RealHashHex, journal.NewHashHex, StringComparison.OrdinalIgnoreCase));
+                var references = new HashSet<string>(_config!.Items.Concat(_config.DecoyItems).Select(i => i.StoredFileName),
+                    StringComparer.OrdinalIgnoreCase);
+                var plannedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var pair in journal.Files)
+                {
+                    if (!IsSafeFileName(pair.OldName) || !IsSafeFileName(pair.NewName)
+                        || !plannedNames.Add(pair.OldName) || !plannedNames.Add(pair.NewName)) return;
+                    string keep = committed ? pair.NewName : pair.OldName;
+                    string discard = committed ? pair.OldName : pair.NewName;
+                    if (!references.Contains(keep) || references.Contains(discard)
+                        || !SafeFileSystem.IsPlainPath(Path.Combine(_mediaFolder, keep))) return;
+                }
             }
+
+            if (committed) File.Copy(_configPath, _configBackupPath, overwrite: true);
 
             foreach (var pair in journal.Files)
             {
-                if (!IsSafeFileName(pair.OldName) || !IsSafeFileName(pair.NewName)) continue;
-                if (committed)
-                {
-                    TryDelete(Path.Combine(_mediaFolder, pair.OldName));
-                }
-                else
-                {
-                    TryDelete(Path.Combine(_mediaFolder, pair.NewName));
-                }
+                string discard = Path.Combine(_mediaFolder, committed ? pair.OldName : pair.NewName);
+                if (!File.Exists(discard)) continue;
+                if (!SafeFileSystem.IsPlainPath(discard)) return;
+                File.Delete(discard); // A failure retains the journal for the next recovery attempt.
             }
 
             DeleteJournal();
@@ -1200,6 +958,7 @@ public partial class VaultService
     {
         lock (_sync)
         {
+            _loadedFromBackup = false;
             try
             {
                 if (!File.Exists(_configPath) && !File.Exists(_configBackupPath))
@@ -1216,7 +975,9 @@ public partial class VaultService
                     loaded = TryLoadConfigFile(_configBackupPath);
                     if (loaded != null)
                     {
-                        try { File.Copy(_configBackupPath, _configPath, overwrite: true); } catch { }
+                        _loadedFromBackup = true;
+                        if (!File.Exists(_rotationJournalPath) && !File.Exists(RemovalJournalPath))
+                            try { File.Copy(_configBackupPath, _configPath, overwrite: true); } catch { }
                         AppLog.Info("已从保险箱配置备份恢复");
                     }
                 }
@@ -1316,15 +1077,15 @@ public partial class VaultService
         items.AddRange(unique);
     }
 
-    private void SaveConfigOrThrow()
+    private void SaveConfigOrThrow(VaultConfig? candidate = null)
     {
         lock (_sync)
         {
-            if (_config == null) throw new InvalidOperationException("保险箱配置未加载。");
-
-            string json = JsonSerializer.Serialize(_config);
-            byte[] plain = Encoding.UTF8.GetBytes(json);
-            byte[] encrypted = ProtectedData.Protect(plain, null, DataProtectionScope.CurrentUser);
+            candidate ??= _config ?? throw new InvalidOperationException("保险箱配置未加载。");
+            byte[] plain = JsonSerializer.SerializeToUtf8Bytes(candidate);
+            byte[] encrypted;
+            try { encrypted = ProtectedData.Protect(plain, null, DataProtectionScope.CurrentUser); }
+            finally { CryptographicOperations.ZeroMemory(plain); }
 
             string temp = _configPath + ".tmp";
             File.WriteAllBytes(temp, encrypted);
@@ -1347,61 +1108,103 @@ public partial class VaultService
         }
     }
 
-    private void MigrateOldVaultIfPresent()
+    private void LoadConfigWithLegacyMigration()
     {
-        try
+        string? migrationError = _legacyMigrationSource == null ? null : MigrateOldVaultIfPresent(_legacyMigrationSource);
+        LoadConfig();
+        if (migrationError != null && !HasVaultCore)
         {
-            string oldStore = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "StealthVault_Store");
-            string oldConfig = Path.Combine(oldStore, "vault_config.dat");
-            string oldMedia = Path.Combine(oldStore, "EncryptedMedia");
-
-            if (File.Exists(oldConfig) && !File.Exists(_configPath))
-            {
-                try
-                {
-                    string json = File.ReadAllText(oldConfig, Encoding.UTF8);
-                    var migrated = JsonSerializer.Deserialize<VaultConfig>(json);
-                    if (migrated != null)
-                    {
-                        SanitizeConfig(migrated);
-                        lock (_sync)
-                        {
-                            _config = migrated;
-                            SaveConfigOrThrow();
-                        }
-                        AppLog.Info("已迁移旧版保险箱配置");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    AppLog.Warn($"旧版保险箱配置迁移失败: {ex.GetType().Name}");
-                }
-            }
-
-            if (Directory.Exists(oldMedia))
-            {
-                Directory.CreateDirectory(_mediaFolder);
-                foreach (string file in Directory.GetFiles(oldMedia))
-                {
-                    string target = Path.Combine(_mediaFolder, Path.GetFileName(file));
-                    if (!File.Exists(target))
-                    {
-                        File.Copy(file, target, overwrite: false);
-                    }
-                }
-            }
-
-            if (Directory.Exists(oldStore))
-            {
-                try { Directory.Delete(oldStore, recursive: true); } catch { }
-            }
-        }
-        catch (Exception ex)
-        {
-            AppLog.Error("旧版保险箱迁移失败", ex);
+            _corrupted = true;
+            _loadError = migrationError;
         }
     }
 
+    private string? MigrateOldVaultIfPresent(string oldStore)
+    {
+        if (AppPaths.IsLegacyImportDisabled(_vaultRoot)) return null;
+        string oldConfig = Path.Combine(oldStore, "vault_config.dat");
+        if (!File.Exists(oldConfig)) return null;
+        string? staging = null;
+        var moved = new List<string>();
+        bool committed = false;
+        const string retained = "旧版保险箱尚未迁移完成，原目录与文件已保留。请检查文件占用或目录冲突后重新启动。";
+        bool HasTargetMetadata() => new[] { _configPath, _configBackupPath, _rotationJournalPath, RemovalJournalPath }
+            .Any(path => !IsDefinitelyMissing(path));
+        try
+        {
+            // An established destination is authoritative. Never merge another vault's
+            // ciphertext into it, and never remove the untouched legacy source.
+            if (HasTargetMetadata()) return retained;
+            if (!SafeFileSystem.IsPlainPath(_vaultRoot) || !SafeFileSystem.IsPlainPath(_mediaFolder))
+                throw new IOException("迁移目标包含目录链接，原文件已保留。");
+            if (Directory.EnumerateFileSystemEntries(_mediaFolder).Any())
+                throw new IOException("目标媒体目录非空，不能合并旧保险箱。");
+            if (!SafeFileSystem.IsPlainPath(oldConfig)) throw new IOException("旧版索引路径不安全。");
+            using var catalogInput = new FileStream(oldConfig, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var migrated = JsonSerializer.Deserialize<VaultConfig>(catalogInput)
+                ?? throw new InvalidDataException("旧版索引无效。");
+            if (!IsHexHash(migrated.RealHashHex) || !IsHexSalt(migrated.RealSaltHex) ||
+                migrated.Items == null || migrated.DecoyItems == null)
+                throw new InvalidDataException("旧版索引缺少有效的密码校验信息。");
+            int originalCount = migrated.Items.Count + migrated.DecoyItems.Count;
+            SanitizeConfig(migrated);
+            var items = migrated.Items.Concat(migrated.DecoyItems).ToArray();
+            if (items.Length != originalCount || items.Select(item => item.StoredFileName).Distinct(StringComparer.OrdinalIgnoreCase).Count() != items.Length)
+                throw new InvalidDataException("旧版索引包含重复或无效媒体记录。");
+            if (migrated.DecoyHashHex.Length != 0 && (!IsHexHash(migrated.DecoyHashHex) || !IsHexSalt(migrated.DecoySaltHex)))
+                throw new InvalidDataException("旧版诱饵索引无效。");
+
+            staging = Path.Combine(_vaultRoot, ".legacy-migration-" + Guid.NewGuid().ToString("N"));
+            string stagedMedia = Path.Combine(staging, "MediaVault");
+            Directory.CreateDirectory(stagedMedia);
+            foreach (var item in items)
+            {
+                string source = Path.Combine(oldStore, "EncryptedMedia", item.StoredFileName);
+                if (!SafeFileSystem.IsPlainPath(source)) throw new IOException("旧版媒体无法安全读取。");
+                string target = Path.Combine(stagedMedia, item.StoredFileName);
+                File.Copy(source, target, overwrite: false);
+                File.SetAttributes(target, File.GetAttributes(target) & ~FileAttributes.ReadOnly);
+                ValidateStoredLength(item, CryptoService.ReadHeader(target).PlainLength);
+            }
+            byte[] plain = JsonSerializer.SerializeToUtf8Bytes(migrated);
+            byte[] encrypted;
+            try { encrypted = ProtectedData.Protect(plain, null, DataProtectionScope.CurrentUser); }
+            finally { CryptographicOperations.ZeroMemory(plain); }
+            string stagedCatalog = Path.Combine(staging, "system_catalog.dat");
+            using (var output = new FileStream(stagedCatalog, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                output.Write(encrypted);
+                output.Flush(true);
+            }
+            if (HasTargetMetadata() || Directory.EnumerateFileSystemEntries(_mediaFolder).Any())
+                throw new IOException("迁移目标已改变，原文件已保留。");
+            foreach (var item in items)
+            {
+                string target = Path.Combine(_mediaFolder, item.StoredFileName);
+                File.Move(Path.Combine(stagedMedia, item.StoredFileName), target);
+                moved.Add(target);
+            }
+            // Commit last and never overwrite a destination that appeared meanwhile.
+            File.Move(stagedCatalog, _configPath);
+            committed = true;
+            AppLog.Info("旧版保险箱已复制并验证，原目录保留以便回滚");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("旧版保险箱迁移未完成，原始目录已保留", ex);
+            return retained;
+        }
+        finally
+        {
+            if (!committed) foreach (string file in moved) TryDelete(file);
+            if (staging != null)
+            {
+                try { if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true); }
+                catch (Exception ex) { AppLog.Warn("旧版迁移临时目录保留: " + ex.GetType().Name); }
+            }
+        }
+    }
     #endregion
 
     #region Helpers
@@ -1449,6 +1252,17 @@ public partial class VaultService
         }
     }
 
+    private bool IsCurrentUnlockSession(long epoch, bool decoy)
+    {
+        lock (_sync) return _isUnlocked && _unlockEpoch == epoch && _isDecoyMode == decoy;
+    }
+
+    private static void ValidateStoredLength(VaultItem item, long actualLength)
+    {
+        if (actualLength != item.FileSizeBytes)
+            throw new InvalidDataException("媒体长度与加密索引不一致，文件可能已损坏。原文件已保留。");
+    }
+
     private bool IsReferencedFile(string storedName)
     {
         lock (_sync)
@@ -1476,40 +1290,12 @@ public partial class VaultService
         }
     }
 
-    /// <summary>Replaces the visible collection. Must be called on the UI thread.</summary>
-    public void RefreshVisibleItems()
-    {
-        lock (_sync)
-        {
-            RefreshVisibleItemsLocked();
-        }
-    }
-
-    private void RefreshVisibleItemsLocked()
-    {
-        VisibleItems.Clear();
-        if (!_isUnlocked || _config == null) return;
-
-        var source = _isDecoyMode ? _config.DecoyItems : _config.Items;
-        foreach (VaultItem item in source)
-        {
-            item.IsDecoy = _isDecoyMode;
-            VisibleItems.Add(item);
-        }
-    }
-
     private bool IsInsideVault(string fullPath)
     {
-        try
-        {
-            string vaultFull = Path.GetFullPath(_vaultRoot) + Path.DirectorySeparatorChar;
-            string candidate = Path.GetFullPath(fullPath);
-            return candidate.StartsWith(vaultFull, StringComparison.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return false;
-        }
+        string vaultFull = SafeFileSystem.ResolvePath(_vaultRoot);
+        string candidate = SafeFileSystem.ResolvePath(fullPath);
+        return candidate.Equals(vaultFull, StringComparison.OrdinalIgnoreCase) ||
+            candidate.StartsWith(vaultFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsSafeFileName(string? name)

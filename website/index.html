@@ -4,53 +4,121 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <meta name="description" content="Stealth 私密浏览器：Windows 原生多标签浏览、顺手的图片阅读与本地加密媒体库。下载 Windows x64 / ARM64 预览版。">
-  <meta name="theme-color" content="#f5f8fc">
-  <meta property="og:title" content="Stealth · 给浏览一点私人空间">
-  <meta property="og:description" content="Windows 原生浏览器与本地加密媒体工作台。轻松浏览，连续看图，按需保存。">
+  <meta name="theme-color" content="#111918">
+  <meta name="description" content="Stealth r15 重磅更新：全新石墨与青玉视觉，更顺手的 Windows 原生浏览与图片阅读，更稳妥的本地文件保护。下载 x64 / ARM64 预览版。">
+  <meta property="og:title" content="Stealth r15 · 重新打磨，每一次打开">
+  <meta property="og:description" content="全新视觉，更顺手的交互，更稳妥的文件保护。Windows 原生浏览器与本地加密媒体工作台。">
   <meta property="og:type" content="website">
-  <meta property="og:image" content="https://canonliuliang.github.io/StealthWorkspace/assets/app-icon.png">
-  <title>Stealth 私密浏览器 · Windows 原生体验</title>
-  <link rel="icon" href="assets/app-icon.png" type="image/png">
+  <meta property="og:url" content="https://canonliuliang.github.io/StealthWorkspace/">
+  <meta property="og:image" content="https://canonliuliang.github.io/StealthWorkspace/assets/browser.png">
+  <meta property="og:image:alt" content="Stealth r15 石墨与青玉深色浏览器界面">
+  <link rel="canonical" href="https://canonliuliang.github.io/StealthWorkspace/">
+  <title>Stealth r15 重磅更新 · 全新视觉，更顺手的私密工作空间</title>
+  <link rel="icon" href="assets/app-icon.svg" type="image/svg+xml">
+  <link rel="alternate icon" href="assets/app-icon.png" type="image/png">
   <link rel="stylesheet" href="styles.css">
   <script src="app.js" defer></script>
 </head>
 <body>
   <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"><defs><symbol id="windows-mark" viewBox="0 0 16 16"><path d="M0 0h7v7H0zM9 0h7v7H9zM0 9h7v7H0zM9 9h7v7H9z"/></symbol></defs></svg>
   <a class="skip" href="#main">跳到主要内容</a>
-  <header class="header">
-    <a class="brand" href="./" aria-label="Stealth 首页"><img src="assets/app-icon.png" width="36" height="36" alt=""><span>Stealth</span></a>
-    <nav aria-label="主导航"><a href="#experience">体验</a><a href="#privacy">隐私</a><a href="#guide">上手指南</a><a class="nav-download" href="#download">下载 <span aria-hidden="true">↗</span></a></nav>
+
+  <header class="header on-dark">
+    <div class="header-inner wrap">
+      <a class="brand" href="./" aria-label="Stealth 首页"><img src="assets/app-icon.svg" width="36" height="36" alt=""><span>Stealth</span></a>
+      <nav class="desktop-nav" aria-label="主导航"><a href="#r15">r15 更新</a><a href="#performance">实测改进</a><a href="#privacy">隐私边界</a><a href="https://github.com/canonliuliang/StealthWorkspace">GitHub <span aria-hidden="true">↗</span></a></nav>
+      <details class="mobile-menu">
+        <summary>菜单</summary>
+        <nav aria-label="移动端导航"><a href="#r15">r15 更新</a><a href="#performance">实测改进</a><a href="#privacy">隐私边界</a><a href="#guide">上手指南</a><a href="https://github.com/canonliuliang/StealthWorkspace">GitHub ↗</a></nav>
+      </details>
+      <a class="nav-download" href="#download">下载 r15 <span aria-hidden="true">↓</span></a>
+    </div>
   </header>
+
   <main id="main">
-    <section class="hero wrap" aria-labelledby="hero-title">
-      <div class="hero-copy">
-        <p class="eyebrow">为 WINDOWS 而作</p>
-        <h1 id="hero-title">给浏览<br>一点<span class="blue">私人空间。</span></h1>
-        <p class="intro">打开网页，接着看图，随手收藏。<br>原生 Windows 体验，自己的媒体空间。</p>
-        <div class="actions">
-          <a class="button primary" href="#download"><span class="button-label"><svg class="brand-icon" width="18" height="18" aria-hidden="true" focusable="false"><use href="#windows-mark"/></svg><span>获取 Windows 预览版</span></span><span aria-hidden="true">↓</span></a>
-          <a class="text-link icon-link" href="https://github.com/canonliuliang/StealthWorkspace"><img class="brand-icon" src="assets/github-mark.svg" width="18" height="18" alt=""><span>在 GitHub 查看</span><span aria-hidden="true">↗</span></a>
+    <section class="hero on-dark" aria-labelledby="hero-title">
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <p class="release-label"><span>r15</span> 重磅更新 <span class="label-divider" aria-hidden="true">/</span> WINDOWS 原生</p>
+          <h1 id="hero-title">重新打磨，<br><em>每一次打开。</em></h1>
+          <p class="hero-intro">全新视觉，更顺手的交互，<br>更稳妥的文件保护。<br class="mobile-break">你的私人工作空间，迎来新一页。</p>
+          <div class="actions">
+            <a class="button primary" href="#download"><svg class="brand-icon" width="18" height="18" aria-hidden="true" focusable="false"><use href="#windows-mark"/></svg><span>下载 r15 预览版</span><span aria-hidden="true">↓</span></a>
+            <a class="text-link" href="https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.14-r15-preview">看看这次更新 <span aria-hidden="true">↗</span></a>
+          </div>
+          <p class="hero-note">Windows 11 · x64 / ARM64 · 未签名预览版</p>
         </div>
-        <p class="small hero-note">Windows 11 · x64 / ARM64 · 独立项目</p>
+        <figure class="hero-shot">
+          <div class="shot-heading"><span class="status-dot" aria-hidden="true"></span><span>STEALTH / r15</span><span>全新深色界面</span></div>
+          <a href="assets/browser.png" aria-label="查看完整的 Stealth r15 深色浏览器实机截图"><img src="assets/browser.png" width="2178" height="1469" fetchpriority="high" alt="Stealth r15 实机截图：全新几何 Logo、青玉强调色、地址栏、搜索与收藏区域"></a>
+          <figcaption>真实应用界面 · 点击查看原图 <span aria-hidden="true">↗</span></figcaption>
+        </figure>
       </div>
-      <div class="hero-art" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="glass-disc"><img src="assets/app-icon.png" width="256" height="256" alt=""></div><span class="art-label">你的内容。你的节奏。</span></div>
+      <div class="wrap capability-strip" aria-label="主要能力"><span>原生多标签浏览</span><span>连续图片阅读</span><span>本地加密媒体</span><span>跨标签下载管理</span></div>
     </section>
-    <div class="feature-strip wrap" aria-label="主要能力"><span>原生多标签浏览</span><span>连续图片阅读</span><span>本地加密媒体</span><span>独立临时会话</span></div>
-    <section id="experience" class="section wrap" aria-labelledby="experience-title">
-      <div class="section-heading"><div><p class="eyebrow">少一点打断</p><h2 id="experience-title">常用的事，<br>顺手就好。</h2></div><p>从第一张标签到最后一张图片，把浏览中反复用到的动作放在手边。</p></div>
-      <div class="browser-story">
-        <figure class="browser-visual"><img src="assets/browser.png" width="2076" height="1376" loading="lazy" alt="Stealth 浏览器真实界面：新标签页、地址栏、收藏夹、下载入口与会话结束按钮"><figcaption>实际应用界面 · r12 深色主题</figcaption></figure>
-        <div class="story-details"><article><span class="feature-number">01</span><h3>标签再多，也能找到</h3><p>搜索已打开的标签，恢复刚关掉的页面。切去媒体库再回来，继续之前的浏览。</p><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>A</kbd></article><article><span class="feature-number">02</span><h3>下载有一个固定的位置</h3><p>所有标签共享下载列表。暂停、继续、定位文件，不用寻找最初的网页。</p></article><article><span class="feature-number">03</span><h3>资源用在正在做的事上</h3><p>空标签按需启动内核，后台页面尝试休眠。音频、下载和全屏页面保持工作。</p></article></div>
+
+    <section id="r15" class="section wrap update-section" aria-labelledby="update-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">一次完整的重新打磨</p><h2 id="update-title">r15，改变不止于外观。</h2></div>
+        <p>从看得见的界面，到每一次点击背后的工作。把日常会碰到的细节，一起向前推进。</p>
+      </div>
+      <div class="update-list">
+        <article><span class="index" aria-hidden="true">01</span><div><h3>全新视觉，更清晰的秩序。</h3><p>重新设计 Logo，以石墨与青玉贯穿深浅主题。更舒展的排版、更易读的提示，以及统一的锁屏、浏览器和媒体库。</p></div><span class="update-tag">从品牌到每个页面</span></article>
+        <article><span class="index" aria-hidden="true">02</span><div><h3>更顺手，少一些等待。</h3><p>菜单按需创建，收藏建议减少重复计算，大媒体库的搜索合并更新。把工作留给真正需要它的时刻。</p></div><span class="update-tag">有实测，也有边界</span></article>
+        <article><span class="index" aria-hidden="true">03</span><div><h3>更稳妥，认真对待你的文件。</h3><p>重新检查导出、取消、锁定、旧数据迁移与重置。减少误覆盖机会，让中断和异常也有明确的处理方式。</p></div><span class="update-tag">保留内容优先</span></article>
+      </div>
+      <a class="text-link section-link" href="https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.14-r15-preview">阅读 r15 完整更新说明 <span aria-hidden="true">↗</span></a>
+    </section>
+
+    <section id="performance" class="performance-band" aria-labelledby="performance-title">
+      <div class="wrap section">
+        <div class="section-heading"><div><p class="eyebrow">改进，可以核对</p><h2 id="performance-title">更轻的开场。<br>更及时的回应。</h2></div><p>重构阶段，在同一台 ARM64 主机、相同配置下完成的可复现测试。只展示具体动作，不把局部结果放大成“所有网页都更快”。</p></div>
+        <div class="metrics">
+          <article class="metric"><p class="metric-label">新标签页的界面构造</p><p class="metric-value">30<span>%</span><span class="metric-arrow" aria-hidden="true">↓</span></p><h3>构造耗时减少约 30%</h3><p class="metric-comparison">6.18 ms <span aria-hidden="true">→</span> <strong>4.32 ms</strong></p><p class="metric-note">重构阶段 · .NET 8 / Debug ARM64 · 12 个空控件平均值。</p></article>
+          <article class="metric"><p class="metric-label">50,000 条收藏的本地建议</p><p class="metric-value">81<span>%</span><span class="metric-arrow" aria-hidden="true">↓</span></p><h3>无匹配查询耗时减少约 81%</h3><p class="metric-comparison">3.0615 ms <span aria-hidden="true">→</span> <strong>0.5950 ms</strong></p><p class="metric-note">重构阶段 · .NET 8 · 合成数据，31 次样本中位数。</p></article>
+        </div>
+        <div class="response-note"><span class="small-label">锁定响应</span><p>重构阶段的同配置 Debug ARM64 测试中，密码验证移出共享状态锁后，锁定操作的中位等待由 <strong>31.2069 ms</strong> 降至 <strong>0.0072 ms</strong>。</p></div>
+        <details class="measurement-details"><summary>测量条件与适用范围</summary><div class="details-content"><p>上述数据来自重构阶段的 .NET 8 同配置测量，不是不同运行时之间的速度对比。空标签数据来自相同 Debug ARM64 流程的较新验收结果；较早测得 2.94 / 3.31 / 3.77 ms，未只挑选最快的一轮。收藏建议使用固定合成数据，不能代表网络或整页加载。锁竞争同为 Debug、7 次样本，密码派生仍为 600,000 次；优化后锁定的最大观测等待为 1.2085 ms。</p><p>网页滚动 rAF 间隔的中位数前后均约 16.7 ms。这里不宣称网页 FPS 提升或总进程内存下降，也不把上述数字换算成整个应用的速度倍数。</p><a class="text-link" href="https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/OVERHAUL-2026-11-14.md">查看方法、原始数据索引与完整报告 <span aria-hidden="true">↗</span></a></div></details>
       </div>
     </section>
-    <section class="reading-band" aria-labelledby="reading-title"><div class="wrap reading-layout"><div><p class="eyebrow">图片，不必一张张重新打开</p><h2 id="reading-title">一眼看清。<br>一键下一张。</h2><p>网页与本地图片都能连续浏览。长图适应宽度，细节随时放大；退出网页阅读器，回到原来的位置。</p><div class="key-row"><span><kbd>←</kbd> <kbd>→</kbd> 切换</span><span><kbd>Esc</kbd> 返回</span></div></div><div class="reading-art" aria-hidden="true"><div class="image-sheet sheet-back"></div><div class="image-sheet sheet-front"><div class="landscape"><div class="sun"></div><div class="mountain mountain-back"></div><div class="mountain"></div></div><div class="image-controls"><span>←</span><span>03 / 12</span><span>→</span></div></div><span class="image-badge">适应宽度　↔</span></div></div></section>
-    <section class="section wrap media-section" aria-labelledby="media-title"><div class="section-heading"><div><p class="eyebrow">离线也有自己的空间</p><h2 id="media-title">留下想保存的。</h2></div><p>将图片、视频和音频导入加密媒体库。按需解密读取，搜索、筛选，再继续观看。</p></div><figure class="media-shot"><img src="assets/media-library.png" width="2200" height="1480" loading="lazy" alt="Stealth 媒体库的真实测试截图：深色界面、文件搜索、类型筛选和合成媒体缩略图"><figcaption>实际应用界面 · 内容为合成测试媒体，不含个人资料。</figcaption></figure></section>
-    <section id="privacy" class="privacy section" aria-labelledby="privacy-title"><div class="wrap privacy-layout"><div><p class="eyebrow">边界说清楚，使用更安心</p><h2 id="privacy-title">私密，是可以<br>理解的选择。</h2><a class="text-link" href="https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/PRIVACY.md">阅读完整隐私与数据说明 <span aria-hidden="true">↗</span></a></div><div class="privacy-list"><article><h3>会话临时，收藏保留</h3><p>网页使用独立临时配置。结束会话时尝试清理；崩溃或文件占用可能使清理延迟。收藏保存在本机设置中。</p></article><article><h3>媒体加密，下载由你管理</h3><p>导入保险箱的媒体分块加密。普通下载仍是普通文件，不会自动进入保险箱，也不会随会话结束删除。</p></article><article><h3>保护本地内容，不承诺匿名</h3><p>Stealth 不隐藏 IP，不能防御恶意软件或管理员。当前备份依赖原 Windows 用户，不保证重装或换机恢复。</p></article></div></div></section>
-    <section id="guide" class="section wrap" aria-labelledby="guide-title"><div class="section-heading"><div><p class="eyebrow">几步就能开始</p><h2 id="guide-title">从打开，到顺手。</h2></div><a class="text-link" href="https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/INSTALL.md">完整安装指南 ↗</a></div><ol class="steps"><li><span>1</span><h3>选择架构</h3><p>Intel / AMD 选择 x64；Windows on Arm 选择 ARM64。系统信息里可以确认。</p></li><li><span>2</span><h3>完整解压</h3><p>放到固定目录，打开 StealthWorkspace.exe。按包内说明创建桌面入口。</p></li><li><span>3</span><h3>开始浏览</h3><p>创建保险箱密码后进入浏览器。用非重要文件先体验媒体导入、导出和备份检查。</p></li></ol></section>
-    <section id="download" class="download-section wrap" aria-labelledby="download-title"><div><p class="eyebrow">STEALTH FOR WINDOWS</p><h2 id="download-title">给下一次浏览，<br>留一点空间。</h2><p>当前提供未签名预览版。Windows 可能显示 SmartScreen 提示，请自行判断信任，不要关闭系统保护。</p><p class="small">需要 Microsoft Edge WebView2 Runtime。版本说明与 SHA-256 校验值随 Release 提供。</p></div><div class="download-options"><a class="download-option" href="https://github.com/canonliuliang/StealthWorkspace/releases/download/v2026.11.14-r12-preview/Stealth-2026.11.14-r12-preview-win-x64.zip"><span class="download-identity"><svg class="brand-icon" width="20" height="20" aria-hidden="true" focusable="false"><use href="#windows-mark"/></svg><span><strong>Windows x64</strong><small>Intel / AMD 电脑</small></span></span><span aria-hidden="true">↗</span></a><a class="download-option" href="https://github.com/canonliuliang/StealthWorkspace/releases/download/v2026.11.14-r12-preview/Stealth-2026.11.14-r12-preview-win-arm64.zip"><span class="download-identity"><svg class="brand-icon" width="20" height="20" aria-hidden="true" focusable="false"><use href="#windows-mark"/></svg><span><strong>Windows ARM64</strong><small>Snapdragon / Windows on Arm</small></span></span><span aria-hidden="true">↗</span></a><p class="small">直接下载对应架构 ZIP · r12 预览版</p><a class="text-link" href="https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.14-r12-preview">版本说明与校验值 ↗</a></div></section>
-    <section class="faq wrap section" aria-labelledby="faq-title"><h2 id="faq-title">你可能想知道</h2><details><summary>这是 Microsoft 官方浏览器吗？</summary><p>不是。Stealth 是独立项目，使用 Microsoft 的 WinUI 3 和 WebView2 技术构建，不代表 Microsoft 提供或背书。</p></details><details><summary>是不是打开任何网站都会更快？</summary><p>不做这样的承诺。应用优化了空标签启动、后台资源和交互流程；网络、站点资源与安全验证仍会影响速度。部分网站可能限制嵌入式浏览器。</p></details><details><summary>换电脑后能恢复保险箱吗？</summary><p>当前备份依赖原 Windows 用户的 DPAPI，重装系统或换机后可能无法恢复。重要原始文件请另行备份，不能仅依赖应用内备份。</p></details><details><summary>遇到问题去哪里反馈？</summary><p>先看<a href="https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/TROUBLESHOOTING.md">故障排查</a>，再到 <a href="https://github.com/canonliuliang/StealthWorkspace/issues">GitHub Issues</a> 提交版本、系统和复现步骤。请勿上传密码、保险箱、Cookie 或未经审阅的日志。</p></details></section>
+
+    <section class="section wrap workspace-section" aria-labelledby="workspace-title">
+      <figure class="library-shot"><a href="assets/media-library.png" aria-label="查看完整的 r15 浅色媒体库实机截图"><img src="assets/media-library.png" width="1258" height="1469" loading="lazy" decoding="async" alt="r15 浅色媒体库实机截图：导入文件、搜索、媒体类型筛选与没有文件时的引导"></a><figcaption>r15 浅色主题 · 独立测试空间，无个人内容</figcaption></figure>
+      <div class="workspace-copy"><p class="eyebrow">让内容成为主角</p><h2 id="workspace-title">浏览之后，<br>还有自己的空间。</h2><p class="section-intro">网页、图片和本地媒体，顺着你的节奏衔接。熟悉的能力都在，细节更顺手。</p>
+        <div class="workspace-features">
+          <article><h3>标签页，随时找回</h3><p>搜索打开的标签，恢复刚关闭的网页。切去媒体库再回来，继续原来的页面。</p><p class="key-row"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>A</kbd><span>搜索标签</span></p></article>
+          <article><h3>图片，连着看更自然</h3><p>网页和本地图片都能连续阅读。长图适宽、细节放大，退出网页阅读器后回到原来的位置。</p><p class="key-row"><kbd>←</kbd><kbd>→</kbd><span>切换图片</span></p></article>
+          <article><h3>文件，有清楚的位置</h3><p>跨标签管理下载，暂停、继续或定位文件。将想保留的图片和视频另行导入加密媒体库，按需解密读取。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="protection-band on-dark" aria-labelledby="protection-title"><div class="wrap section">
+      <div class="section-heading"><div><p class="eyebrow">更稳妥的文件保护</p><h2 id="protection-title">不只关心顺利完成，<br>也照顾意外中断。</h2></div><div class="test-count"><strong>206<span> 项</span></strong><p>本机核心测试通过 / 每个架构</p><small>ARM64 与 x64 各有 2 项因盘符映射环境限制跳过。</small></div></div>
+      <div class="protection-grid"><article><h3>导出时，避免误覆盖</h3><p>阻止覆盖保险箱内文件与无关临时文件。取消操作时保留原目标，减少意外中断带来的影响。</p></article><article><h3>锁定后，旧验证不再生效</h3><p>解锁结果只能使用一次。锁定会撤销仍在进行的旧验证，过期会话也不能继续提交导入。</p></article><article><h3>迁移与重置，有回归检查</h3><p>迁移保留旧源文件，已有目标不混入无关媒体。额外验证重置后重新加载不会让旧数据再次出现。</p></article></div>
+      <p class="protection-note">核心测试覆盖确定的场景，不等于第三方安全审计或对所有环境的保证。<a href="https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/OVERHAUL-2026-11-14.md">查看验收记录与已知限制 ↗</a></p>
+    </div></section>
+
+    <section id="privacy" class="section wrap privacy-section" aria-labelledby="privacy-title">
+      <div><p class="eyebrow">边界说清楚</p><h2 id="privacy-title">私密，<br>是知情后的选择。</h2><a class="text-link section-link" href="https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/PRIVACY.md">完整隐私与数据说明 <span aria-hidden="true">↗</span></a></div>
+      <div class="privacy-list"><article><h3>临时会话，不等于匿名上网</h3><p>Stealth 不隐藏 IP，不能对抗同用户恶意软件或管理员。结束会话会尝试清理本应用浏览数据；崩溃或文件占用可能使清理延迟。</p></article><article><h3>媒体库加密，普通下载不自动加密</h3><p>导入保险箱的媒体采用分块加密。下载仍是普通文件，不会自动进入保险箱，也不会因为结束会话而删除。</p></article><article><h3>备份仍依赖原 Windows 用户</h3><p>当前备份依赖 DPAPI。重装系统、换机或更换用户后可能无法恢复；重要原始文件请另行妥善备份。</p></article></div>
+    </section>
+
+    <section id="download" class="download-section wrap" aria-labelledby="download-title">
+      <div class="download-copy"><p class="eyebrow">现在，打开新一页</p><h2 id="download-title">把 r15<br>带到你的 Windows。</h2><p>选择与你的电脑匹配的版本。完整解压，即可开始。</p><p class="release-version">2026.11.14-r15-preview</p><p class="download-warning">这是未签名预览版。Windows 可能显示 SmartScreen 提示，请自行判断是否信任，不要关闭系统保护。</p></div>
+      <div class="download-options">
+        <a class="download-option" href="https://github.com/canonliuliang/StealthWorkspace/releases/download/v2026.11.14-r15-preview/Stealth-2026.11.14-r15-preview-win-x64.zip"><svg class="brand-icon" width="22" height="22" aria-hidden="true" focusable="false"><use href="#windows-mark"/></svg><span><strong>Windows x64</strong><small>Intel / AMD 电脑 · ZIP</small></span><span class="download-arrow" aria-hidden="true">↓</span></a>
+        <a class="download-option" href="https://github.com/canonliuliang/StealthWorkspace/releases/download/v2026.11.14-r15-preview/Stealth-2026.11.14-r15-preview-win-arm64.zip"><svg class="brand-icon" width="22" height="22" aria-hidden="true" focusable="false"><use href="#windows-mark"/></svg><span><strong>Windows ARM64</strong><small>Snapdragon / Windows on Arm · ZIP</small></span><span class="download-arrow" aria-hidden="true">↓</span></a>
+        <p class="download-note">支持目标为 Windows 11。浏览器需要 Microsoft Edge WebView2 Runtime；发布包包含 .NET 与 Windows App SDK。</p>
+        <div class="download-links"><a href="https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.14-r15-preview">版本说明 ↗</a><a href="https://github.com/canonliuliang/StealthWorkspace/releases/download/v2026.11.14-r15-preview/SHA256SUMS.txt">SHA-256 校验值 ↗</a></div>
+      </div>
+    </section>
+
+    <section id="guide" class="section wrap guide-section" aria-labelledby="guide-title"><div class="section-heading"><div><p class="eyebrow">开始之前</p><h2 id="guide-title">三步，进入工作空间。</h2></div><a class="text-link" href="https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/INSTALL.md">完整安装与升级指南 <span aria-hidden="true">↗</span></a></div><ol class="steps"><li><span aria-hidden="true">01</span><h3>确认电脑架构</h3><p>Intel / AMD 选择 x64；Windows on Arm 选择 ARM64。不确定时，可在系统信息中确认。</p></li><li><span aria-hidden="true">02</span><h3>完整解压到新目录</h3><p>打开 StealthWorkspace.exe，不在 ZIP 内运行。升级前保留原程序和重要文件备份，按指南处理桌面入口。</p></li><li><span aria-hidden="true">03</span><h3>先用非重要文件试用</h3><p>设置保险箱密码，开始浏览。先验证媒体导入、导出与备份检查，再安排日常使用。</p></li></ol></section>
+
+    <section class="faq section wrap" aria-labelledby="faq-title"><div><p class="eyebrow">再多了解一点</p><h2 id="faq-title">常见问题</h2></div><div class="faq-list"><details><summary>r15 会让所有网站加载更快吗？</summary><p>不作这样的承诺。本次实测针对空标签界面构造、本地收藏建议与锁等待；网络、站点内容和 WebView2 环境仍影响实际体验。网页 FPS 和总进程内存没有统一提升结论。</p></details><details><summary>这是 Microsoft 官方浏览器吗？</summary><p>不是。Stealth 是使用 WinUI 3 与 WebView2 构建的独立项目，与 Microsoft 没有隶属关系，也不代表 Microsoft 背书。</p></details><details><summary>换电脑后可以恢复保险箱吗？</summary><p>当前备份依赖原 Windows 用户的 DPAPI，不保证换机或重装后恢复。请保留重要原始文件的独立备份，不要只依赖应用内备份。</p></details><details><summary>后台标签一定会休眠吗？</summary><p>应用会尝试让合适的后台页面休眠，但 WebView2 可能拒绝。音频、下载和全屏等场景需要继续工作，不能保证每个后台标签都休眠。</p></details><details><summary>遇到问题，如何反馈？</summary><p>先查看<a href="https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/TROUBLESHOOTING.md">故障排查</a>，再到 <a href="https://github.com/canonliuliang/StealthWorkspace/issues">GitHub Issues</a> 提供版本、系统与复现步骤。请勿上传密码、保险箱、Cookie 或未经审阅的日志。</p></details></div></section>
   </main>
-  <footer class="footer wrap"><a class="brand" href="./"><img src="assets/app-icon.png" width="28" height="28" alt=""><span>Stealth</span></a><p>Windows 原生体验。独立项目。</p><nav aria-label="页脚"><a class="icon-link" href="https://github.com/canonliuliang/StealthWorkspace"><img class="brand-icon" src="assets/github-mark.svg" width="16" height="16" alt=""><span>GitHub</span></a><a href="https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/PRIVACY.md">隐私说明</a><a href="https://github.com/canonliuliang/StealthWorkspace/issues">反馈</a></nav></footer>
+
+  <footer class="footer on-dark"><div class="wrap footer-inner"><a class="brand" href="./"><img src="assets/app-icon.svg" width="32" height="32" alt=""><span>Stealth</span></a><p>你的私人工作空间。<br><span>Windows 原生体验 · 独立项目</span></p><nav aria-label="页脚"><a href="https://github.com/canonliuliang/StealthWorkspace">GitHub ↗</a><a href="https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.14-r15-preview">r15 Release ↗</a><a href="https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/PRIVACY.md">隐私说明</a><a href="https://github.com/canonliuliang/StealthWorkspace/issues">反馈</a></nav></div></footer>
 </body>
 </html>

@@ -64,12 +64,45 @@ public sealed partial class BrowserTabControl
     internal async Task<bool> OpenDownloadsAuditAsync()
     {
         for (int i = 0; i < 40 && !IsLoaded; i++) await Task.Delay(25);
-        ShowDownloads_Click(this, new Microsoft.UI.Xaml.RoutedEventArgs());
-        for (int i = 0; i < 40 && _downloadsFlyout?.Content is not DownloadListControl { IsLoaded: true }; i++) await Task.Delay(25);
-        bool loaded = _downloadsFlyout?.Content is DownloadListControl { IsLoaded: true };
-        Services.SmokeTest.Report($"download flyout: tabLoaded={IsLoaded}; contentLoaded={loaded}; nativeControl={HasBrowserControl}");
-        _downloadsFlyout?.Hide();
-        return loaded;
+        var flyout = EnsureDownloadsFlyout();
+        int opened = 0, closed = 0;
+        string FocusDescription() => Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(XamlRoot) is Microsoft.UI.Xaml.FrameworkElement element
+            ? element.GetType().Name + ":" + element.Name : "none";
+        void Opened(object? sender, object args)
+        {
+            opened++;
+            Services.SmokeTest.Report($"download flyout opened: focus={FocusDescription()}");
+        }
+        void Closed(object? sender, object args)
+        {
+            closed++;
+            Services.SmokeTest.Report($"download flyout closed before audit hide: focus={FocusDescription()}; addressPending={_focusAddressOnLoad}");
+        }
+        flyout.Opened += Opened;
+        flyout.Closed += Closed;
+        try
+        {
+            // Exercise the real low-priority callback even when machine timing
+            // has already delivered the original Loaded callback before this test.
+            FocusAddressWhenLoaded();
+            QueueInitialAddressFocus();
+            Services.SmokeTest.Report($"download flyout before show: tabLoaded={IsLoaded}; anchorLoaded={DownloadsBtn.IsLoaded}; anchorSize={DownloadsBtn.ActualWidth:F1}x{DownloadsBtn.ActualHeight:F1}; addressPending={_focusAddressOnLoad}; focus={FocusDescription()}");
+            ShowDownloads_Click(this, new Microsoft.UI.Xaml.RoutedEventArgs());
+            bool cancelledInitialFocus = !_focusAddressOnLoad;
+            var dispatched = new TaskCompletionSource<bool>();
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => dispatched.TrySetResult(true));
+            for (int i = 0; i < 40 && (flyout.Content is not DownloadListControl { IsLoaded: true } || opened == 0 || !dispatched.Task.IsCompleted); i++) await Task.Delay(25);
+            bool loaded = flyout.Content is DownloadListControl { IsLoaded: true };
+            bool stableOpen = flyout.IsOpen && opened > 0 && closed == 0 && dispatched.Task.IsCompleted;
+            Services.SmokeTest.Report($"download flyout: tabLoaded={IsLoaded}; contentLoaded={loaded}; nativeControl={HasBrowserControl}; opened={opened}; closed={closed}; isOpen={flyout.IsOpen}; initialFocusCancelled={cancelledInitialFocus}; focusCallbackDrained={dispatched.Task.IsCompleted}; focus={FocusDescription()}");
+            return loaded && stableOpen && cancelledInitialFocus;
+        }
+        finally
+        {
+            flyout.Opened -= Opened;
+            flyout.Closed -= Closed;
+            flyout.Hide();
+        }
     }
 
     internal async Task<CoreWebView2DownloadOperation> BeginDownloadAuditAsync(string address)
