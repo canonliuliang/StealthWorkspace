@@ -1,0 +1,125 @@
+using System.Text.Json;
+using Microsoft.Web.WebView2.Core;
+
+namespace StealthWorkspace.Controls;
+
+public sealed partial class BrowserTabControl
+{
+    internal async Task PreparePendingResourceAuditAsync(string address)
+    {
+        await InitializeAsync(null);
+        var core = _hookedCore ?? throw new InvalidOperationException("Audit core missing");
+        var ready = new TaskCompletionSource<bool>();
+        void Ready(CoreWebView2 sender, CoreWebView2DOMContentLoadedEventArgs args) => ready.TrySetResult(true);
+        core.DOMContentLoaded += Ready;
+        try
+        {
+            _backgroundIdleDelay = TimeSpan.FromMilliseconds(400);
+            NavigateTo(new Uri(address));
+            await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (!_documentReady || _activeNavigationId == null) throw new InvalidOperationException("Fixture must have usable DOM and pending resource");
+        }
+        finally { core.DOMContentLoaded -= Ready; }
+    }
+
+    internal bool AuditHasPendingResources => _documentReady && _activeNavigationId != null;
+
+    internal async Task AttachAuditDevToolsAsync()
+    {
+        if (_hookedCore is not { } core) throw new InvalidOperationException("Audit core missing");
+        await core.CallDevToolsProtocolMethodAsync("Runtime.evaluate", "{\"expression\":\"1\",\"returnByValue\":true}");
+    }
+
+    internal async Task<bool> CheckCookieCleanupAuditAsync()
+    {
+        var core = _hookedCore ?? throw new InvalidOperationException("Audit core missing");
+        var manager = core.CookieManager;
+        foreach (var (name, domain, path) in new[] {
+            ("r11-domain", ".fixture.test", "/"), ("r11-host", "shop.fixture.test", "/"),
+            ("r11-path", "shop.fixture.test", "/account"), ("r11-parent-host", "fixture.test", "/"),
+            ("r11-lookalike", "notshop.fixture.test", "/"), ("r11-sibling", "other.fixture.test", "/")
+        }) manager.AddOrUpdateCookie(manager.CreateCookie(name, "synthetic", domain, path));
+        var before = await manager.GetCookiesAsync("");
+        Services.SmokeTest.Report("cookie audit fixture domains: " + string.Join(",", before.Where(c => c.Name.StartsWith("r11-")).Select(c => c.Name + "=" + c.Domain)));
+        int removed = await Services.BrowserSiteData.DeleteCookiesForHostAsync(core, "shop.fixture.test", () => !_isDisposed);
+        var remaining = (await manager.GetCookiesAsync("")).Where(c => c.Name.StartsWith("r11-")).ToArray();
+        Services.SmokeTest.Report("cookie audit deleted=" + removed + "; remaining=" + string.Join(",", remaining.Select(c => c.Name + "=" + c.Domain)));
+        for (int retry = 0; retry < 20 && remaining.Length > 3; retry++)
+        {
+            await Task.Delay(50);
+            remaining = (await manager.GetCookiesAsync("")).Where(c => c.Name.StartsWith("r11-")).ToArray();
+        }
+        Services.SmokeTest.Report("cookie audit settled remaining=" + string.Join(",", remaining.Select(c => c.Name + "=" + c.Domain)));
+        bool ok = removed == 3 && remaining.Length == 3 && remaining.All(c => c.Name is "r11-parent-host" or "r11-lookalike" or "r11-sibling");
+        foreach (var cookie in remaining) manager.DeleteCookie(cookie);
+        return ok;
+    }
+
+    internal int AuditBlockedPopups => _blockedPopupCount;
+    internal bool AuditPopupPending => _popupPending;
+    internal bool AuditTracksDownload(CoreWebView2DownloadOperation operation) => _activeDownloads.Any(d => d.ResultFilePath == operation.ResultFilePath);
+    internal string AuditDownloadProgress => DownloadToastDesc.Text;
+    internal string AuditDownloadSnapshot => $"tracked={_activeDownloads.Count}; visible={DownloadToast.Visibility}; title={DownloadToastTitle.Text}; desc={DownloadToastDesc.Text}";
+
+    internal async Task<bool> OpenDownloadsAuditAsync()
+    {
+        for (int i = 0; i < 40 && !IsLoaded; i++) await Task.Delay(25);
+        ShowDownloads_Click(this, new Microsoft.UI.Xaml.RoutedEventArgs());
+        for (int i = 0; i < 40 && _downloadsFlyout?.Content is not DownloadListControl { IsLoaded: true }; i++) await Task.Delay(25);
+        bool loaded = _downloadsFlyout?.Content is DownloadListControl { IsLoaded: true };
+        Services.SmokeTest.Report($"download flyout: tabLoaded={IsLoaded}; contentLoaded={loaded}; nativeControl={HasBrowserControl}");
+        _downloadsFlyout?.Hide();
+        return loaded;
+    }
+
+    internal async Task<CoreWebView2DownloadOperation> BeginDownloadAuditAsync(string address)
+    {
+        var core = _hookedCore ?? throw new InvalidOperationException("Audit core missing");
+        var starting = new TaskCompletionSource<CoreWebView2DownloadOperation>();
+        void Started(CoreWebView2 sender, CoreWebView2DownloadStartingEventArgs args) => starting.TrySetResult(args.DownloadOperation);
+        core.DownloadStarting += Started;
+        try
+        {
+            NavigateTo(new Uri(address));
+            return await starting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally { core.DownloadStarting -= Started; }
+    }
+
+    internal async Task NavigateAuditAsync(string address)
+    {
+        await InitializeAsync(null);
+        var core = _hookedCore ?? throw new InvalidOperationException("Audit core missing");
+        var ready = new TaskCompletionSource<bool>();
+        void Completed(CoreWebView2 sender, CoreWebView2NavigationCompletedEventArgs args) => ready.TrySetResult(args.IsSuccess);
+        core.NavigationCompleted += Completed;
+        try
+        {
+            NavigateTo(new Uri(address));
+            if (!await ready.Task.WaitAsync(TimeSpan.FromSeconds(15))) throw new InvalidOperationException("Audit navigation failed");
+        }
+        finally { core.NavigationCompleted -= Completed; }
+    }
+
+    internal Task<string> EvaluateAuditAsync(string script) => (_hookedCore ?? throw new InvalidOperationException("Audit core missing"))
+        .ExecuteScriptAsync(script).AsTask().WaitAsync(TimeSpan.FromSeconds(4));
+
+    internal async Task ClickAuditAsync(string id, bool background = false)
+    {
+        if (background) _backgroundClickAt = Environment.TickCount64;
+        // Only synthetic loopback pages use this diagnostic user gesture. Normal
+        // browsing relies on the runtime's trusted IsUserInitiated event value.
+        if (_hookedCore is not { } core || !Uri.TryCreate(core.Source, UriKind.Absolute, out var uri) || !uri.IsLoopback)
+            throw new InvalidOperationException("Synthetic clicks are restricted to the loopback fixture");
+        for (int i = 0; i < 100 && _browserControl?.IsLoaded != true; i++) await Task.Delay(25);
+        _browserControl?.Focus(Microsoft.UI.Xaml.FocusState.Programmatic);
+        await Task.Delay(75);
+        if (id == "fullscreen")
+            Services.SmokeTest.Report($"fullscreen gesture: windowForeground={Services.BrowserZoomInput.IsOwnerForeground(MainWindow.CurrentHandle)}; loaded={_browserControl?.IsLoaded}; xamlFocus={_browserControl?.FocusState}; addressPending={_focusAddressOnLoad}; selected={_isSelected}; pageFocused={await core.ExecuteScriptAsync("document.hasFocus()")}");
+        await core.CallDevToolsProtocolMethodAsync("Runtime.evaluate", JsonSerializer.Serialize(new
+        {
+            expression = "document.getElementById(" + JsonSerializer.Serialize(id) + ").click()",
+            userGesture = true
+        }));
+    }
+}

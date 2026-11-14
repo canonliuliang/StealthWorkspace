@@ -1,0 +1,624 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Navigation;
+using StealthWorkspace.Controls;
+using StealthWorkspace.Services;
+
+namespace StealthWorkspace.Pages;
+
+public sealed partial class BrowserPage : Page
+{
+    private readonly HashSet<TabViewItem> _closingTabs = new();
+    private readonly List<(string Url, string Title)> _closedTabs = new();
+    private readonly Dictionary<TabViewItem, TabViewItem> _tabOpeners = new();
+
+    private bool _isPageLoaded;
+    private bool _isBurningAll;
+    private bool _isUnloading;
+    private bool _browserFullScreen;
+    private BrowserTabControl? _selectedTab;
+
+    public BrowserPage()
+    {
+        InitializeComponent();
+        PreviewKeyDown += BrowserPage_PreviewKeyDown;
+        NavigationCacheMode = NavigationCacheMode.Required;
+        Loaded += BrowserPage_Loaded;
+        Unloaded += BrowserPage_Unloaded;
+        VaultService.Instance.Locked += BrowserVaultLocked;
+    }
+
+    #region Page lifetime
+
+    private void BrowserPage_Loaded(object sender, RoutedEventArgs e)
+    {
+        _isPageLoaded = true;
+        _selectedTab?.SetTabSelected(true);
+
+        // A fresh page instance starts with an empty TabView; only create the initial
+        // tab here so navigating away/back never races with the previous instance's
+        // asynchronous teardown.
+        if (BrowserTabView.TabItems.Count == 0)
+        {
+            CreateNewTab();
+        }
+    }
+
+    private void BrowserPage_Unloaded(object sender, RoutedEventArgs e)
+    {
+        CloseTabSearch();
+        _isPageLoaded = false;
+        _selectedTab?.SetTabSelected(false);
+        RefreshPageFullScreen();
+        if (!VaultService.Instance.IsUnlocked) _ = ClearLockedSessionAsync();
+    }
+
+    private void BrowserVaultLocked() => _ = ClearLockedSessionAsync();
+
+    private async Task ClearLockedSessionAsync()
+    {
+        _closedTabs.Clear();
+
+        // Re-entrancy guard: Unloaded can be raised more than once while the page is
+        // being torn down. Only the first run releases the tabs.
+        if (_isUnloading) return;
+        _isUnloading = true;
+
+        try
+        {
+            Task closing = ClosePageTabsAsync();
+            if (!_isBurningAll)
+            {
+                if (!await BrowserProfileManager.EndSessionAsync(() => closing))
+                {
+                    AppLog.Warn("BrowserPage_Unloaded: 会话目录未清除，将在退出时重试");
+                }
+            }
+            else await closing;
+
+            if (_browserFullScreen)
+            {
+                _browserFullScreen = false;
+                BrowserTabView.Margin = new Thickness(0);
+                try
+                {
+                    MainWindow.Current?.SetFullScreenMode(false);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn($"BrowserPage_Unloaded: 退出全屏失败（{ex.GetType().Name}）");
+                }
+            }
+
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("BrowserPage_Unloaded failed", ex);
+        }
+        finally
+        {
+            _isUnloading = false;
+
+            // If the page was re-loaded while the old tabs were still being released,
+            // Loaded could not create a replacement tab (the unload guard was active).
+            // Make sure the TabView is never left empty after disposal finishes.
+            EnsureTabExists();
+        }
+    }
+
+    private Task ClosePageTabsAsync()
+    {
+        CloseTabSearch();
+        BrowserDownloads.EndSession();
+        BrowserSessionHistory.Items.Clear();
+        _tabOpeners.Clear();
+        List<TabViewItem> tabs = BrowserTabView.TabItems.OfType<TabViewItem>().ToList();
+        BrowserTabView.TabItems.Clear();
+        var closing = new List<Task>(tabs.Count);
+        foreach (var tab in _downloadOwners.Keys.ToArray()) closing.Add(tab.DisposeTabAsync());
+        DetachDownloadOwners();
+        foreach (TabViewItem item in tabs)
+        {
+            if (item.Content is BrowserTabControl tab) closing.Add(tab.DisposeTabAsync());
+            ReleaseClosedTabItem(item);
+        }
+        return Task.WhenAll(closing);
+    }
+
+    #endregion
+
+    #region Tab creation
+
+    private TabViewItem? CreateNewTab(string? initialUrl = null, [System.Runtime.CompilerServices.CallerMemberName] string origin = "", bool select = true)
+    {
+        if (!_isPageLoaded || _isUnloading || _isBurningAll || !VaultService.Instance.IsUnlocked) return null;
+        if (SmokeTest.Enabled) SmokeTest.Report($"tab-create: origin={origin}; existing={BrowserTabView.TabItems.Count}; live={BrowserTabControl.LiveTabCount}");
+
+        var tabItem = new TabViewItem
+        {
+            Header = "新标签页",
+            IconSource = new FontIconSource { Glyph = "\uE774" },
+            IsClosable = true,
+        };
+
+        var tabControl = new BrowserTabControl();
+        if (BrowserTabView.SelectedItem is TabViewItem opener) _tabOpeners[tabItem] = opener;
+        if (initialUrl == null) tabControl.FocusAddressWhenLoaded();
+
+        tabControl.TitleChanged += title =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!BrowserTabView.TabItems.Contains(tabItem)) return;
+                tabItem.Header = title;
+                ToolTipService.SetToolTip(tabItem, title);
+                if (_tabSearchOpen) RefreshTabList();
+            });
+        };
+
+        tabControl.AudioPlayingChanged += isPlaying =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!BrowserTabView.TabItems.Contains(tabItem)) return;
+                tabItem.IconSource = tabControl.TabIcon;
+            });
+        };
+
+        tabControl.NewTabRequested += (url, background) =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                // The originating tab may have closed while this request was queued.
+                if (BrowserTabView.TabItems.Contains(tabItem) && !_isUnloading && !_isBurningAll &&
+                    CreateNewTab(url, "NewTabRequested", select: !background) is { } opened)
+                    _tabOpeners[opened] = tabItem;
+            });
+        };
+
+        tabControl.PopupRequested = async background =>
+        {
+            if (!BrowserTabView.TabItems.Contains(tabItem)) return null;
+            var childItem = CreateNewTab(origin: "WebPopup", select: !background);
+            if (childItem?.Content is not BrowserTabControl child) return null;
+            _tabOpeners[childItem] = tabItem;
+            try
+            {
+                if (await child.PreparePopupAsync() && BrowserTabView.TabItems.Contains(tabItem) &&
+                    BrowserTabView.TabItems.Contains(childItem)) return child;
+            }
+            catch (Exception ex) { AppLog.Warn("Popup initialization failed: " + ex.GetType().Name); }
+            await CloseTabAsync(childItem);
+            return null;
+        };
+        tabControl.CloseRequested += () => DispatcherQueue.TryEnqueue(() => { _ = CloseTabAsync(tabItem); });
+
+        // Read the current selection when the queued event is delivered. An old
+        // background tab or a tab already closed must never hide the window chrome.
+        tabControl.FullScreenModeChanged += _ => DispatcherQueue.TryEnqueue(RefreshPageFullScreen);
+
+        tabControl.NavigationVisualChanged += () =>
+        {
+            if (!BrowserTabView.TabItems.Contains(tabItem)) return;
+            tabItem.IconSource = tabControl.TabIcon;
+        };
+        var menu = new MenuFlyout();
+        var duplicate = new MenuFlyoutItem { Text = "复制标签页" };
+        duplicate.Click += (_, _) => CreateNewTab(tabControl.CurrentUrl);
+        var mute = new MenuFlyoutItem { Text = "静音 / 取消静音" };
+        mute.Click += (_, _) => tabControl.ToggleAudioMute();
+        var closeOthers = new MenuFlyoutItem { Text = "关闭其他标签页" };
+        closeOthers.Click += async (_, _) =>
+        {
+            BrowserTabView.SelectedItem = tabItem;
+            foreach (var other in BrowserTabView.TabItems.OfType<TabViewItem>().Where(t => t != tabItem).ToArray()) await CloseTabAsync(other);
+        };
+        var close = new MenuFlyoutItem { Text = "关闭标签页    Ctrl+W" };
+        close.Click += async (_, _) => await CloseTabAsync(tabItem);
+        menu.Items.Add(duplicate); menu.Items.Add(mute); menu.Items.Add(closeOthers); menu.Items.Add(new MenuFlyoutSeparator()); menu.Items.Add(close);
+        tabItem.ContextFlyout = menu;
+
+        tabItem.Content = tabControl;
+
+        BrowserTabView.TabItems.Add(tabItem);
+        if (select) BrowserTabView.SelectedItem = tabItem;
+        UpdateTabCount();
+
+        // An empty tab shows a local start page and does not create a WebView2 session.
+        if (initialUrl != null) DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!BrowserTabView.TabItems.Contains(tabItem)) return;
+            tabControl.NavigateToText(initialUrl);
+        });
+        return tabItem;
+    }
+
+    private void EnsureTabExists()
+    {
+        try
+        {
+            if (!_isPageLoaded || _isUnloading || _isBurningAll) return;
+            if (BrowserTabView.TabItems.Count > 0) return;
+
+            CreateNewTab();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("EnsureTabExists failed", ex);
+        }
+    }
+
+    internal async Task<bool> RunSmokeTestAsync()
+    {
+        long constructorTicks = 0, constructorBytes = 0;
+        for (int i = 0; i < 12; i++)
+        {
+            long allocated = GC.GetAllocatedBytesForCurrentThread();
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
+            var probe = new BrowserTabControl();
+            constructorTicks += System.Diagnostics.Stopwatch.GetTimestamp() - started;
+            constructorBytes += GC.GetAllocatedBytesForCurrentThread() - allocated;
+            if (probe.HasPrivacyUi || probe.HasBrowserControl) throw new InvalidOperationException("Blank tab eagerly loaded hidden UI");
+            await probe.DisposeTabAsync();
+        }
+        SmokeTest.Report($"browser: blank control construction avg ms={constructorTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency / 12:F2}; managed KiB={constructorBytes / 1024.0 / 12:F1}");
+        var firstItem = BrowserTabView.SelectedItem as TabViewItem;
+        if (firstItem?.Content is not BrowserTabControl first || first.HasBrowserControl) return false;
+        if (!await first.RunSmokeNavigationAsync(checkSleep: true)) return false;
+
+        CreateNewTab();
+        BrowserTabControl? second = (BrowserTabView.SelectedItem as TabViewItem)?.Content as BrowserTabControl;
+        var secondItem = BrowserTabView.SelectedItem as TabViewItem;
+        bool lazy = second != null && !ReferenceEquals(first, second) && !second.HasBrowserControl;
+        SmokeTest.Report("browser: new tabs defer WebView2 control creation=" + lazy);
+        if (!lazy || !await second!.RunSmokeNavigationAsync()) return false;
+        if (!await second.HasSmokeCookieAsync(create: true)) return false;
+
+        var sleep = await first.CheckSmokeBackgroundSleepAsync();
+        SmokeTest.Report($"browser: background suspended={sleep.Suspended}, renderer CPU {sleep.AwakeCpuMs:0}ms -> {sleep.AsleepCpuMs:0}ms per 400ms, active tab awake={second.IsSmokeBrowserAwake}");
+        if (!sleep.Suspended || !second.IsSmokeBrowserAwake) return false;
+        BrowserTabView.SelectedItem = firstItem;
+        bool resumed = await first.VerifySmokeResumeAsync();
+        SmokeTest.Report("browser: resumed with unsaved page state=" + resumed);
+        if (!resumed) return false;
+        if (MainWindow.Current?.AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
+        {
+            try
+            {
+                presenter.Minimize();
+                for (int i = 0; i < 250 && !first.IsSmokeSuspended; i++) await Task.Delay(100);
+                bool minimized = first.IsSmokeSuspended;
+                SmokeTest.Report($"browser: selected tab suspends when window minimized={minimized}; presenter={presenter.State}; nativeMinimized={BossKeyService.Instance.IsWindowMinimized}");
+                if (!minimized) return false;
+            }
+            finally { presenter.Restore(); }
+            await Task.Delay(250);
+            bool restored = await first.VerifySmokeResumeAsync();
+            SmokeTest.Report("browser: restoring window resumes selected tab and retains DOM=" + restored);
+            if (!restored) return false;
+        }
+        bool recovered = await first.CheckSmokeCrashRecoveryAsync();
+        SmokeTest.Report("browser: renderer crash reloads without replacing the download controller=" + recovered);
+        if (!recovered) return false;
+        BrowserTabView.SelectedItem = secondItem;
+
+        await CloseTabAsync(firstItem);
+        bool preserved = await second.HasSmokeCookieAsync();
+        SmokeTest.Report("browser: closing one tab preserves the shared session=" + preserved);
+        if (!preserved) return false;
+        if (!await second.CheckSmokeHttpAsync()) return false;
+        if (!await second.CheckSmokeChromeAsync()) return false;
+        if (!await second.CheckFaviconFormatsAsync()) return false;
+        if (!await second.CheckSmokeDeferredPrivacyAsync()) return false;
+        if (!await second.CheckSmokeFindAsync()) return false;
+        long memoryBefore = System.Diagnostics.Process.GetCurrentProcess().PrivateMemorySize64;
+        var retiredControls = new List<WeakReference<BrowserTabControl>>();
+        for (int i = 0; i < 40; i++)
+        {
+            CreateNewTab();
+            if (BrowserTabView.SelectedItem is not TabViewItem stressItem ||
+                stressItem.Content is not BrowserTabControl stress || !await stress.RunSmokeNavigationAsync()) return false;
+            await CloseTabAsync(stressItem);
+            retiredControls.Add(new WeakReference<BrowserTabControl>(stress));
+            stress = null!;
+            stressItem = null!;
+        }
+        BrowserTabView.SelectedItem = secondItem;
+        await Task.Delay(500);
+        // Diagnostic only: prove closed native/managed event cycles are broken.
+        // Normal browsing and the time-based endurance run never force a GC.
+        GC.Collect();
+        await Task.Delay(1000);
+        GC.Collect();
+        await Task.Delay(500);
+        int survivingClosed = retiredControls.Count(reference => reference.TryGetTarget(out _));
+        long memoryAfter = System.Diagnostics.Process.GetCurrentProcess().PrivateMemorySize64;
+        SmokeTest.Report($"browser: 40 open/load/close cycles; live tabs={BrowserTabControl.LiveTabCount}; closed controls retained after diagnostic GC={survivingClosed}; app private memory MiB={memoryBefore / 1048576.0:F1}->{memoryAfter / 1048576.0:F1}");
+        if (BrowserTabControl.LiveTabCount != 1 || survivingClosed > 2) return false;
+        string? oldProfile = BrowserProfileManager.ActiveSessionDirectory;
+
+        bool cleared = await BurnAllTabsAsync() && oldProfile != null && !System.IO.Directory.Exists(oldProfile);
+        SmokeTest.Report("browser: old session removed=" + cleared);
+        BrowserTabControl? fresh = (BrowserTabView.SelectedItem as TabViewItem)?.Content as BrowserTabControl;
+        if (!cleared || fresh == null || fresh.HasBrowserControl || !await fresh.RunSmokeNavigationAsync()) return false;
+
+        bool rotated = BrowserProfileManager.ActiveSessionDirectory is { } current &&
+            !string.Equals(current, oldProfile, StringComparison.OrdinalIgnoreCase) && !await fresh.HasSmokeCookieAsync();
+        SmokeTest.Report("browser: local page loaded in a new session=" + rotated);
+        return rotated && await CheckTabManagementSmokeAsync();
+    }
+
+    internal BrowserTabControl? SmokeSelectedTab => _selectedTab;
+    internal bool SmokeSessionIsEmpty => _closedTabs.Count == 0 && BrowserTabView.TabItems.OfType<TabViewItem>().All(t => t.Content is BrowserTabControl tab && !tab.HasBrowserControl);
+
+    private async Task<bool> CheckTabManagementSmokeAsync()
+    {
+        await using var fixture = new BrowserHttpFixture();
+        CreateNewTab(fixture.Address + "/page");
+        var item = (TabViewItem)BrowserTabView.SelectedItem;
+        var tab = (BrowserTabControl)item.Content;
+        for (int i = 0; i < 100 && (!tab.IsSmokeNavigationComplete || tab.CurrentTitle != "HTTP fixture"); i++) await Task.Delay(100);
+        if (tab.CurrentTitle != "HTTP fixture") return false;
+        string url = tab.CurrentUrl;
+        int count = BrowserTabView.TabItems.Count;
+        await CloseTabAsync(item);
+        ReopenClosedTab();
+        var reopened = (BrowserTabControl)((TabViewItem)BrowserTabView.SelectedItem).Content;
+        for (int i = 0; i < 100 && (!reopened.IsSmokeNavigationComplete || reopened.CurrentTitle != "HTTP fixture"); i++) await Task.Delay(100);
+        bool restored = BrowserTabView.TabItems.Count == count && reopened.CurrentUrl == url && reopened.CurrentTitle == "HTTP fixture";
+        SmokeTest.Report("browser: closed tab restores URL and loads successfully=" + restored);
+        TabSearchBox.Text = "HTTP fixture";
+        RefreshTabList();
+        bool filtered = TabSearchResults.Items.Count == 1;
+        SmokeTest.Report("browser: tab search filters title=" + filtered);
+        if (!restored || !filtered) return false;
+        return await reopened.RunSmokeNavigationAsync(checkSleep: true);
+    }
+
+    #endregion
+
+    #region Tab closing & burning
+
+    private async Task CloseTabAsync(TabViewItem? tabItem)
+    {
+        if (tabItem == null) return;
+        if (!BrowserTabView.TabItems.Contains(tabItem)) return;
+        if (!_closingTabs.Add(tabItem)) return; // already closing / already disposed
+
+        if (!_isBurningAll && !_isUnloading && tabItem.Content is BrowserTabControl closing &&
+            Uri.TryCreate(closing.CurrentUrl, UriKind.Absolute, out var closedUri) && closedUri.Scheme is "http" or "https")
+        {
+            _closedTabs.Add((closedUri.AbsoluteUri, closing.CurrentTitle));
+            if (_closedTabs.Count > 20) _closedTabs.RemoveAt(0);
+        }
+
+        try
+        {
+            // Remove first: while the WebView2 is being torn down the TabView can no
+            // longer re-enter TabCloseRequested/SelectionChanged for this item.
+            try
+            {
+                // Return to the page that opened this tab, without briefly waking
+                // an unrelated neighbor (which also reset its idle sleep timer).
+                if (ReferenceEquals(BrowserTabView.SelectedItem, tabItem) && _tabOpeners.TryGetValue(tabItem, out var opener) && BrowserTabView.TabItems.Contains(opener))
+                    BrowserTabView.SelectedItem = opener;
+                foreach (var key in _tabOpeners.Where(entry => ReferenceEquals(entry.Key, tabItem) || ReferenceEquals(entry.Value, tabItem)).Select(entry => entry.Key).ToArray()) _tabOpeners.Remove(key);
+                BrowserTabView.TabItems.Remove(tabItem);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"CloseTabAsync: 从 TabView 移除标签失败（{ex.GetType().Name}）");
+            }
+
+            if (tabItem.Content is BrowserTabControl tabControl)
+            {
+                ReleaseClosedTabItem(tabItem);
+                try
+                {
+                    if (!_isBurningAll && !_isUnloading && tabControl.HasPendingDownloads)
+                        RetainDownloadOwner(tabControl);
+                    else await tabControl.DisposeTabAsync();
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Error("CloseTabAsync: 释放标签页失败", ex);
+                }
+            }
+
+            // Disposal finished: make sure the TabView is never left completely empty.
+            EnsureTabExists();
+            AppLog.Info("CloseTabAsync: 已关闭一个标签页");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("CloseTabAsync failed", ex);
+        }
+        finally
+        {
+            _closingTabs.Remove(tabItem);
+            UpdateTabCount();
+        }
+    }
+
+    private static void ReleaseClosedTabItem(TabViewItem item)
+    {
+        // Native flyout events capture both the tab and page. Detach the menu
+        // contents as well as the visual content so closed tabs can be collected.
+        if (item.ContextFlyout is MenuFlyout menu) menu.Items.Clear();
+        item.ContextFlyout = null;
+        item.IconSource = null;
+        ToolTipService.SetToolTip(item, null);
+        item.Content = null;
+    }
+
+    private async Task<bool> BurnAllTabsAsync()
+    {
+        if (!_isPageLoaded || _isBurningAll || _isUnloading) return false;
+        _isBurningAll = true;
+        CloseTabSearch();
+        _tabOpeners.Clear();
+        _closedTabs.Clear();
+        EndSessionBtn.IsEnabled = false;
+        BrowserTabView.IsAddTabButtonVisible = false;
+        SessionNotice.Title = "正在结束会话";
+        SessionNotice.Message = "正在关闭标签并清除本次浏览数据。";
+        SessionNotice.Severity = InfoBarSeverity.Informational;
+        SessionNotice.IsOpen = true;
+
+        try
+        {
+            bool cleaned = await BrowserProfileManager.EndSessionAsync(() =>
+            {
+                List<TabViewItem> tabs = BrowserTabView.TabItems.OfType<TabViewItem>().ToList();
+                BrowserTabView.TabItems.Clear();
+                Task closing = BrowserTabControl.ShutdownAllAsync();
+                DetachDownloadOwners();
+                foreach (TabViewItem tab in tabs) ReleaseClosedTabItem(tab);
+                return closing;
+            });
+
+            SessionNotice.IsOpen = !cleaned;
+            if (!cleaned)
+            {
+                SessionNotice.Title = "旧会话数据尚未完全清除";
+                SessionNotice.Message = "新的标签页将使用新会话。可再次结束会话重试，或在退出时重试。";
+                SessionNotice.Severity = InfoBarSeverity.Warning;
+            }
+            return cleaned;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("BurnAllTabs failed", ex);
+            SessionNotice.Title = "无法结束会话";
+            SessionNotice.Message = "请重试。";
+            SessionNotice.Severity = InfoBarSeverity.Error;
+            return false;
+        }
+        finally
+        {
+            if (_browserFullScreen)
+            {
+                _browserFullScreen = false;
+                BrowserTabView.Margin = new Thickness(0);
+                MainWindow.Current?.SetFullScreenMode(false);
+            }
+            _isBurningAll = false;
+            EndSessionBtn.IsEnabled = true;
+            BrowserTabView.IsAddTabButtonVisible = true;
+            EnsureTabExists();
+        }
+    }
+
+    private async void BrowserTabView_TabCloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
+    {
+        await CloseTabAsync(args.Tab);
+    }
+
+    private void BrowserTabView_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        var selected = (BrowserTabView.SelectedItem as TabViewItem)?.Content as BrowserTabControl;
+        if (ReferenceEquals(selected, _selectedTab)) return;
+        _selectedTab?.SetTabSelected(false);
+        _selectedTab = selected;
+        _selectedTab?.SetTabSelected(true);
+        RefreshPageFullScreen();
+    }
+
+    private void BrowserTabView_AddTabButtonClick(TabView sender, object args)
+    {
+        if (_isBurningAll || _isUnloading) return;
+        CreateNewTab();
+    }
+
+    private async void BurnAllTabs_Click(object sender, RoutedEventArgs e)
+    {
+        await BurnAllTabsAsync();
+    }
+
+    #endregion
+
+    #region Keyboard accelerators
+
+    private void UpdateTabCount()
+    {
+        TabCountText.Text = BrowserTabView.TabItems.Count.ToString();
+        if (_tabSearchOpen) RefreshTabList();
+    }
+
+    private void ReopenClosedTab()
+    {
+        if (_closedTabs.Count == 0 || !_isPageLoaded || _isUnloading || _isBurningAll || !VaultService.Instance.IsUnlocked) return;
+        var closed = _closedTabs[^1];
+        _closedTabs.RemoveAt(_closedTabs.Count - 1);
+        CreateNewTab(closed.Url);
+    }
+
+    private void ReopenTab_Click(object sender, RoutedEventArgs e) { TabListFlyout.Hide(); ReopenClosedTab(); }
+    private void ReopenTabAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; ReopenClosedTab(); }
+    private void SwitchTabAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        int count = BrowserTabView.TabItems.Count;
+        if (count == 0) return;
+        int direction = sender.Modifiers.HasFlag(Windows.System.VirtualKeyModifiers.Shift) ? -1 : 1;
+        BrowserTabView.SelectedIndex = (BrowserTabView.SelectedIndex + direction + count) % count;
+        args.Handled = true;
+    }
+    private void NumberedTabAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        int index = sender.Key == Windows.System.VirtualKey.Number9 ? BrowserTabView.TabItems.Count - 1 : (int)sender.Key - (int)Windows.System.VirtualKey.Number1;
+        if (index >= 0 && index < BrowserTabView.TabItems.Count) BrowserTabView.SelectedIndex = index;
+        args.Handled = true;
+    }
+
+    private void NewTabAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        if (_isBurningAll || _isUnloading) return;
+        CreateNewTab();
+    }
+
+    private void FocusAddressAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if ((BrowserTabView.SelectedItem as TabViewItem)?.Content is BrowserTabControl tab)
+        {
+            tab.FocusAddressBar();
+            args.Handled = true;
+        }
+    }
+
+    private void FindAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (_selectedTab == null || _selectedTab.IsNativeFindDispatching) return;
+        _selectedTab.FindFromShortcut(sender.Key == Windows.System.VirtualKey.F3, sender.Modifiers.HasFlag(Windows.System.VirtualKeyModifiers.Shift));
+        args.Handled = true;
+    }
+
+    private void BookmarkAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (_selectedTab == null) return;
+        _selectedTab.ToggleBookmarkFromShortcut();
+        args.Handled = true;
+    }
+
+    private void CloseTabAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        if (BrowserTabView.SelectedItem is TabViewItem selectedTab)
+        {
+            _ = CloseTabAsync(selectedTab);
+        }
+    }
+
+    private void BurnAllTabsAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        _ = BurnAllTabsAsync();
+    }
+
+    #endregion
+}

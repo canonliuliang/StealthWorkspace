@@ -1,0 +1,191 @@
+using System;
+using System.IO;
+
+namespace StealthWorkspace.Services;
+
+/// <summary>
+/// Central paths for the app's private (hidden + system attributed) data root.
+/// All persisted state lives below this single root so it can be audited, migrated
+/// and removed in one place.
+/// </summary>
+public static class AppPaths
+{
+    private static readonly object Gate = new();
+    private static string? _dataRoot;
+    private static string? _overrideRoot;
+
+    /// <summary>
+    /// Diagnostic/testing override for the private data root. Must be called before the
+    /// first use of <see cref="DataRoot"/> (the app does this from Program.Main when the
+    /// <c>--data-root</c> switch is present). Production runs never set it.
+    /// </summary>
+    public static void SetDataRootOverride(string? root)
+    {
+        if (string.IsNullOrWhiteSpace(root)) return;
+        lock (Gate)
+        {
+            _overrideRoot = Path.GetFullPath(root);
+        }
+    }
+
+    /// <summary>Keep using an existing writable vault; copy it intact if its root is unwritable.</summary>
+    public static string DataRoot
+    {
+        get
+        {
+            lock (Gate)
+            {
+                if (_overrideRoot != null) return _overrideRoot;
+                if (_dataRoot != null) return _dataRoot;
+                string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                _dataRoot ??= ResolveDataRoot(
+                    Path.Combine(local, "Microsoft", "Windows", "SystemDiagnostics", "Data"),
+                    Path.Combine(local, "StealthWorkspace", "Data"),
+                    Path.Combine(AppContext.BaseDirectory, "WorkspaceData"));
+                return _dataRoot;
+            }
+        }
+    }
+
+    internal static string ResolveDataRoot(string legacy, string local, string portable)
+    {
+        // A completed migration or a vault already in the new location takes
+        // precedence over the preserved legacy copy.
+        static bool HasVault(string root) => File.Exists(Path.Combine(root, "system_catalog.dat"))
+            || File.Exists(Path.Combine(root, "system_catalog.dat.bak"))
+            || File.Exists(Path.Combine(root, ".migrated"));
+
+        string[] roots = { portable, local, legacy };
+        string? existing = roots.FirstOrDefault(HasVault)
+            ?? roots.FirstOrDefault(root => File.Exists(Path.Combine(root, "settings.dat")));
+        if (existing != null && CanWriteVault(existing)) return existing;
+        if (existing != null && !string.Equals(existing, legacy, StringComparison.OrdinalIgnoreCase))
+            return existing; // Never silently reopen an older copy of a migrated vault.
+
+        foreach (string target in new[] { local, portable })
+        {
+            try
+            {
+                if (existing == null)
+                {
+                    if (CanWriteVault(target)) return target;
+                }
+                else if (TryCopyLegacyVault(existing, target))
+                {
+                    return target;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Try the remaining location; the source vault is never changed.
+            }
+        }
+
+        return existing ?? local;
+    }
+
+    private static bool CanWriteVault(string root)
+    {
+        try
+        {
+            string media = Path.Combine(root, "MediaVault");
+            Directory.CreateDirectory(media);
+            foreach (string folder in new[] { root, media })
+            {
+                string probe = Path.Combine(folder, ".write-" + Guid.NewGuid().ToString("N"));
+                using var stream = new FileStream(probe, FileMode.CreateNew, FileAccess.Write,
+                    FileShare.None, 4096, FileOptions.DeleteOnClose);
+            }
+            string catalog = Path.Combine(root, "system_catalog.dat");
+            if (File.Exists(catalog) && (File.GetAttributes(catalog) & FileAttributes.ReadOnly) != 0) return false;
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryCopyLegacyVault(string source, string target)
+    {
+        // Keep a distinct staging directory until every file has been copied.
+        // An existing destination is never merged or overwritten.
+        if (Directory.Exists(target) || File.Exists(target)) return false;
+        string stage = target + ".migration-" + Guid.NewGuid().ToString("N");
+        if (!CanWriteVault(stage)) return false;
+
+        static void CopyIfPresent(string path, string directory)
+        {
+            string copy = Path.Combine(directory, Path.GetFileName(path));
+            try { File.Copy(path, copy); }
+            catch (FileNotFoundException) { return; }
+            File.SetAttributes(copy, File.GetAttributes(copy) & ~FileAttributes.ReadOnly);
+        }
+
+        foreach (string name in new[] { "system_catalog.dat", "system_catalog.dat.bak", "settings.dat", "settings.dat.bak", "rotate.dat" })
+            CopyIfPresent(Path.Combine(source, name), stage);
+
+        string sourceMedia = Path.Combine(source, "MediaVault");
+        try
+        {
+            foreach (string path in Directory.EnumerateFiles(sourceMedia, "*.svault"))
+            {
+                string copy = Path.Combine(stage, "MediaVault", Path.GetFileName(path));
+                File.Copy(path, copy);
+                File.SetAttributes(copy, File.GetAttributes(copy) & ~FileAttributes.ReadOnly);
+            }
+        }
+        catch (DirectoryNotFoundException) when (!Directory.Exists(sourceMedia))
+        {
+            // An existing vault can be empty and not yet have a media directory.
+        }
+
+        // Only expose a complete copy to subsequent starts.
+        File.WriteAllText(Path.Combine(stage, ".migrated"), "1");
+        Directory.Move(stage, target);
+        return true;
+    }
+
+    public static string MediaRoot => Path.Combine(DataRoot, "MediaVault");
+    public static string LogPath => Path.Combine(DataRoot, "app.log");
+    public static string SettingsPath => Path.Combine(DataRoot, "settings.dat");
+    public static string VaultConfigPath => Path.Combine(DataRoot, "system_catalog.dat");
+    public static string VaultConfigBackupPath => VaultConfigPath + ".bak";
+    public static string IsolatedDownloadsRoot => Path.Combine(DataRoot, "IsolatedDownloads");
+
+    /// <summary>Ensures the root exists and is hidden+system attributed. Best effort.</summary>
+    public static string EnsureDataRoot()
+    {
+        string root = DataRoot;
+        try
+        {
+            Directory.CreateDirectory(root);
+            Hide(root);
+        }
+        catch
+        {
+            // Attributes are cosmetic camouflage; a failure must never break the app.
+        }
+        return root;
+    }
+
+    public static void EnsureDirectory(string path)
+    {
+        Directory.CreateDirectory(path);
+        Hide(path);
+    }
+
+    public static void Hide(string path)
+    {
+        try
+        {
+            if (!OperatingSystem.IsWindows() || !Directory.Exists(path)) return;
+            var attrs = File.GetAttributes(path);
+            File.SetAttributes(path, attrs | FileAttributes.Hidden | FileAttributes.System);
+        }
+        catch
+        {
+            // ignored
+        }
+    }
+}

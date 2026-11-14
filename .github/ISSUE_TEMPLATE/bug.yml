@@ -1,0 +1,31 @@
+name: Bug 报告
+description: 提交可以复现的问题（请勿包含私密数据）
+title: '[Bug] '
+body:
+  - type: markdown
+    attributes:
+      value: '请先阅读 docs/TROUBLESHOOTING.md。不要上传密码、保险箱、Cookie 或原始日志。'
+  - type: input
+    id: version
+    attributes:
+      label: 应用版本 / Windows 版本 / 架构
+      placeholder: 'r12-preview / Windows 11 / ARM64'
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 最短复现步骤
+      description: 使用非私密的网址或合成文件说明。
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: 预期结果与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 经审阅的截图或错误码（可选）

@@ -1,0 +1,90 @@
+## .NET / Visual Studio
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+artifacts/
+
+# Build logs
+[Ll]og/
+[Ll]ogs/
+*.log
+*.binlog
+
+# Test results
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+*.coveragexml
+
+# NuGet
+*.nupkg
+*.snupkg
+*.nuget.props
+*.nuget.targets
+project.lock.json
+
+# MSIX packaging output
+AppPackages/
+BundleArtifacts/
+*.msix
+*.msixupload
+*.appx
+*.appxbundle
+*.appxupload
+
+# Publish output
+publish/
+PublishScripts/
+
+# Code analysis and tooling
+_ReSharper*/
+*.DotSettings.user
+*.dotCover
+.idea/
+
+# Generated files
+Generated\ Files/
+*_wpftmp.csproj
+
+# Local collaboration/editor state
+.vscode/
+.openai/
+AGENTS.md
+
+# Private user data must never enter the source repository
+WorkspaceData/
+MediaVault/
+IsolatedDownloads/
+BrowserSessions/
+Stealth_WebProfile*/
+StealthVault_Store/
+*-data/
+system_catalog.dat*
+settings.dat*
+*.svault
+*.svbackup
+*.bak
+app-log-dump.txt
+selftest-result.txt
+ui-smoke-data/
+.migrated
+
+# Credentials, signing material and local exports
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.dmp
+*.zip
+node_modules/
+website/dist/

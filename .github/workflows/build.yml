@@ -1,0 +1,84 @@
+name: Windows build and preview release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            runtime: win-x64
+          - runner: windows-11-arm
+            runtime: win-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+      - name: Publish, run core tests, and package clean output
+        shell: pwsh
+        env:
+          RELEASE_REF: ${{ github.ref_name }}
+          RELEASE_TYPE: ${{ github.ref_type }}
+          TARGET_RUNTIME: ${{ matrix.runtime }}
+        run: |
+          $version = [regex]::Match((Get-Content Services/AppInfo.cs -Raw), 'DisplayVersion = "([^"]+)"').Groups[1].Value
+          if ($env:RELEASE_TYPE -eq 'tag' -and $env:RELEASE_REF -ne "v$version") { throw 'Tag and AppInfo version differ.' }
+          ./tools/Build-Release.ps1 -Runtime $env:TARGET_RUNTIME -Version $version -OutputDirectory "artifacts/package/$env:TARGET_RUNTIME"
+      - name: Upload portable preview and test report
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: release-${{ matrix.runtime }}
+          path: |
+            artifacts/package/${{ matrix.runtime }}/*.zip
+            artifacts/package/${{ matrix.runtime }}/SHA256SUMS.txt
+            artifacts/package/${{ matrix.runtime }}/core-tests.txt
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve test report on failure
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: failed-tests-${{ matrix.runtime }}
+          path: artifacts/package/${{ matrix.runtime }}/core-tests.txt
+          if-no-files-found: ignore
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: release-*
+          path: artifacts/downloads
+      - name: Publish preview release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $checksums = Get-ChildItem artifacts/downloads -Recurse -Filter SHA256SUMS.txt
+          if ($checksums.Count -ne 2) { throw 'Expected checksums for both architectures.' }
+          $checksums | ForEach-Object { Get-Content $_.FullName } | Set-Content artifacts/SHA256SUMS.txt -Encoding ascii
+          $packages = @(Get-ChildItem artifacts/downloads -Recurse -Filter '*.zip' | ForEach-Object FullName)
+          if ($packages.Count -ne 2) { throw 'Expected both portable packages.' }
+          gh release create $env:RELEASE_TAG @packages artifacts/SHA256SUMS.txt --title "Stealth $env:RELEASE_TAG" --notes-file docs/RELEASE-NOTES.md --prerelease --verify-tag
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub Release creation failed.' }

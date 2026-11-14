@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="StealthWorkspace.Pages.LockPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" Padding="12">
+    <Grid>
+    <Grid VerticalAlignment="Center" HorizontalAlignment="Stretch" MaxWidth="380">
+        <!-- Quiet, Elegant Workspace Auth Card -->
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="16"
+                Padding="24">
+            <StackPanel Spacing="16">
+                <!-- Clean Header -->
+                <StackPanel HorizontalAlignment="Center" Spacing="8">
+                    <Border Width="56" Height="56" CornerRadius="28"
+                            Background="{ThemeResource LayerFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            HorizontalAlignment="Center">
+                        <FontIcon Glyph="&#xE72E;" FontSize="22" Foreground="{ThemeResource TextFillColorPrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock Text="工作空间"
+                               Style="{ThemeResource TitleTextBlockStyle}"
+                               HorizontalAlignment="Center" FontWeight="SemiBold" />
+                    <TextBlock Text="输入访问密码以继续"
+                               Style="{ThemeResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               HorizontalAlignment="Center" />
+                </StackPanel>
+
+                <InfoBar x:Name="MsgInfoBar" IsOpen="False" Severity="Informational" />
+
+                <!-- Busy indicator while PBKDF2 runs off-thread -->
+                <StackPanel x:Name="BusyPanel" Visibility="Collapsed" Orientation="Horizontal"
+                            HorizontalAlignment="Center" Spacing="10">
+                    <ProgressRing x:Name="BusyRing" IsActive="False" Width="20" Height="20" />
+                    <TextBlock x:Name="BusyText" Text="正在校验…" FontSize="12"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                </StackPanel>
+
+                <!-- State A: Everyday Unlock (Zero suspicious text) -->
+                <StackPanel x:Name="UnlockPanel" Spacing="16">
+                    <PasswordBox x:Name="UnlockPasswordBox"
+                                 Header="密码"
+                                 PlaceholderText="请输入访问密码"
+                                 PasswordRevealMode="Peek"
+                                 KeyDown="UnlockPasswordBox_KeyDown" />
+
+                    <Button x:Name="UnlockButton"
+                            Content="解锁"
+                            Style="{ThemeResource AccentButtonStyle}"
+                            HorizontalAlignment="Stretch"
+                            Height="36"
+                            Click="UnlockBtn_Click" />
+
+                    <Button x:Name="ForgotButton"
+                            Content="无法解锁？重置保险箱…"
+                            HorizontalAlignment="Center"
+                            FontSize="11"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Style="{ThemeResource SubtleButtonStyle}"
+                            Visibility="Collapsed"
+                            Click="ResetVaultBtn_Click" />
+                </StackPanel>
+
+                <!-- State B: First-time Workspace Setup -->
+                <StackPanel x:Name="SetupPanel" Spacing="14" Visibility="Collapsed">
+                    <TextBlock Text="首次初始化" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                    <Button x:Name="RestoreBackupButton" Content="从加密备份恢复" Click="RestoreBackup_Click" HorizontalAlignment="Stretch" />
+                    <TextBlock Text="已有备份可直接恢复，仅限原 Windows 用户；恢复后使用原保险箱密码解锁。" TextWrapping="Wrap" FontSize="12" />
+                    <PasswordBox x:Name="SetupMasterPwd" Header="设置访问密码" PlaceholderText="至少 6 个字符" PasswordRevealMode="Peek" />
+                    <PasswordBox x:Name="SetupConfirmPwd" Header="确认密码" PlaceholderText="再次输入密码" PasswordRevealMode="Peek" />
+
+                    <Expander Header="高级：设置诱饵密码（可选）" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="遇到胁迫或盘查时，输入诱饵密码会进入一个独立的无害空间；真实资料不会显示。"
+                                       FontSize="11" TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <PasswordBox x:Name="SetupDecoyPwd" Header="诱饵密码" PlaceholderText="至少 6 个字符" PasswordRevealMode="Peek" />
+                            <PasswordBox x:Name="SetupDecoyConfirmPwd" Header="确认诱饵密码" PlaceholderText="再次输入诱饵密码" PasswordRevealMode="Peek" />
+                        </StackPanel>
+                    </Expander>
+
+                    <Button x:Name="SetupButton"
+                            Content="完成设置并解锁"
+                            Style="{ThemeResource AccentButtonStyle}"
+                            HorizontalAlignment="Stretch"
+                            Height="36"
+                            Margin="0,8,0,0"
+                            Click="SetupConfirmBtn_Click" />
+                </StackPanel>
+
+                <!-- State C: Config corrupted / unreadable -->
+                <StackPanel x:Name="CorruptPanel" Spacing="14" Visibility="Collapsed">
+                    <TextBlock Text="保险箱数据不可用" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                    <TextBlock x:Name="CorruptDetailText"
+                               Text="加密配置无法解密或已损坏。为避免覆盖数据，应用不会自动进入首次设置。"
+                               FontSize="12" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <Button Content="重试读取" HorizontalAlignment="Stretch" Click="RetryBtn_Click" />
+                    <Button Content="重置保险箱（销毁全部加密数据）"
+                            HorizontalAlignment="Stretch"
+                            Style="{ThemeResource AccentButtonStyle}"
+                            Click="ResetVaultBtn_Click" />
+                </StackPanel>
+
+                <!-- Build identity: lets the user confirm they are running the latest fix -->
+                <TextBlock x:Name="BuildLabel"
+                           HorizontalAlignment="Center"
+                           FontSize="10"
+                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                           Text="构建信息加载中…" />
+            </StackPanel>
+        </Border>
+    </Grid>
+    </Grid>
+    </ScrollViewer>
+</Page>
