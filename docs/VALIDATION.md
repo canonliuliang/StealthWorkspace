@@ -17,6 +17,29 @@
 
 CI 在 Windows x64 与 Windows ARM64 runner 上独立构建并运行核心自检。请以对应提交的 Actions 结果为准；工作流文件存在本身不表示远程检查成功。
 
+## r12 公开发布验收
+
+2026-11-14，发布标签 `v2026.11.14-r12-preview` 对应源码提交 `3d4b2f72108c2f9a9de808010ee5ad2f7e988b19`。后续验证文档更新不改变该标签或已发布的 ZIP。
+
+| 检查 | 实际结果 | 记录 |
+| --- | --- | --- |
+| 原生 Windows x64 CI | 构建、打包成功；133 通过 / 0 失败 | [发布工作流](https://github.com/canonliuliang/StealthWorkspace/actions/runs/43540068700) |
+| 原生 Windows ARM64 CI | 构建、打包成功；133 通过 / 0 失败 | 同一发布工作流的 ARM64 job |
+| GitHub Release | 两个架构 ZIP 和 SHA256SUMS.txt 均已上传 | [r12 预览版](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.14-r12-preview) |
+| 真实公开下载 | 下载两个完整 ZIP，SHA-256 均与发布清单一致 | x64 95,822,269 字节；ARM64 93,860,529 字节 |
+| 下载包检查 | 必需程序、图标、快捷方式脚本、文档和版本元数据齐全；未发现保险箱、会话或密钥文件 | x64 546 个条目；ARM64 542 个条目 |
+| GitHub Pages | 构建、部署成功；公网首页 HTTP 200 | [官网部署](https://github.com/canonliuliang/StealthWorkspace/actions/runs/43540452332) |
+| 公网界面 | 1280px 桌面、390px 手机布局无横向溢出；FAQ 展开互斥正常；下载入口分别指向正确架构 | [官网](https://canonliuliang.github.io/StealthWorkspace/) |
+
+发布包 SHA-256：
+
+```text
+e75962b372bfaf704b21ffdd08ee0cef0bf83c85ee20d8f5f7256f599531c51e  Stealth-2026.11.14-r12-preview-win-x64.zip
+a251d197267e760f449dda33dd880637544240865f3858edf216c48f41e88fef  Stealth-2026.11.14-r12-preview-win-arm64.zip
+```
+
+本次对公网 ZIP 执行了完整下载、校验值和包内容核验，没有把它当作已完成下载后双击启动测试的证据。应用 UI 启动与交互验证使用的是本机源码构建及独立合成数据。
+
 ## 已知覆盖空缺
 
 - 未签名预览版的 SmartScreen 体验尚未解决；源码启动通过不代表任意下载后的双击启动都通过。

@@ -10,3 +10,5 @@ Stealth Windows 预览版：多标签浏览、共享下载管理、网页/本地
 临时会话不等于匿名上网，普通下载不自动加密。当前保险箱备份依赖原 Windows 用户，重装或换机后可能无法恢复；不要把它当作跨电脑备份。更新前请确认重要数据另有可恢复副本。
 
 完整变化见仓库 `CHANGELOG.md`，限制见 `docs/PRIVACY.md`。第三方网站验证、系统编解码器和部分捕获方式可能影响体验。
+
+[官网下载](https://canonliuliang.github.io/StealthWorkspace/#download) · [安装指南](https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/INSTALL.md) · [构建与自检](https://github.com/canonliuliang/StealthWorkspace/actions/runs/43540068700) · [发布验收记录](https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/VALIDATION.md)
