@@ -2,7 +2,7 @@ param([string]$SourcePath = (Join-Path $PSScriptRoot '..\Assets\AppIcon.Source.p
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $assetRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\Assets'))
-# Mechanical size conversion only. The original generated artwork stays untouched.
+# Mechanical size conversion only. New-BrandMaster.ps1 regenerates the original vector master.
 $source = [Drawing.Bitmap]::new([IO.Path]::GetFullPath($SourcePath))
 $frames = @()
 try {

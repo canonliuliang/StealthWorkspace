@@ -24,6 +24,9 @@ public partial class App : Application
         {
             SmokeTest.Report("OnLaunched: 创建主窗口");
             MainWindowInstance = new MainWindow();
+            // Set before the last window closes; changing it inside Closed is too late.
+            // MainWindow exits explicitly after asynchronous privacy cleanup completes.
+            DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
             MainWindowInstance.Activate();
             SmokeTest.Report("MainWindow 已激活");
 

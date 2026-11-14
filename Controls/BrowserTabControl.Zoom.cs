@@ -69,8 +69,12 @@ public sealed partial class BrowserTabControl
             double factor = ratio / (XamlRoot?.RasterizationScale ?? 1);
             if (!double.IsFinite(factor) || factor is < 0.1 or > 10) return;
             string percent = Math.Round(factor * 100) + "%";
-            ZoomResetBtn.Content = ZoomPanelReset.Content = percent;
-            AutomationProperties.SetName(ZoomResetBtn, "重置缩放，当前 " + percent);
+            ZoomPanelReset.Content = percent;
+            if (ZoomResetBtn != null)
+            {
+                ZoomResetBtn.Content = percent;
+                AutomationProperties.SetName(ZoomResetBtn, "重置缩放，当前 " + percent);
+            }
             AutomationProperties.SetName(ZoomPanelReset, "重置缩放，当前 " + percent);
             if (SmokeTest.Enabled) SmokeTest.Report("native zoom: " + percent);
         }

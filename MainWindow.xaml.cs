@@ -39,6 +39,8 @@ public sealed partial class MainWindow : Window
     {
         Current = this;
         InitializeComponent();
+        VaultService.Instance.BindToUiContext(System.Threading.SynchronizationContext.Current
+            ?? new Microsoft.UI.Dispatching.DispatcherQueueSynchronizationContext(DispatcherQueue));
         if (SmokeTest.Enabled) UpdateTitle("Stealth");
 
         try
@@ -115,8 +117,8 @@ public sealed partial class MainWindow : Window
 
             RectInt32 work = area.WorkArea;
             double dpi = NativeMethods.GetDpiForWindow(CurrentHandle) / 96.0;
-            int width = Math.Min(work.Width - 48, (int)(1100 * dpi));
-            int height = Math.Min(work.Height - 48, (int)(740 * dpi));
+            int width = Math.Min(work.Width - 48, (int)((SmokeTest.UiSmoke ? SmokeTest.UiWidth : 1100) * dpi));
+            int height = Math.Min(work.Height - 48, (int)((SmokeTest.UiSmoke ? SmokeTest.UiHeight : 740) * dpi));
             int x = work.X + Math.Max(0, (work.Width - width) / 2);
             int y = work.Y + Math.Max(0, (work.Height - height) / 2);
             AppWindow.MoveAndResize(new RectInt32(x, y, width, height));
@@ -133,6 +135,8 @@ public sealed partial class MainWindow : Window
         _rootLoaded = true;
 
         ApplySettingsOnStartup();
+        if (SmokeTest.UiSmoke && SmokeTest.UiTheme is { } theme)
+            RootGrid.RequestedTheme = theme == "Light" ? ElementTheme.Light : ElementTheme.Dark;
         LockWorkspace();
         _ = StartupMaintenanceAsync();
 
@@ -165,7 +169,7 @@ public sealed partial class MainWindow : Window
         try
         {
             if (VaultService.Instance.HasVault)
-                VaultService.Instance.ApplyUnlock(await Task.Run(() => VaultService.Instance.VerifyPassword("SmokeTest#123")));
+                VaultService.Instance.ApplyUnlock(await VaultService.Instance.VerifyPasswordAsync("SmokeTest#123"));
             else await VaultService.Instance.InitializeVaultAsync("SmokeTest#123");
             OnUnlocked();
             // This explicitly requested fixture contains only synthetic test data.
@@ -191,17 +195,43 @@ public sealed partial class MainWindow : Window
             {
                 if (VaultService.Instance.HasVault)
                 {
-                    var existing = await Task.Run(() => VaultService.Instance.VerifyPassword("SmokeTest#123"));
+                    using var existing = await VaultService.Instance.VerifyPasswordAsync("SmokeTest#123");
                     VaultService.Instance.ApplyUnlock(existing);
                 }
                 else
                 {
-                    await VaultService.Instance.InitializeVaultAsync("SmokeTest#123");
+                    // Exercise the real window lock entry while setup is still in flight.
+                    Task setup = VaultService.Instance.InitializeVaultAsync("SmokeTest#123");
+                    LockWorkspace();
+                    await setup;
+                    bool setupStayedLocked = VaultService.Instance.HasVault && !VaultService.Instance.IsUnlocked && _isLocked;
+                    SmokeTest.Report("ui-smoke: window lock during initial setup prevents automatic unlock=" + setupStayedLocked);
+                    if (!setupStayedLocked) throw new InvalidOperationException("Initial setup bypassed a window lock");
+                    using var created = await VaultService.Instance.VerifyPasswordAsync("SmokeTest#123");
+                    if (!VaultService.Instance.ApplyUnlock(created)) throw new InvalidOperationException("New fixture could not be unlocked");
                 }
             }
             SmokeTest.Report($"ui-smoke: unlocked={VaultService.Instance.IsUnlocked}, vault={VaultService.Instance.HasVault}");
             OnUnlocked();
             await Task.Delay(500);
+
+            if (SmokeTest.ShutdownAudit)
+            {
+                NavigateToPage(typeof(BrowserPage), null, "browser", force: true);
+                await Task.Delay(200);
+                var tab = ((BrowserPage)NavFrame.Content).SmokeSelectedTab
+                    ?? throw new InvalidOperationException("Missing shutdown fixture tab");
+                Task<bool> navigation = tab.RunSmokeNavigationAsync();
+                if (SmokeTest.ShutdownDuringInitialization)
+                {
+                    _ = navigation.ContinueWith(task => { _ = task.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+                    SmokeTest.Report("shutdown audit: initializing WebView before direct Window.Close");
+                    return;
+                }
+                if (!await navigation) throw new InvalidOperationException("Shutdown fixture navigation failed");
+                SmokeTest.Report("shutdown audit: live WebView before direct Window.Close");
+                return;
+            }
 
             if (SmokeTest.ExperienceTest)
             {
@@ -348,7 +378,28 @@ public sealed partial class MainWindow : Window
             await Task.Delay(600);
             SmokeTest.Report($"ui-smoke: locked={!VaultService.Instance.IsUnlocked}");
 
-            var unlock = await Task.Run(() => VaultService.Instance.VerifyPassword("SmokeTest#123"));
+            using (var pending = await VaultService.Instance.VerifyPasswordAsync("SmokeTest#123"))
+            {
+                if (pending.Status != VaultUnlockStatus.Success) throw new InvalidOperationException("Repeated-lock fixture failed");
+                LockWorkspace();
+                bool revoked = !VaultService.Instance.ApplyUnlock(pending) && !VaultService.Instance.IsUnlocked && _isLocked;
+                SmokeTest.Report("ui-smoke: repeated window lock revokes pending credentials=" + revoked);
+                if (!revoked) throw new InvalidOperationException("Repeated window lock did not revoke pending credentials");
+            }
+            bool originalMinimizeSetting = SettingsService.Instance.Data.LockOnMinimize;
+            try
+            {
+                SettingsService.Instance.Data.LockOnMinimize = true;
+                using var pending = await VaultService.Instance.VerifyPasswordAsync("SmokeTest#123");
+                if (pending.Status != VaultUnlockStatus.Success) throw new InvalidOperationException("Minimize-lock fixture failed");
+                OnWindowMinimized();
+                bool revoked = !VaultService.Instance.ApplyUnlock(pending) && !VaultService.Instance.IsUnlocked && _isLocked;
+                SmokeTest.Report("ui-smoke: minimize while locked revokes pending credentials=" + revoked);
+                if (!revoked) throw new InvalidOperationException("Minimize did not revoke pending credentials");
+            }
+            finally { SettingsService.Instance.Data.LockOnMinimize = originalMinimizeSetting; }
+
+            using var unlock = await VaultService.Instance.VerifyPasswordAsync("SmokeTest#123");
             SmokeTest.Report("ui-smoke: password re-verified");
             bool applied = VaultService.Instance.ApplyUnlock(unlock);
             SmokeTest.Report("ui-smoke: unlock applied=" + applied);
@@ -359,6 +410,13 @@ public sealed partial class MainWindow : Window
             SmokeTest.Report("browser: locking from another page clears cached tabs + reopen history=" + clearedTabs);
             if (!clearedTabs) throw new InvalidOperationException("Cached browser retained locked state");
 
+            // Leave a live native WebView for the direct Window.Close regression.
+            NavigateToPage(typeof(BrowserPage), null, "browser", force: true);
+            var closingTab = ((BrowserPage)NavFrame.Content).SmokeSelectedTab;
+            if (closingTab == null || !await closingTab.RunSmokeNavigationAsync())
+                throw new InvalidOperationException("Closing fixture could not initialize WebView");
+            SmokeTest.Report("closing fixture: live WebView before direct Window.Close");
+
             SmokeTest.Report("ui-smoke complete; closing window");
         }
         catch (Exception ex)
@@ -368,10 +426,7 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
-            // Programmatic Close can skip AppWindow.Closing. Release native tabs
-            // while the UI dispatcher is alive, including failed/probe runs.
-            await Controls.BrowserTabControl.ShutdownAllAsync();
-            await BrowserProfileManager.ShutdownAsync();
+            // Exercise the production direct-close fallback, without test-only pre-cleanup.
             try { Close(); } catch { }
         }
     }
@@ -466,9 +521,9 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void StatusBadge_Tapped(object sender, TappedRoutedEventArgs e)
+    private void StatusBadge_Tapped(object sender, RoutedEventArgs e)
     {
-        if (_isLocked || _pendingResidueCount <= 0) return;
+        if (_isLocked) return;
         NavigateToPage(typeof(CleanerPage), null, "cleaner", force: true);
     }
 
@@ -520,16 +575,9 @@ public sealed partial class MainWindow : Window
 
     private void OnWindowMinimized()
     {
-        if (!SettingsService.Instance.Data.LockOnMinimize) return;
-        if (!VaultService.Instance.IsUnlocked) return;
-
-        DispatcherQueue.TryEnqueue(() =>
-        {
-            if (SettingsService.Instance.Data.LockOnMinimize && VaultService.Instance.IsUnlocked)
-            {
-                LockWorkspace();
-            }
-        });
+        // LockWorkspace marshals to the UI thread and also revokes in-flight setup
+        // or verification while the lock page is already visible.
+        if (SettingsService.Instance.Data.LockOnMinimize) LockWorkspace();
     }
 
     private void OnWindowVisibilityChanged(bool visible) => DispatcherQueue.TryEnqueue(() =>
@@ -704,13 +752,14 @@ public sealed partial class MainWindow : Window
             bool firstLock = !_isLocked;
             _isLocked = true;
 
+            // Every explicit lock must revoke pending verification/setup, including
+            // another lock request while the lock page is already visible.
+            VaultService.Instance.Lock();
+
             if (firstLock)
             {
-                // Drops the decryption key and raises Locked so players/browser tabs can
-                // stop immediately even before the page navigation completes.
-                VaultService.Instance.Lock();
-
-                if (SettingsService.Instance.Data.ClearClipboardOnLock)
+                // Isolated diagnostics must not clear the user's global clipboard.
+                if (!SmokeTest.Enabled && SettingsService.Instance.Data.ClearClipboardOnLock)
                 {
                     try { Windows.ApplicationModel.DataTransfer.Clipboard.Clear(); } catch { }
                 }
@@ -754,6 +803,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        if (!VaultService.Instance.IsUnlocked) return;
         _isLocked = false;
         NavView.IsPaneVisible = true;
         StatusBadge.Visibility = Visibility.Visible;
@@ -826,6 +876,7 @@ public sealed partial class MainWindow : Window
     {
         if (item == null) return;
         var gallery = NavFrame.Content as VaultPage;
+        gallery?.FlushPendingSearch();
         var images = (gallery?.DisplayedItems ?? VaultService.Instance.VisibleItems)
             .Where(media => media.MediaType == "Image").DistinctBy(media => media.Id).ToList();
         if (item.MediaType == "Image" && images.All(media => media.Id != item.Id)) images.Add(item);
@@ -990,93 +1041,75 @@ public sealed partial class MainWindow : Window
 
     #region Shutdown
 
+    private Task? _shutdownTask;
+    private bool _windowClosed;
+
     private async void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
         if (_shutdownComplete) return;
-
         args.Cancel = true;
         if (_shutdownStarted) return;
         _shutdownStarted = true;
-        SmokeTest.Report("closing: 清理流程开始");
+        await ShutdownWorkspaceAsync();
+        if (!_windowClosed) { try { Close(); } catch { } }
+    }
 
+    private Task ShutdownWorkspaceAsync() => _shutdownTask ??= RunShutdownAsync();
+
+    private async Task RunShutdownAsync()
+    {
+        SmokeTest.Report("closing: 清理流程开始");
         try
         {
-            _idleTimer.Stop();
-
+            try { _idleTimer.Stop(); } catch { }
             try { HideCamouflage(); } catch { }
             try { BossKeyService.Instance.Uninitialize(); } catch { }
+            // Revoke keys immediately, before the first asynchronous browser operation.
             try { VaultService.Instance.Lock(); } catch { }
-
+            SmokeTest.Report("closing: vault locked=" + !VaultService.Instance.IsUnlocked);
             try
             {
-                await Controls.BrowserTabControl.ShutdownAllAsync().WaitAsync(TimeSpan.FromSeconds(4));
+                await Controls.BrowserTabControl.ShutdownAllAsync().WaitAsync(TimeSpan.FromSeconds(6));
+                SmokeTest.Report("closing: browser controls released");
             }
-            catch (Exception ex)
-            {
-                AppLog.Warn("关闭浏览器标签超时/失败: " + ex.GetType().Name);
-            }
-
+            catch (Exception ex) { AppLog.Warn("关闭浏览器标签超时/失败: " + ex.GetType().Name); }
             try
             {
-                await BrowserProfileManager.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(4));
+                bool cleaned = await BrowserProfileManager.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8));
+                SmokeTest.Report("closing: browser profiles removed=" + cleaned);
             }
             catch (Exception ex)
             {
                 AppLog.Warn("关闭浏览器沙箱超时/失败: " + ex.GetType().Name);
+                SmokeTest.Report("closing: browser profiles removed=False, " + ex.GetType().Name);
             }
-
             try
             {
                 if (!SmokeTest.Enabled && SettingsService.Instance.Data.AutoFlushDnsOnExit)
-                {
                     NativeMethods.DnsFlushResolverCache();
-                }
             }
             catch { }
-
             try { PrivacyMediaGuard.RestoreAfterBossKey(); } catch { }
             try { SettingsService.Instance.SaveSettings(); } catch { }
         }
-        catch (Exception ex)
-        {
-            AppLog.Error("关闭清理流程失败", ex);
-        }
-        finally
-        {
-            _shutdownComplete = true;
-            try { Close(); } catch { }
-        }
+        catch (Exception ex) { AppLog.Error("关闭清理流程失败", ex); }
+        finally { _shutdownComplete = true; }
     }
 
-    private void OnClosed(object sender, WindowEventArgs args)
+    private async void OnClosed(object sender, WindowEventArgs args)
     {
+        // Direct Window.Close bypasses AppWindow.Closing. Keep the UI dispatcher alive
+        // so pending WebView initialization/disposal can finish instead of blocking it.
+        _windowClosed = true;
         SmokeTest.Report("Window Closed 事件已触发");
         RootGrid.ActualThemeChanged -= RootGrid_ActualThemeChanged;
-
-        // Window.Close() does not always raise AppWindow.Closing, so the WebView2 profile
-        // cleanup must also be guaranteed here or a hidden %TEMP%/data-root profile would
-        // survive the process. ShutdownAsync never throws and uses ConfigureAwait(false),
-        // so a bounded synchronous wait on the UI thread cannot deadlock.
-        try
+        try { await ShutdownWorkspaceAsync(); }
+        finally
         {
-            BrowserProfileManager.ShutdownAsync().Wait(TimeSpan.FromSeconds(6));
+            Current = null;
+            App.MainWindowInstance = null;
+            Application.Current.Exit();
         }
-        catch { }
-
-        try
-        {
-            if (!SmokeTest.Enabled && !_shutdownComplete && SettingsService.Instance.Data.AutoFlushDnsOnExit)
-            {
-                NativeMethods.DnsFlushResolverCache();
-            }
-        }
-        catch { }
-
-        try { _idleTimer.Stop(); } catch { }
-        try { BossKeyService.Instance.Uninitialize(); } catch { }
-        try { VaultService.Instance.Lock(); } catch { }
-        Current = null;
-        App.MainWindowInstance = null;
     }
 
     #endregion

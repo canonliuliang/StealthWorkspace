@@ -7,35 +7,29 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" Padding="12">
+    <ScrollViewer Background="{ThemeResource StealthCanvasBrush}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" Padding="24">
     <Grid>
-    <Grid VerticalAlignment="Center" HorizontalAlignment="Stretch" MaxWidth="380">
+    <Grid VerticalAlignment="Center" HorizontalAlignment="Stretch" MaxWidth="420">
         <!-- Quiet, Elegant Workspace Auth Card -->
         <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="1"
-                CornerRadius="16"
-                Padding="24">
-            <StackPanel Spacing="16">
+                CornerRadius="20"
+                Padding="32">
+            <StackPanel Spacing="24">
                 <!-- Clean Header -->
-                <StackPanel HorizontalAlignment="Center" Spacing="8">
-                    <Border Width="56" Height="56" CornerRadius="28"
-                            Background="{ThemeResource LayerFillColorDefaultBrush}"
-                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            HorizontalAlignment="Center">
-                        <FontIcon Glyph="&#xE72E;" FontSize="22" Foreground="{ThemeResource TextFillColorPrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                    </Border>
-                    <TextBlock Text="工作空间"
-                               Style="{ThemeResource TitleTextBlockStyle}"
+                <StackPanel HorizontalAlignment="Center" Spacing="10">
+                    <Image Source="ms-appx:///Assets/AppIcon.png" Width="64" Height="64" AutomationProperties.Name="Stealth" />
+                    <TextBlock Text="Stealth"
+                               FontSize="32" CharacterSpacing="60"
                                HorizontalAlignment="Center" FontWeight="SemiBold" />
-                    <TextBlock Text="输入访问密码以继续"
-                               Style="{ThemeResource CaptionTextBlockStyle}"
+                    <TextBlock Text="你的私人工作空间"
+                               Style="{StaticResource StealthCaptionStyle}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                HorizontalAlignment="Center" />
                 </StackPanel>
 
-                <InfoBar x:Name="MsgInfoBar" IsOpen="False" Severity="Informational" />
+                <InfoBar x:Name="MsgInfoBar" IsOpen="False" Severity="Informational" AutomationProperties.LiveSetting="Polite" />
 
                 <!-- Busy indicator while PBKDF2 runs off-thread -->
                 <StackPanel x:Name="BusyPanel" Visibility="Collapsed" Orientation="Horizontal"
@@ -57,13 +51,13 @@
                             Content="解锁"
                             Style="{ThemeResource AccentButtonStyle}"
                             HorizontalAlignment="Stretch"
-                            Height="36"
+                            Height="42"
                             Click="UnlockBtn_Click" />
 
                     <Button x:Name="ForgotButton"
                             Content="无法解锁？重置保险箱…"
                             HorizontalAlignment="Center"
-                            FontSize="11"
+                            FontSize="12"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                             Style="{ThemeResource SubtleButtonStyle}"
                             Visibility="Collapsed"
@@ -81,7 +75,7 @@
                     <Expander Header="高级：设置诱饵密码（可选）" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                         <StackPanel Spacing="10">
                             <TextBlock Text="遇到胁迫或盘查时，输入诱饵密码会进入一个独立的无害空间；真实资料不会显示。"
-                                       FontSize="11" TextWrapping="Wrap"
+                                       FontSize="12" TextWrapping="Wrap"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                             <PasswordBox x:Name="SetupDecoyPwd" Header="诱饵密码" PlaceholderText="至少 6 个字符" PasswordRevealMode="Peek" />
                             <PasswordBox x:Name="SetupDecoyConfirmPwd" Header="确认诱饵密码" PlaceholderText="再次输入诱饵密码" PasswordRevealMode="Peek" />
@@ -92,7 +86,7 @@
                             Content="完成设置并解锁"
                             Style="{ThemeResource AccentButtonStyle}"
                             HorizontalAlignment="Stretch"
-                            Height="36"
+                            Height="42"
                             Margin="0,8,0,0"
                             Click="SetupConfirmBtn_Click" />
                 </StackPanel>
@@ -114,7 +108,7 @@
                 <!-- Build identity: lets the user confirm they are running the latest fix -->
                 <TextBlock x:Name="BuildLabel"
                            HorizontalAlignment="Center"
-                           FontSize="10"
+                           FontSize="12"
                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                            Text="构建信息加载中…" />
             </StackPanel>

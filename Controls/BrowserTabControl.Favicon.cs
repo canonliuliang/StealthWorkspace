@@ -123,6 +123,12 @@ public sealed partial class BrowserTabControl
                     _faviconSourceUri = sourceUri;
                     NavigationVisualChanged?.Invoke();
                 }
+                // The native icon is already cached by WebView2. At 100% scale,
+                // its 16px image is sufficient; larger native icons can satisfy
+                // higher DPI too. Only run the extra page fetch/decoder when the
+                // actual display needs more pixels. Dynamic FaviconChanged events
+                // still fetch a fresh native image, including same-URL updates.
+                if (fallback.PixelWidth >= FaviconPixels) return;
             }
 
             if (core.IsSuspended) { _faviconPending = true; return; }
@@ -178,8 +184,8 @@ public sealed partial class BrowserTabControl
             _faviconSourcePixels = 0;
             string url = "data:" + type + ";base64," + encoded;
             await core.ExecuteScriptAsync("document.querySelectorAll('link[rel~=icon]').forEach(e=>e.remove());var f=document.createElement('link');f.rel='icon';f.type=" + JsonSerializer.Serialize(type) + ";f.href=" + JsonSerializer.Serialize(url) + ";document.head.appendChild(f);");
-            for (int i = 0; i < 70 && _faviconSourcePixels < 128; i++) await Task.Delay(50);
-            bool sharp = _faviconSourcePixels >= 128 && _favicon?.PixelWidth == FaviconPixels;
+            for (int i = 0; i < 70 && (_faviconSourceUri != url || (_favicon?.PixelWidth ?? 0) < FaviconPixels); i++) await Task.Delay(50);
+            bool sharp = _faviconSourceUri == url && _faviconSourcePixels >= FaviconPixels && (_favicon?.PixelWidth ?? 0) >= FaviconPixels;
             StealthWorkspace.Services.SmokeTest.Report($"browser: {name} favicon source={_faviconSourcePixels}, decoded={_favicon?.PixelWidth}, sharp={sharp}");
             all &= sharp;
         }

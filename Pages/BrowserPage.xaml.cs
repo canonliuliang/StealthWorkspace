@@ -263,7 +263,7 @@ public sealed partial class BrowserPage : Page
             var probe = new BrowserTabControl();
             constructorTicks += System.Diagnostics.Stopwatch.GetTimestamp() - started;
             constructorBytes += GC.GetAllocatedBytesForCurrentThread() - allocated;
-            if (probe.HasPrivacyUi || probe.HasBrowserControl) throw new InvalidOperationException("Blank tab eagerly loaded hidden UI");
+            if (probe.HasAuxiliaryUi || probe.HasBrowserControl) throw new InvalidOperationException("Blank tab eagerly loaded hidden UI");
             await probe.DisposeTabAsync();
         }
         SmokeTest.Report($"browser: blank control construction avg ms={constructorTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency / 12:F2}; managed KiB={constructorBytes / 1024.0 / 12:F1}");

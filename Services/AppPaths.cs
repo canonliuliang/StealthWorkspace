@@ -10,9 +10,26 @@ namespace StealthWorkspace.Services;
 /// </summary>
 public static class AppPaths
 {
+    internal const string LegacyImportDisabledFileName = ".legacy-import-disabled";
     private static readonly object Gate = new();
     private static string? _dataRoot;
     private static string? _overrideRoot;
+
+    /// <summary>Explicit diagnostic roots must not import data beside the installed executable.</summary>
+    internal static bool HasDataRootOverride
+    {
+        get { lock (Gate) return _overrideRoot != null; }
+    }
+
+    internal static bool IsLegacyImportDisabled(string root)
+    {
+        try { _ = File.GetAttributes(Path.Combine(root, LegacyImportDisabledFileName)); return true; }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+        // An inaccessible marker cannot authorize reopening an older preserved vault.
+        catch (IOException) { return true; }
+        catch (UnauthorizedAccessException) { return true; }
+    }
 
     /// <summary>
     /// Diagnostic/testing override for the private data root. Must be called before the
@@ -53,7 +70,10 @@ public static class AppPaths
         // precedence over the preserved legacy copy.
         static bool HasVault(string root) => File.Exists(Path.Combine(root, "system_catalog.dat"))
             || File.Exists(Path.Combine(root, "system_catalog.dat.bak"))
-            || File.Exists(Path.Combine(root, ".migrated"));
+            || File.Exists(Path.Combine(root, "remove.dat"))
+            || File.Exists(Path.Combine(root, "rotate.dat"))
+            || File.Exists(Path.Combine(root, ".migrated"))
+            || IsLegacyImportDisabled(root);
 
         string[] roots = { portable, local, legacy };
         string? existing = roots.FirstOrDefault(HasVault)
@@ -106,44 +126,62 @@ public static class AppPaths
         }
     }
 
-    private static bool TryCopyLegacyVault(string source, string target)
+    internal static bool TryCopyLegacyVault(string source, string target)
     {
         // Keep a distinct staging directory until every file has been copied.
         // An existing destination is never merged or overwritten.
         if (Directory.Exists(target) || File.Exists(target)) return false;
-        string stage = target + ".migration-" + Guid.NewGuid().ToString("N");
-        if (!CanWriteVault(stage)) return false;
-
-        static void CopyIfPresent(string path, string directory)
-        {
-            string copy = Path.Combine(directory, Path.GetFileName(path));
-            try { File.Copy(path, copy); }
-            catch (FileNotFoundException) { return; }
-            File.SetAttributes(copy, File.GetAttributes(copy) & ~FileAttributes.ReadOnly);
-        }
-
-        foreach (string name in new[] { "system_catalog.dat", "system_catalog.dat.bak", "settings.dat", "settings.dat.bak", "rotate.dat" })
-            CopyIfPresent(Path.Combine(source, name), stage);
-
-        string sourceMedia = Path.Combine(source, "MediaVault");
+        string stage = Path.GetFullPath(target) + ".migration-" + Guid.NewGuid().ToString("N");
         try
         {
-            foreach (string path in Directory.EnumerateFiles(sourceMedia, "*.svault"))
+            if (!CanWriteVault(stage)) return false;
+
+            static void CopyIfPresent(string path, string directory)
             {
-                string copy = Path.Combine(stage, "MediaVault", Path.GetFileName(path));
-                File.Copy(path, copy);
+                string copy = Path.Combine(directory, Path.GetFileName(path));
+                try { File.Copy(path, copy); }
+                catch (FileNotFoundException) { return; }
                 File.SetAttributes(copy, File.GetAttributes(copy) & ~FileAttributes.ReadOnly);
             }
-        }
-        catch (DirectoryNotFoundException) when (!Directory.Exists(sourceMedia))
-        {
-            // An existing vault can be empty and not yet have a media directory.
-        }
 
-        // Only expose a complete copy to subsequent starts.
-        File.WriteAllText(Path.Combine(stage, ".migrated"), "1");
-        Directory.Move(stage, target);
-        return true;
+            foreach (string name in new[] { "system_catalog.dat", "system_catalog.dat.bak", "settings.dat", "settings.dat.bak", "rotate.dat", "remove.dat", LegacyImportDisabledFileName })
+                CopyIfPresent(Path.Combine(source, name), stage);
+
+            string sourceMedia = Path.Combine(source, "MediaVault");
+            try
+            {
+                foreach (string path in Directory.EnumerateFiles(sourceMedia, "*.svault"))
+                {
+                    string copy = Path.Combine(stage, "MediaVault", Path.GetFileName(path));
+                    File.Copy(path, copy);
+                    File.SetAttributes(copy, File.GetAttributes(copy) & ~FileAttributes.ReadOnly);
+                }
+            }
+            catch (DirectoryNotFoundException) when (!Directory.Exists(sourceMedia))
+            {
+                // An existing vault can be empty and not yet have a media directory.
+            }
+
+            // Only expose a complete copy to subsequent starts.
+            File.WriteAllText(Path.Combine(stage, ".migrated"), "1");
+            Directory.Move(stage, target);
+            return true;
+        }
+        finally
+        {
+            // Only our unpublished staging directory is removed, never the source or target.
+            if (Directory.Exists(stage) && SafeFileSystem.IsPlainPath(stage))
+            {
+                try
+                {
+                    foreach (string file in SafeFileSystem.EnumerateFiles(stage, true, out _)) File.Delete(file);
+                    string media = Path.Combine(stage, "MediaVault");
+                    if (Directory.Exists(media) && SafeFileSystem.IsPlainPath(media)) Directory.Delete(media, false);
+                    Directory.Delete(stage, false);
+                }
+                catch (Exception ex) { AppLog.Warn("迁移暂存目录清理失败: " + ex.GetType().Name); }
+            }
+        }
     }
 
     public static string MediaRoot => Path.Combine(DataRoot, "MediaVault");

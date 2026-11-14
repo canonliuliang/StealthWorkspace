@@ -124,6 +124,7 @@ public sealed partial class BrowserTabControl : UserControl
     internal bool HasBrowserControl => _browserControl != null;
     internal bool IsPageFullScreen => _isBrowserFullScreen;
     internal bool HasPrivacyUi => PrivacyContent != null;
+    internal bool HasAuxiliaryUi => PrivacyContent != null || BookmarksContent != null || MoreActionsContent != null;
     internal bool IsSmokeSuspended => _hookedCore?.IsSuspended == true;
     internal bool IsSmokeBrowserAwake => _hookedCore is { IsSuspended: false };
     internal bool IsSmokeNavigationComplete => _activeNavigationId == null && _isInitialized && !_isInitializing;
@@ -156,18 +157,24 @@ public sealed partial class BrowserTabControl : UserControl
         UpdateEmptyNotices();
         UpdateBookmarkStarState();
         RefreshStartBookmarks();
-        if (_focusAddressOnLoad)
-        {
-            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
-            {
-                if (!_focusAddressOnLoad || !IsLoaded || _isDisposed || !_isSelected) return;
-                _focusAddressOnLoad = false;
-                FocusAddressBar();
-            });
-        }
+        QueueInitialAddressFocus();
     }
 
     internal void FocusAddressWhenLoaded() => _focusAddressOnLoad = true;
+
+    private void QueueInitialAddressFocus()
+    {
+        if (!_focusAddressOnLoad) return;
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            if (!_focusAddressOnLoad || !IsLoaded || _isDisposed || !_isSelected) return;
+            FocusAddressBar();
+        });
+    }
+
+    // A command made after opening a tab supersedes its deferred initial focus.
+    // Otherwise that callback can move focus out of a newly opened flyout.
+    private void CancelInitialAddressFocus() => _focusAddressOnLoad = false;
 
     internal void SetTabSelected(bool selected)
     {
@@ -180,7 +187,8 @@ public sealed partial class BrowserTabControl : UserControl
         {
             _backgroundTimer?.Stop();
             ResumeBrowser();
-            UiMotion.Enter(TopNavBar, 0, 0);
+            // Tab switches are direct manipulation. Replaying a fade on the
+            // navigation controls makes rapid switching flash and feel delayed.
         }
         else ScheduleBackgroundSleep();
     }
@@ -1270,10 +1278,10 @@ public sealed partial class BrowserTabControl : UserControl
             }
 
             string displayName = Path.GetFileName(targetPath);
-            DownloadToastTitle.Text = $"正在隔离下载: {displayName}";
-            DownloadToastDesc.Text = "文件保存在应用隐藏隔离目录，未进入系统下载夹";
+            DownloadToastTitle.Text = $"正在下载：{displayName}";
+            DownloadToastDesc.Text = "文件保存在应用下载文件夹，未自动加密。";
             DownloadToast.Visibility = Visibility.Visible;
-            SetHubStatus("下载已重定向到应用隐藏隔离目录");
+            SetHubStatus("下载保存在应用文件夹，未自动加密");
             AppLog.Info("DownloadStarting: 下载已重定向到应用隐藏隔离目录");
 
             _downloadPaths.Add(operation, reservation);
@@ -1310,7 +1318,7 @@ public sealed partial class BrowserTabControl : UserControl
             try
             {
                 DownloadToastTitle.Text = "下载已阻止";
-                DownloadToastDesc.Text = "无法创建应用隔离目录，文件没有被写入系统下载夹";
+                DownloadToastDesc.Text = "无法创建应用下载文件夹，下载未开始。";
                 DownloadToast.Visibility = Visibility.Visible;
             }
             catch
@@ -1375,8 +1383,8 @@ public sealed partial class BrowserTabControl : UserControl
             {
                 case CoreWebView2DownloadState.Completed:
                     DetachDownloadStateHandler(operation);
-                    DownloadToastTitle.Text = "下载完成（已隔离）";
-                    DownloadToastDesc.Text = "文件保存在应用隐藏隔离目录，未进入系统下载夹";
+                    DownloadToastTitle.Text = "下载完成";
+                    DownloadToastDesc.Text = "文件保存在应用下载文件夹，未自动加密。";
                     DownloadToast.Visibility = Visibility.Visible;
                     AppLog.Info("Download: 已下载到应用隐藏隔离目录");
                     break;
@@ -1548,6 +1556,9 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void BookmarksFlyout_Opening(object? sender, object e)
     {
+        if (_isDisposed) return;
+        CancelInitialAddressFocus();
+        if (BookmarksContent == null) FindName(nameof(BookmarksContent));
         BookmarkSearchBox.Text = "";
         RefreshBookmarkList();
     }
@@ -1583,8 +1594,11 @@ public sealed partial class BrowserTabControl : UserControl
     {
         CoreWebView2? core = _browserControl?.CoreWebView2;
         bool isMuted = core != null && core.IsMuted;
-        AudioMuteBtn.IsEnabled = core != null;
-        AudioMuteBtn.Content = isMuted ? "取消静音" : "静音标签页";
+        if (AudioMuteBtn != null)
+        {
+            AudioMuteBtn.IsEnabled = core != null;
+            AudioMuteBtn.Content = isMuted ? "取消静音" : "静音标签页";
+        }
         NavigationVisualChanged?.Invoke();
     }
 
@@ -1661,6 +1675,7 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void PrivacyFlyout_Opening(object? sender, object e)
     {
+        CancelInitialAddressFocus();
         EnsurePrivacyContent();
         string currentUrl = GetCurrentDocumentUrl();
         FlyoutDomainText.Text = DescribeHost(currentUrl);
@@ -1694,6 +1709,7 @@ public sealed partial class BrowserTabControl : UserControl
     internal async Task<bool> CheckSmokeDeferredPrivacyAsync()
     {
         bool lazy = !HasPrivacyUi;
+        bool menusDeferred = BookmarksContent == null && MoreActionsContent == null;
         var cfg = SettingsService.Instance.Data;
         var policy = (cfg.BlockCamera, cfg.BlockMicrophone, cfg.BlockGeolocation, cfg.BlockNotifications);
         EnsurePrivacyContent();
@@ -1704,7 +1720,89 @@ public sealed partial class BrowserTabControl : UserControl
             ReferenceEquals(CookieListView.ItemsSource, _filteredCookies) && ReferenceEquals(HistoryListView.ItemsSource, _sessionHistory) &&
             policy == (cfg.BlockCamera, cfg.BlockMicrophone, cfg.BlockGeolocation, cfg.BlockNotifications);
         SmokeTest.Report("browser: deferred privacy loads once, binds lists, preserves policy=" + ok);
-        return ok;
+        // Exercise real flyout opening so deferred controls are instantiated by
+        // the same event path as a click. A second opening must reuse the tree.
+        // ShowAt can return before Opening is dispatched, especially under x64
+        // emulation. Observe the actual lifecycle instead of sampling that return.
+        async Task<(bool Loaded, bool FocusStable)> CheckMenuAsync(string name, Flyout flyout,
+            FrameworkElement anchor, Func<bool> isContentLoaded)
+        {
+            int opening = 0, opened = 0, closed = 0;
+            bool auditHide = false;
+            var hidden = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            string FocusDescription() => XamlRoot is { } root && FocusManager.GetFocusedElement(root) is FrameworkElement focused
+                ? focused.GetType().Name + ":" + focused.Name : "none";
+            void Opening(object? sender, object args)
+            {
+                opening++;
+                SmokeTest.Report($"browser menu {name}: Opening; addressPending={_focusAddressOnLoad}; focus={FocusDescription()}");
+            }
+            void Opened(object? sender, object args)
+            {
+                opened++;
+                SmokeTest.Report($"browser menu {name}: Opened; addressPending={_focusAddressOnLoad}; focus={FocusDescription()}");
+            }
+            void Closed(object? sender, object args)
+            {
+                if (auditHide) hidden.TrySetResult(true);
+                else
+                {
+                    closed++;
+                    SmokeTest.Report($"browser menu {name}: Closed before audit hide; addressPending={_focusAddressOnLoad}; focus={FocusDescription()}");
+                }
+            }
+            flyout.Opening += Opening;
+            flyout.Opened += Opened;
+            flyout.Closed += Closed;
+            try
+            {
+                FocusAddressWhenLoaded();
+                QueueInitialAddressFocus();
+                flyout.ShowAt(anchor);
+                var dispatched = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => dispatched.TrySetResult(true));
+                for (int i = 0; i < 40 && (opening == 0 || opened == 0 || !isContentLoaded() || !dispatched.Task.IsCompleted); i++)
+                    await Task.Delay(25);
+                bool loaded = isContentLoaded();
+                bool focusStable = opening > 0 && opened > 0 && closed == 0 && flyout.IsOpen &&
+                    dispatched.Task.IsCompleted && !_focusAddressOnLoad;
+                SmokeTest.Report($"browser menu {name}: opening={opening}; opened={opened}; closed={closed}; contentLoaded={loaded}; isOpen={flyout.IsOpen}; initialFocusCancelled={!_focusAddressOnLoad}; focusCallbackDrained={dispatched.Task.IsCompleted}; focus={FocusDescription()}");
+                return (loaded, focusStable);
+            }
+            finally
+            {
+                auditHide = true;
+                bool wasOpen = flyout.IsOpen;
+                try
+                {
+                    flyout.Hide();
+                    // Finish the real closing transition before another menu is
+                    // opened; no fixed animation delay is assumed by this test.
+                    if (wasOpen) await hidden.Task.WaitAsync(TimeSpan.FromSeconds(1));
+                }
+                finally
+                {
+                    flyout.Opening -= Opening;
+                    flyout.Opened -= Opened;
+                    flyout.Closed -= Closed;
+                }
+            }
+        }
+        var bookmarkProbe = await CheckMenuAsync("bookmarks", BookmarksFlyout, FavoritesBtn, () => BookmarksContent?.IsLoaded == true);
+        var bookmarks = BookmarksContent;
+        bool bookmarksLoaded = bookmarkProbe.Loaded && BookmarksListView.ItemsSource != null;
+        var actionsProbe = await CheckMenuAsync("actions", MoreActionsFlyout, BrowserMenuBtn, () => MoreActionsContent?.IsLoaded == true);
+        var actions = MoreActionsContent;
+        bool actionsLoaded = actionsProbe.Loaded && AudioMuteBtn != null && ZoomResetBtn != null;
+        var bookmarkReuse = await CheckMenuAsync("bookmarks-reuse", BookmarksFlyout, FavoritesBtn, () => BookmarksContent?.IsLoaded == true);
+        bool reusedBookmarks = bookmarkReuse.Loaded && ReferenceEquals(bookmarks, BookmarksContent);
+        var actionsReuse = await CheckMenuAsync("actions-reuse", MoreActionsFlyout, BrowserMenuBtn, () => MoreActionsContent?.IsLoaded == true);
+        bool reusedActions = actionsReuse.Loaded && ReferenceEquals(actions, MoreActionsContent);
+        bool menusOk = menusDeferred && bookmarksLoaded && actionsLoaded && reusedBookmarks && reusedActions;
+        SmokeTest.Report("browser: deferred bookmark/actions flyouts open, bind and reuse controls=" + menusOk);
+        bool focusOk = bookmarkProbe.FocusStable && actionsProbe.FocusStable && bookmarkReuse.FocusStable && actionsReuse.FocusStable;
+        SmokeTest.Report("browser: bookmark/actions commands cancel deferred address focus=" + focusOk);
+        return ok && menusOk && focusOk;
     }
 
     #endregion
@@ -1978,13 +2076,19 @@ public sealed partial class BrowserTabControl : UserControl
     private void RefreshStartBookmarks()
     {
         if (_isDisposed || StartSurface.Visibility != Visibility.Visible) return;
-        var bookmarks = SettingsService.Instance.Data.Bookmarks.Take(12).ToList();
+        var bookmarks = SettingsService.Instance.Data.Bookmarks.Take(12).ToArray();
+        // Loaded is raised again when returning to a tab. Retain the existing
+        // controls and focus if the displayed bookmarks have not changed.
+        if (StartBookmarks.ItemsSource is IReadOnlyList<BookmarkItem> existing && existing.SequenceEqual(bookmarks)) return;
         StartBookmarks.ItemsSource = bookmarks;
-        StartBookmarksEmpty.Visibility = bookmarks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        StartBookmarksEmpty.Visibility = bookmarks.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void MoreActionsFlyout_Opening(object? sender, object e)
     {
+        if (_isDisposed) return;
+        CancelInitialAddressFocus();
+        if (MoreActionsContent == null) FindName(nameof(MoreActionsContent));
         UpdateAudioIcon();
         PageImagesBtn.IsEnabled = _isInitialized && _hookedCore != null && _documentReady;
         foreach (var control in ZoomMenuRow.Children.OfType<Control>()) control.IsEnabled = _isInitialized && _hookedCore != null;
@@ -2020,14 +2124,21 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void ShowDownloads_Click(object sender, RoutedEventArgs e)
     {
+        if (_isDisposed) return;
+        CancelInitialAddressFocus();
         try
         {
-            _downloadsFlyout ??= new Flyout { Content = new DownloadListControl(), Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight };
-            _downloadsFlyout.ShowAt(DownloadsBtn);
+            EnsureDownloadsFlyout().ShowAt(DownloadsBtn);
             DownloadToast.Visibility = Visibility.Collapsed;
         }
         catch (Exception ex) { AppLog.Warn("Download dialog failed: " + ex.GetType().Name); ShowBrowserError("无法显示下载记录", "可以从更多菜单打开下载文件夹。"); }
     }
+
+    private Flyout EnsureDownloadsFlyout() => _downloadsFlyout ??= new Flyout
+    {
+        Content = new DownloadListControl(),
+        Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight,
+    };
 
     private void CoreWebView2_DocumentTitleChanged(CoreWebView2 sender, object args)
     {
@@ -2084,8 +2195,8 @@ public sealed partial class BrowserTabControl : UserControl
         await core.ExecuteScriptAsync("document.title='Updated fixture';var icon=document.createElement('link');icon.rel='icon';icon.href=" + JsonSerializer.Serialize(dataUri) + ";document.head.appendChild(icon);");
         for (int i = 0; i < 30 && (_favicon == null || CurrentTitle != "Updated fixture"); i++) await Task.Delay(100);
         bool visual = _favicon != null && CurrentTitle == "Updated fixture";
-        for (int i = 0; i < 60 && _faviconSourcePixels < 128; i++) await Task.Delay(50);
-        bool sharpIcon = _faviconSourcePixels >= 128 && _favicon?.PixelWidth == FaviconPixels;
+        for (int i = 0; i < 60 && (_faviconSourceUri != dataUri || (_favicon?.PixelWidth ?? 0) < FaviconPixels); i++) await Task.Delay(50);
+        bool sharpIcon = _faviconSourceUri == dataUri && _faviconSourcePixels >= FaviconPixels && (_favicon?.PixelWidth ?? 0) >= FaviconPixels;
         SmokeTest.Report($"browser: favicon original pixels={_faviconSourcePixels}, rendered pixels={_favicon?.PixelWidth}, DPI target={FaviconPixels}, sharp={sharpIcon}");
         bool canvas = await core.ExecuteScriptAsync("(()=>{try{document.createElement('canvas').getContext('2d').getImageData(0,0,1,1);return true}catch{return false}})()") == "true";
         SmokeTest.Report("browser: standard canvas readback available=" + canvas);
@@ -2458,6 +2569,7 @@ public sealed partial class BrowserTabControl : UserControl
 
     public void FocusAddressBar()
     {
+        CancelInitialAddressFocus();
         try
         {
             UrlTextBox.Focus(FocusState.Programmatic);

@@ -3,7 +3,7 @@
 ## 环境
 
 - Windows 11 x64 或 ARM64。
-- .NET SDK 10.0.401（`global.json` 固定，允许同一 feature band 的补丁更新）。目标框架仍是 .NET 8 + Windows SDK 26100。
+- .NET SDK 10.0.401（`global.json` 固定，允许同一 feature band 的补丁更新）。目标框架为 .NET 10 LTS + Windows SDK 26100；自包含运行时固定为 10.0.15，避免旧 SDK 默认携带旧补丁。
 - PowerShell 7 用于构建和核心自检脚本；随包快捷方式脚本兼容 Windows PowerShell。
 - Windows App SDK 2.6.5，由 NuGet 恢复。
 - UI 验证使用 [WinApp CLI](https://github.com/microsoft/WinAppCli)；网页需要 WebView2 Runtime。
@@ -21,11 +21,27 @@ ARM64 构建使用 `-r win-arm64 -p:Platform=ARM64`，x64 使用 `-r win-x64 -p:
 `tools/Test-Core.ps1` 启动发布目录里的无界面自检，设超时，检查进程退出码以及报告中的失败计数。它覆盖加密、流式读取、密码轮换、备份恢复、地址解析、下载命名、站点数据边界和诊断日志。它不代表 XAML、网站兼容性或桌面启动已通过。
 
 ```powershell
-./tools/Build-Release.ps1 -Runtime win-arm64 -Version 2026.11.14-r12-preview
-./tools/Test-Core.ps1 -PublishDirectory artifacts/releases/2026.11.14-r12-preview/win-arm64/app
+./tools/Build-Release.ps1 -Runtime win-arm64 -Version 2026.11.14-r15-preview
+./tools/Test-Core.ps1 -PublishDirectory artifacts/releases/2026.11.14-r15-preview/win-arm64/app
 ```
 
 交互烟测必须使用新建的独立测试数据目录；不要把真实保险箱传给 `--data-root`，不要在真实数据上运行诊断 fixture。普通 UI 验证可使用 WinApp CLI 的 inspect / invoke / set-value / screenshot。锁定、导入、下载、切图、休眠、崩溃恢复和关闭会话需要实际交互复核。系统安全提示不应被自动绕过。
+
+## 可复现 UI 与性能检查
+
+`Test-UI.ps1` 总是创建独立数据目录，要求先关闭现有应用，并检查最终结果标记及进程退出码。支持 `Smoke`、`Render`、`Browser`、`Experience`、`Soak`；例如：
+
+```powershell
+./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.14-r15-accepted/win-arm64/app -Mode Smoke
+./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.14-r15-accepted/win-arm64/app -Mode Render
+./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.14-r15-accepted/win-arm64/app -Mode Soak -SoakMinutes 3
+./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.14-r15-accepted/win-arm64/app -Theme Light -Width 640
+./tools/Test-BrowserPerformance.ps1 -BaselineRoot ../StealthWorkspace-Backups/pre-overhaul-20261114/project
+./tools/Measure-VaultContention.ps1 -AppDirectory artifacts/releases/2026.11.14-r15-accepted/win-arm64/app -OutputPath artifacts/contention-new.json
+./tools/Test-DiagnosticIsolation.ps1 -AppDirectory artifacts/releases/2026.11.14-r15-accepted/win-arm64/app -OutputDirectory artifacts/isolation-new
+```
+
+渲染检查需要应用保持前台，使用本地合成网页。建议、锁争用及列表通知的测量不能等同于任意网页的帧率。`--ui-smoke` 还支持 `--ui-width`、`--ui-height` 和 `--ui-theme`；这些选项不会修改真实用户设置。
 
 ## 目录
 

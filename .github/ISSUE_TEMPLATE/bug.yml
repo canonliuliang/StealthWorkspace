@@ -9,7 +9,7 @@ body:
     id: version
     attributes:
       label: 应用版本 / Windows 版本 / 架构
-      placeholder: 'r12-preview / Windows 11 / ARM64'
+      placeholder: 'r15-preview / Windows 11 / ARM64'
     validations:
       required: true
   - type: textarea

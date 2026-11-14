@@ -2,11 +2,22 @@
 
 面向 Windows 的原生浏览器与本地加密媒体工作台。基于 WinUI 3、Windows App SDK 和 Microsoft Edge WebView2。
 
+**r15 是一次视觉、响应与数据保护的重大更新。** 全新几何标志与统一主题贯穿主要页面，标签、地址建议和媒体筛选减少重复工作，锁定、迁移、重置与文件操作增加边界保护。提供 Windows x64 / ARM64 便携包。
+
 [官网](https://canonliuliang.github.io/StealthWorkspace/) · [下载预览版](https://github.com/canonliuliang/StealthWorkspace/releases) · [安装指南](docs/INSTALL.md) · [问题反馈](https://github.com/canonliuliang/StealthWorkspace/issues)
 
 > 当前为未签名预览项目，尚未接受独立安全审计。支持目标为 Windows 11 x64 / ARM64。临时会话不等于匿名上网，下载文件不会自动加密，当前保险箱备份依赖原 Windows 用户，不能承诺换机恢复。
 
-![Stealth 浏览器真实界面（r12 深色主题）](website/assets/browser.png)
+![Stealth r15 真实界面（独立测试窗口）](docs/images/r15-browser-dark.png)
+
+## r15 的变化
+
+- **重新设计主要页面**：石墨与青玉配色、深浅主题、清晰排版，以及锁屏、新标签、媒体库、播放器、设置与清理页面的状态和窄窗适配。
+- **减少日常交互开销**：收藏与更多菜单首次打开才创建、后续复用；地址建议避免无效解析，大媒体库搜索合并输入并批量更新结果。
+- **让锁定及时生效**：密码计算移出共享状态锁，迟到的验证或初始化结果不能撤销随后发生的锁定。
+- **保护文件与旧版本数据**：加强导出目标和导入原件校验；迁移失败保留源数据，重置标记阻止旧保险箱自动重新导入。
+
+重构阶段本机同配置 .NET 8 / Debug ARM64 空标签控件平均构造耗时 **6.18→4.32ms**，托管分配 **105.1→81.1KiB**；这些是指定场景的测量，不代表所有网页统一提速或 FPS 提升。[查看完整变化](CHANGELOG.md)与[实测条件、结果和限制](docs/OVERHAUL-2026-11-14.md)。
 
 ## 日常使用
 
@@ -27,18 +38,18 @@
 
 ## 开发与检查
 
-需要 Windows 和 .NET SDK 10.0.401；目标框架为 .NET 8。
+需要 Windows 和 .NET SDK 10.0.401；目标框架为 .NET 10 LTS，自包含发布包固定使用 10.0.15 运行时。
 
 ```powershell
 dotnet build
 dotnet run
 # 打包并执行核心自检
-./tools/Build-Release.ps1 -Runtime win-arm64 -Version 2026.11.14-r12-preview
+./tools/Build-Release.ps1 -Runtime win-arm64 -Version 2026.11.14-r15-preview
 # 官网本地预览
 node tools/site.mjs serve
 ```
 
-详见 [开发说明](docs/DEVELOPMENT.md)。GitHub Actions 分别构建 x64 / ARM64，核心自检不能替代实际 UI、网站兼容性和签名分发验证。
+详见 [开发说明](docs/DEVELOPMENT.md)。本机两架构发布包各有 **206 项核心自检通过、0 失败、2 项 SUBST 环境限制跳过**，完整界面巡检通过；x64 在 ARM64 兼容层运行。工作流分别在 x64 / ARM64 runner 构建并执行核心自检，远程结果以对应提交的 [Actions 记录](https://github.com/canonliuliang/StealthWorkspace/actions/workflows/build.yml) 为准。核心自检不能替代实际 UI、网站兼容性和签名分发验证。
 
 ## 使用前应了解
 

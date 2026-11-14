@@ -73,6 +73,10 @@ public sealed partial class PlayerPage : Page
         else
         {
             MediaTitleText.Text = "未选择媒体";
+            MediaFormatBadge.Text = "";
+            PlayerEmptyNotice.Visibility = Visibility.Visible;
+            PlayerElement.Visibility = Visibility.Collapsed;
+            SpeedButton.Visibility = StretchButton.Visibility = Visibility.Collapsed;
         }
     }
 
@@ -113,6 +117,7 @@ public sealed partial class PlayerPage : Page
 
     private async Task LoadMediaAsync(VaultItem item, int direction = 0)
     {
+        PlayerEmptyNotice.Visibility = Visibility.Collapsed;
         _imageLoad?.Cancel();
         int version = ++_loadVersion;
         _cleanedUp = false;
@@ -385,6 +390,8 @@ public sealed partial class PlayerPage : Page
         ".ogg" => "audio/ogg",
         _ => "video/mp4"
     };
+
+    private void OpenLibrary_Click(object sender, RoutedEventArgs e) => BackBtn_Click(sender, e);
 
     private void BackBtn_Click(object sender, RoutedEventArgs e)
     {

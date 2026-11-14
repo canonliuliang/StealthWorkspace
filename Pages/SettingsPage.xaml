@@ -1,506 +1,389 @@
-<?xml version="1.0" encoding="utf-8" ?>
-<Page
-    x:Class="StealthWorkspace.Pages.SettingsPage"
-    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    mc:Ignorable="d">
-
-    <ScrollViewer Padding="24,20" VerticalScrollBarVisibility="Auto">
-        <StackPanel Spacing="24" MaxWidth="820" HorizontalAlignment="Left">
-
-            <!-- Page Header -->
-            <Grid ColumnSpacing="14">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Border Width="40" Height="40" CornerRadius="20" Background="{ThemeResource SubtleFillColorSecondaryBrush}" VerticalAlignment="Center">
-                    <FontIcon Glyph="&#xE713;" FontSize="18" Foreground="{ThemeResource AccentFillColorDefaultBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                </Border>
-                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
-                    <TextBlock Text="安全防御与系统设置" Style="{ThemeResource TitleTextBlockStyle}" FontWeight="SemiBold" FontSize="20" />
-                    <TextBlock Text="设置屏幕捕获保护、保险箱锁定、老板键与退出清理。"
-                               Style="{ThemeResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                </StackPanel>
-            </Grid>
-
-            <InfoBar x:Name="SettingsInfoBar" IsOpen="False" IsClosable="True" />
-
-            <Border x:Name="BackupSection" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="16">
-                <StackPanel Spacing="10">
-                    <TextBlock Text="保险箱备份与恢复" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                    <TextBlock Text="备份包含加密媒体与索引，不导出明文。仅限原 Windows 用户恢复，重装系统或换机后可能无法使用。恢复入口位于首次设置页面，已有保险箱不会被覆盖。" TextWrapping="Wrap" Style="{ThemeResource CaptionTextBlockStyle}" />
-                    <Button x:Name="BackupButton" Content="创建加密备份" Click="Backup_Click" />
-                    <Button x:Name="VerifyBackupButton" Content="检查备份完整性" Click="VerifyBackup_Click" />
-                </StackPanel>
-            </Border>
-
-            <!-- GROUP 1: 硬件防窥与显示保护 -->
-            <StackPanel Spacing="10">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <FontIcon Glyph="&#xE72E;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
-                    <TextBlock Text="屏幕捕获与显示保护" FontWeight="SemiBold" FontSize="14" />
-                </StackPanel>
-
-                <!-- Card 1: Anti-Capture Display Affinity -->
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="16,14">
-                    <Grid ColumnSpacing="16">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="屏幕捕获保护" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                            <TextBlock Text="请求 Windows 在支持的截图、录屏和屏幕共享中隐藏此窗口。虚拟机宿主截图、拍照及部分捕获工具不受此保护。"
-                                       Style="{ThemeResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ToggleSwitch x:Name="AffinityToggle" Grid.Column="1"
-                                      Toggled="AffinityToggle_Toggled" IsOn="True"
-                                      OnContent="已开启" OffContent="已停用" VerticalAlignment="Center" />
-                    </Grid>
-                </Border>
-
-                <!-- Card 2: Anti-Peek Thumbnail -->
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="16,14">
-                    <Grid ColumnSpacing="16">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="任务栏悬停预览防窥遮罩" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                            <TextBlock Text="鼠标悬停在 Windows 任务栏图标上时不显示窗口实时预览缩略图，防止旁人一瞥窥见媒体播放画面。"
-                                       Style="{ThemeResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ToggleSwitch x:Name="TaskbarThumbnailToggle" Grid.Column="1"
-                                      Toggled="TaskbarThumbnailToggle_Toggled" IsOn="True"
-                                      OnContent="已遮罩" OffContent="允许预览" VerticalAlignment="Center" />
-                    </Grid>
-                </Border>
-            </StackPanel>
-
-            <!-- GROUP 2: 隐私保险箱与自动锁定策略 -->
-            <StackPanel Spacing="10">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <FontIcon Glyph="&#xE81C;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
-                    <TextBlock Text="隐私保险箱与锁定策略" FontWeight="SemiBold" FontSize="14" />
-                </StackPanel>
-
-                <!-- Card 1: Auto-Lock Timeout -->
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="16,14">
-                    <Grid ColumnSpacing="16">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="220" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="闲置自动锁屏保护" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                            <TextBlock Text="电脑无鼠标键盘操作达到指定时间后，自动切断解密流并切回工作台加锁界面。"
-                                       Style="{ThemeResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ComboBox x:Name="AutoLockCombo" Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="AutoLockCombo_SelectionChanged">
-                            <ComboBoxItem Content="闲置 5 分钟后锁定" />
-                            <ComboBoxItem Content="闲置 15 分钟后锁定" />
-                            <ComboBoxItem Content="闲置 30 分钟后锁定" />
-                            <ComboBoxItem Content="从不自动锁定" />
-                        </ComboBox>
-                    </Grid>
-                </Border>
-
-                <!-- Card 2: Lock on Minimize -->
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="16,14">
-                    <Grid ColumnSpacing="16">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="窗口最小化时立即自动锁屏" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                            <TextBlock Text="窗口最小化后立即锁定工作台，关闭网页并停止媒体播放。"
-                                       Style="{ThemeResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ToggleSwitch x:Name="LockOnMinimizeToggle" Grid.Column="1"
-                                      Toggled="LockOnMinimizeToggle_Toggled" IsOn="False"
-                                      OnContent="最小化锁定" OffContent="保持解锁" VerticalAlignment="Center" />
-                    </Grid>
-                </Border>
-
-                <!-- Card 3: File Shredding Standard -->
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="16,14">
-                    <Grid ColumnSpacing="16">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="220" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="原文件粉碎次数" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                            <TextBlock Text="导入外部视频/媒体至加密保险箱后，粉碎原文件的覆写标准："
-                                       Style="{ThemeResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ComboBox x:Name="ShredPassesCombo" Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="ShredPassesCombo_SelectionChanged">
-                            <ComboBoxItem Content="单次覆写" />
-                            <ComboBoxItem Content="3 轮覆写" />
-                            <ComboBoxItem Content="7 轮覆写" />
-                        </ComboBox>
-                    </Grid>
-                </Border>
-
-                <!-- Card 4: Clear Clipboard on Lock -->
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="16,14">
-                    <Grid ColumnSpacing="16">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="加锁时自动清空系统剪贴板" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                            <TextBlock Text="锁定时清空当前剪贴板。剪贴板历史可在“痕迹清理”中另行清除。"
-                                       Style="{ThemeResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ToggleSwitch x:Name="ClearClipboardToggle" Grid.Column="1"
-                                      Toggled="ClearClipboardToggle_Toggled" IsOn="True"
-                                      OnContent="自动清空" OffContent="保留剪贴板" VerticalAlignment="Center" />
-                    </Grid>
-                </Border>
-            </StackPanel>
-
-            <!-- GROUP 2.5: 保险箱与密码管理 -->
-            <StackPanel x:Name="VaultSecuritySection" Spacing="10">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <FontIcon Glyph="&#xE72E;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
-                    <TextBlock Text="保险箱与密码管理" FontWeight="SemiBold" FontSize="14" />
-                </StackPanel>
-
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="16,14">
-                    <StackPanel Spacing="12">
-                        <Grid ColumnSpacing="16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Spacing="4">
-                                <TextBlock Text="主密码与诱饵密码" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                                <TextBlock x:Name="VaultSecurityStatusText" Text="正在读取状态…"
-                                           Style="{ThemeResource CaptionTextBlockStyle}"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                <Button x:Name="ChangeMasterPwdBtn" Content="修改主密码" Click="ChangeMasterPwdBtn_Click" />
-                                <Button x:Name="DecoyPwdBtn" Content="设置诱饵密码" Click="DecoyPwdBtn_Click" />
-                                <Button x:Name="ClearDecoyBtn" Content="移除诱饵空间" Click="ClearDecoyBtn_Click" />
-                            </StackPanel>
-                        </Grid>
-
-                        <TextBlock Text="提示：主密码与诱饵密码均无法找回。修改主密码会重新加密全部真实媒体（耗时取决于媒体体积）；修改诱饵密码需要先验证当前的诱饵密码。"
-                                   FontSize="11" TextWrapping="Wrap"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-
-                        <Button x:Name="ResetVaultBtn" Content="重置保险箱（销毁全部数据）"
-                                Foreground="OrangeRed"
-                                Style="{ThemeResource SubtleButtonStyle}"
-                                HorizontalAlignment="Left"
-                                Click="ResetVaultBtn_Click" />
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-
-            <!-- GROUP 3: 全局老板键与紧急响应 -->
-            <StackPanel Spacing="10">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <FontIcon Glyph="&#xE7BA;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
-                    <TextBlock Text="全局老板键与紧急避险 (Ctrl + Alt + B)" FontWeight="SemiBold" FontSize="14" />
-                </StackPanel>
-
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="16,14">
-                    <StackPanel Spacing="14">
-                        <Grid ColumnSpacing="16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Spacing="4">
-                                <TextBlock Text="全局老板键快捷响应 (Ctrl + Alt + B)" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                                <TextBlock Text="无论当前在哪个应用或游戏窗口，按下组合键瞬间触发紧急避险反应。"
-                                           Style="{ThemeResource CaptionTextBlockStyle}"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            </StackPanel>
-                            <ToggleSwitch x:Name="BossKeyToggle" Grid.Column="1"
-                                          Toggled="BossKeyToggle_Toggled" IsOn="True"
-                                          OnContent="监听就绪" OffContent="已停用" VerticalAlignment="Center" />
-                        </Grid>
-
-                        <Grid ColumnSpacing="16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="220" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Spacing="4">
-                                <TextBlock Text="紧急触发执行动作：" FontWeight="Medium" FontSize="13" />
-                                <TextBlock Text="发生紧急情况时的避险策略。" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            </StackPanel>
-                            <ComboBox x:Name="BossKeyActionCombo" Grid.Column="1" HorizontalAlignment="Stretch" SelectionChanged="BossKeyActionCombo_SelectionChanged">
-                                <ComboBoxItem Content="瞬间静音并最小化窗口" />
-                                <ComboBoxItem Content="锁定并最小化工作台" />
-                                <ComboBoxItem Content="桌面伪装 (显示系统更新提示)" />
-                            </ComboBox>
-                        </Grid>
-
-                        <Grid ColumnSpacing="16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Spacing="4">
-                                <TextBlock Text="老板键联动媒体全局静音" FontWeight="Medium" FontSize="13" />
-                                <TextBlock Text="按下老板键时立刻掐断正在播放的视频音频，杜绝声音外放暴露。" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            </StackPanel>
-                            <ToggleSwitch x:Name="BossKeyMuteToggle" Grid.Column="1"
-                                          Toggled="BossKeyMuteToggle_Toggled" IsOn="True"
-                                          OnContent="联动静音" OffContent="不静音" VerticalAlignment="Center" />
-                        </Grid>
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-
-            <!-- GROUP 4: 隐私浏览器高级防御引擎 -->
-            <StackPanel Spacing="10">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <FontIcon Glyph="&#xE774;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
-                    <TextBlock Text="浏览器" FontWeight="SemiBold" FontSize="14" />
-                </StackPanel>
-
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="16,14">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="解锁后打开" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                        <ComboBox x:Name="StartPageCombo" SelectionChanged="StartPageCombo_SelectionChanged" HorizontalAlignment="Stretch">
-                            <ComboBoxItem Content="浏览器" /><ComboBoxItem Content="媒体库" /><ComboBoxItem Content="播放器" /><ComboBoxItem Content="痕迹清理" />
-                        </ComboBox>
-                    </StackPanel>
-                </Border>
-                <!-- Card 1: Default Search Engine -->
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="16,14">
-                    <Grid ColumnSpacing="16">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="220" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="默认搜索引擎" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                            <TextBlock Text="地址栏和新标签页搜索使用此引擎。"
-                                       Style="{ThemeResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ComboBox x:Name="SearchEngineCombo" Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="SearchEngineCombo_SelectionChanged">
-                            <ComboBoxItem Content="DuckDuckGo" />
-                            <ComboBoxItem Content="Startpage (私密 Google 代理)" />
-                            <ComboBoxItem Content="Bing (必应)" />
-                            <ComboBoxItem Content="Google" />
-                        </ComboBox>
-                    </Grid>
-                </Border>
-
-                <!-- Card 2: Auto Burn on Exit -->
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="16,14">
-                    <Grid ColumnSpacing="16">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="会话数据" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                            <TextBlock Text="锁定、退出或点击“结束会话”时关闭标签并清除 Cookie、网页存储和缓存。切换至媒体库会保留当前网页；收藏和已下载的文件会保留。"
-                                       Style="{ThemeResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <FontIcon Grid.Column="1" Glyph="&#xE72E;" FontSize="18" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    </Grid>
-                </Border>
-            </StackPanel>
-
-            <!-- GROUP 5: 系统反取证与痕迹清理偏好 -->
-            <StackPanel Spacing="10">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <FontIcon Glyph="&#xE74D;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
-                    <TextBlock Text="系统反取证与活动清理偏好" FontWeight="SemiBold" FontSize="14" />
-                </StackPanel>
-
-                <!-- Card 1: Thumbcache -->
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="16,14">
-                    <Grid ColumnSpacing="16">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="启动时自动扫描 Windows 缩略图缓存" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                            <TextBlock Text="启动工作台时自动检查 thumbcache_*.db 缩略图数据库，防止系统在暗中为私密视频生成缩略图残留。"
-                                       Style="{ThemeResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ToggleSwitch x:Name="AutoCheckThumbToggle" Grid.Column="1"
-                                      Toggled="AutoCheckThumbToggle_Toggled" IsOn="True"
-                                      OnContent="已开启" OffContent="已关闭" VerticalAlignment="Center" />
-                    </Grid>
-                </Border>
-
-                <!-- Card 2: DNS Cache Flush -->
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="16,14">
-                    <Grid ColumnSpacing="16">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="退出工作台时自动刷新 Windows DNS 缓存" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                            <TextBlock Text="关闭应用时尝试清空 Windows 的 DNS 解析缓存。"
-                                       Style="{ThemeResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ToggleSwitch x:Name="AutoFlushDnsToggle" Grid.Column="1"
-                                      Toggled="AutoFlushDnsToggle_Toggled" IsOn="True"
-                                      OnContent="自动清空" OffContent="已关闭" VerticalAlignment="Center" />
-                    </Grid>
-                </Border>
-            </StackPanel>
-
-            <!-- GROUP 6: 窗口标题与身份伪装 -->
-            <StackPanel Spacing="10">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <FontIcon Glyph="&#xE7EE;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
-                    <TextBlock Text="窗口外观与身份伪装 (Camouflage)" FontWeight="SemiBold" FontSize="14" />
-                </StackPanel>
-
-                <!-- Camouflage Dropdown -->
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="16,14">
-                    <Grid ColumnSpacing="16">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="260" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="窗口标题栏身份伪装" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                            <TextBlock Text="修改窗口顶部及任务栏显示的标题名称，避免屏幕顶部的标识引人注意："
-                                       Style="{ThemeResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ComboBox x:Name="CamouflageCombo" Grid.Column="1" SelectedIndex="0" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="CamouflageCombo_SelectionChanged">
-                            <ComboBoxItem Content="默认标识: StealthWorkspace 隐私控制台" />
-                            <ComboBoxItem Content="系统伪装: Windows 性能与系统诊断工具" />
-                            <ComboBoxItem Content="办公伪装: Markdown 知识库与本地笔记" />
-                            <ComboBoxItem Content="开发伪装: Terminal Developer Console" />
-                        </ComboBox>
-                    </Grid>
-                </Border>
-
-                <!-- Theme Selection -->
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="16,14">
-                    <Grid ColumnSpacing="16">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="260" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="应用界面色彩主题" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                            <TextBlock Text="配置界面色调。深色模式 (Dark) 具备更佳的低光防窥与沉浸感。"
-                                       Style="{ThemeResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ComboBox x:Name="ThemeCombo" Grid.Column="1" SelectedIndex="0" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="ThemeCombo_SelectionChanged">
-                            <ComboBoxItem Content="跟随 Windows 系统" />
-                            <ComboBoxItem Content="沉浸深色模式 (Dark)" />
-                            <ComboBoxItem Content="明亮浅色模式 (Light)" />
-                        </ComboBox>
-                    </Grid>
-                </Border>
-            </StackPanel>
-
-            <!-- GROUP 7: 平台架构与技术指标 -->
-            <StackPanel Spacing="10">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <FontIcon Glyph="&#xE946;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
-                    <TextBlock Text="关于 Stealth" FontWeight="SemiBold" FontSize="14" />
-                </StackPanel>
-
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="16,14">
-                    <StackPanel Spacing="10">
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <FontIcon Glyph="&#xE7F4;" FontSize="16" Foreground="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Center" />
-                            <StackPanel Grid.Column="1">
-                                <TextBlock x:Name="RuntimeArchitectureText" FontWeight="SemiBold" FontSize="12" TextWrapping="Wrap" />
-                                <TextBlock Text="媒体使用 AES-256-GCM 分块加密，解密时按需读取。" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                            </StackPanel>
-                        </Grid>
-
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <FontIcon Glyph="&#xE774;" FontSize="16" Foreground="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Center" />
-                            <StackPanel Grid.Column="1">
-                                <TextBlock Text="WinUI 3 · Microsoft Edge WebView2" FontWeight="SemiBold" FontSize="12" TextWrapping="Wrap" />
-                                <TextBlock Text="界面跟随 Windows 的主题与动画设置；网页由本机 WebView2 Runtime 加载。" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                            </StackPanel>
-                        </Grid>
-
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <FontIcon Glyph="&#xE72E;" FontSize="16" Foreground="#10B981" VerticalAlignment="Center" />
-                            <StackPanel Grid.Column="1">
-                                <TextBlock Text="独立浏览会话 · 加密媒体库" FontWeight="SemiBold" FontSize="12" TextWrapping="Wrap" />
-                                <TextBlock Text="媒体播放不生成临时解密文件。锁定或退出时清理本应用的浏览会话；用户保存的下载文件会保留。" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                            </StackPanel>
-                        </Grid>
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-
+<?xml version="1.0" encoding="utf-8"?>
+<Page x:Class="StealthWorkspace.Pages.SettingsPage" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="d">
+  <ScrollViewer Padding="28" Background="{ThemeResource StealthCanvasBrush}" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" VerticalScrollBarVisibility="Auto">
+    <StackPanel Spacing="28" MaxWidth="860" HorizontalAlignment="Stretch">
+      <!-- Page Header -->
+      <Grid ColumnSpacing="14">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <Border Width="40" Height="40" CornerRadius="20" Background="{ThemeResource SubtleFillColorSecondaryBrush}" VerticalAlignment="Center">
+          <FontIcon Glyph="&#xE713;" FontSize="18" Foreground="{ThemeResource AccentFillColorDefaultBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Border>
+        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+          <TextBlock Text="设置" Style="{StaticResource StealthPageTitleStyle}" TextWrapping="Wrap" />
+          <TextBlock Text="设置屏幕捕获保护、保险箱锁定、老板键与退出清理。" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
         </StackPanel>
-    </ScrollViewer>
+      </Grid>
+      <InfoBar x:Name="SettingsInfoBar" IsOpen="False" IsClosable="True" />
+      <Border x:Name="BackupSection" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+        <StackPanel Spacing="10">
+          <TextBlock Text="保险箱备份与恢复" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+          <TextBlock Text="备份包含加密媒体与索引，不导出明文。仅限原 Windows 用户恢复，重装系统或换机后可能无法使用。恢复入口位于首次设置页面，已有保险箱不会被覆盖。" TextWrapping="Wrap" Style="{StaticResource StealthCaptionStyle}" />
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button x:Name="BackupButton" Content="创建加密备份" Click="Backup_Click" />
+            <Button x:Name="VerifyBackupButton" Content="检查备份完整性" Click="VerifyBackup_Click" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+      <!-- GROUP 1: 硬件防窥与显示保护 -->
+      <StackPanel Spacing="10">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <FontIcon Glyph="&#xE72E;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
+          <TextBlock Text="屏幕捕获与显示保护" FontWeight="SemiBold" FontSize="14" TextWrapping="Wrap" />
+        </StackPanel>
+        <!-- Card 1: Anti-Capture Display Affinity -->
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+          <Grid ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="4">
+              <TextBlock Text="屏幕捕获保护" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+              <TextBlock Text="请求 Windows 在支持的截图、录屏和屏幕共享中隐藏此窗口。虚拟机宿主截图、拍照及部分捕获工具不受此保护。" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <ToggleSwitch x:Name="AffinityToggle" Toggled="AffinityToggle_Toggled" IsOn="True" OnContent="已开启" OffContent="已停用" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="屏幕捕获保护" Grid.Column="1" />
+          </Grid>
+        </Border>
+        <!-- Card 2: Anti-Peek Thumbnail -->
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+          <Grid ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="4">
+              <TextBlock Text="任务栏悬停预览防窥遮罩" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+              <TextBlock Text="请求 Windows 隐藏任务栏中的实时窗口预览。" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <ToggleSwitch x:Name="TaskbarThumbnailToggle" Toggled="TaskbarThumbnailToggle_Toggled" IsOn="True" OnContent="已遮罩" OffContent="允许预览" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="任务栏悬停预览防窥遮罩" Grid.Column="1" />
+          </Grid>
+        </Border>
+      </StackPanel>
+      <!-- GROUP 2: 隐私保险箱与自动锁定策略 -->
+      <StackPanel Spacing="10">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <FontIcon Glyph="&#xE81C;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
+          <TextBlock Text="隐私保险箱与锁定策略" FontWeight="SemiBold" FontSize="14" TextWrapping="Wrap" />
+        </StackPanel>
+        <!-- Card 1: Auto-Lock Timeout -->
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+          <Grid RowSpacing="12">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <StackPanel Spacing="4">
+              <TextBlock Text="闲置自动锁屏保护" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+              <TextBlock Text="电脑无鼠标键盘操作达到指定时间后，自动切断解密流并切回工作台加锁界面。" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <ComboBox x:Name="AutoLockCombo" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="AutoLockCombo_SelectionChanged" Grid.Row="1" MinWidth="240" MaxWidth="480" AutomationProperties.Name="闲置自动锁屏保护">
+              <ComboBoxItem Content="闲置 5 分钟后锁定" />
+              <ComboBoxItem Content="闲置 15 分钟后锁定" />
+              <ComboBoxItem Content="闲置 30 分钟后锁定" />
+              <ComboBoxItem Content="从不自动锁定" />
+            </ComboBox>
+          </Grid>
+        </Border>
+        <!-- Card 2: Lock on Minimize -->
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+          <Grid ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="4">
+              <TextBlock Text="窗口最小化时立即自动锁屏" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+              <TextBlock Text="窗口最小化后立即锁定工作台，关闭网页并停止媒体播放。" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <ToggleSwitch x:Name="LockOnMinimizeToggle" Toggled="LockOnMinimizeToggle_Toggled" IsOn="False" OnContent="最小化锁定" OffContent="保持解锁" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="窗口最小化时立即自动锁屏" Grid.Column="1" />
+          </Grid>
+        </Border>
+        <!-- Card 3: File Shredding Standard -->
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+          <Grid RowSpacing="12">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <StackPanel Spacing="4">
+              <TextBlock Text="原文件粉碎次数" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+              <TextBlock Text="导入外部视频/媒体至加密保险箱后，粉碎原文件的覆写标准：" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <ComboBox x:Name="ShredPassesCombo" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="ShredPassesCombo_SelectionChanged" Grid.Row="1" MinWidth="240" MaxWidth="480" AutomationProperties.Name="原文件粉碎次数">
+              <ComboBoxItem Content="单次覆写" />
+              <ComboBoxItem Content="3 轮覆写" />
+              <ComboBoxItem Content="7 轮覆写" />
+            </ComboBox>
+          </Grid>
+        </Border>
+        <!-- Card 4: Clear Clipboard on Lock -->
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+          <Grid ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="4">
+              <TextBlock Text="加锁时自动清空系统剪贴板" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+              <TextBlock Text="锁定时清空当前剪贴板。剪贴板历史可在“痕迹清理”中另行清除。" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <ToggleSwitch x:Name="ClearClipboardToggle" Toggled="ClearClipboardToggle_Toggled" IsOn="True" OnContent="自动清空" OffContent="保留剪贴板" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="加锁时自动清空系统剪贴板" Grid.Column="1" />
+          </Grid>
+        </Border>
+      </StackPanel>
+      <!-- GROUP 2.5: 保险箱与密码管理 -->
+      <StackPanel x:Name="VaultSecuritySection" Spacing="10">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <FontIcon Glyph="&#xE72E;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
+          <TextBlock Text="保险箱与密码管理" FontWeight="SemiBold" FontSize="14" TextWrapping="Wrap" />
+        </StackPanel>
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+          <StackPanel Spacing="12">
+            <Grid RowSpacing="12">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+              </Grid.RowDefinitions>
+              <StackPanel Spacing="4">
+                <TextBlock Text="主密码与诱饵密码" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+                <TextBlock x:Name="VaultSecurityStatusText" Text="正在读取状态…" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Orientation="Vertical" Spacing="8" VerticalAlignment="Center" Grid.Row="1" HorizontalAlignment="Left">
+                <Button x:Name="ChangeMasterPwdBtn" Content="修改主密码" Click="ChangeMasterPwdBtn_Click" />
+                <Button x:Name="DecoyPwdBtn" Content="设置诱饵密码" Click="DecoyPwdBtn_Click" />
+                <Button x:Name="ClearDecoyBtn" Content="移除诱饵空间" Click="ClearDecoyBtn_Click" />
+              </StackPanel>
+            </Grid>
+            <TextBlock Text="提示：主密码与诱饵密码均无法找回。修改主密码会重新加密全部真实媒体（耗时取决于媒体体积）；修改诱饵密码需要先验证当前的诱饵密码。" FontSize="12" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <Button x:Name="ResetVaultBtn" Content="重置保险箱（销毁全部数据）" Foreground="{ThemeResource SystemFillColorCriticalBrush}" Style="{ThemeResource SubtleButtonStyle}" HorizontalAlignment="Left" Click="ResetVaultBtn_Click" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+      <!-- GROUP 3: 全局老板键与紧急响应 -->
+      <StackPanel Spacing="10">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <FontIcon Glyph="&#xE7BA;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
+          <TextBlock Text="老板键与快速隐藏" FontWeight="SemiBold" FontSize="14" TextWrapping="Wrap" />
+        </StackPanel>
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+          <StackPanel Spacing="14">
+            <Grid ColumnSpacing="20">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <StackPanel Spacing="4">
+                <TextBlock Text="全局老板键快捷响应 (Ctrl + Alt + B)" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+                <TextBlock Text="使用 Ctrl + Alt + B 快速隐藏工作区。快捷键能否使用取决于系统注册状态。" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+              </StackPanel>
+              <ToggleSwitch x:Name="BossKeyToggle" Toggled="BossKeyToggle_Toggled" IsOn="True" OnContent="监听就绪" OffContent="已停用" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="全局老板键快捷响应 (Ctrl + Alt + B)" Grid.Column="1" />
+            </Grid>
+            <Grid RowSpacing="12">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+              </Grid.RowDefinitions>
+              <StackPanel Spacing="4">
+                <TextBlock Text="紧急触发执行动作：" FontWeight="Medium" FontSize="13" TextWrapping="Wrap" />
+                <TextBlock Text="发生紧急情况时的避险策略。" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+              </StackPanel>
+              <ComboBox x:Name="BossKeyActionCombo" HorizontalAlignment="Stretch" SelectionChanged="BossKeyActionCombo_SelectionChanged" Grid.Row="1" MinWidth="240" MaxWidth="480" AutomationProperties.Name="紧急触发执行动作：">
+                <ComboBoxItem Content="瞬间静音并最小化窗口" />
+                <ComboBoxItem Content="锁定并最小化工作台" />
+                <ComboBoxItem Content="桌面伪装 (显示系统更新提示)" />
+              </ComboBox>
+            </Grid>
+            <Grid ColumnSpacing="20">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <StackPanel Spacing="4">
+                <TextBlock Text="老板键联动媒体全局静音" FontWeight="Medium" FontSize="13" TextWrapping="Wrap" />
+                <TextBlock Text="触发老板键时，同时静音应用中的媒体。" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+              </StackPanel>
+              <ToggleSwitch x:Name="BossKeyMuteToggle" Toggled="BossKeyMuteToggle_Toggled" IsOn="True" OnContent="联动静音" OffContent="不静音" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="老板键联动媒体全局静音" Grid.Column="1" />
+            </Grid>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+      <!-- GROUP 4: 隐私浏览器高级防御引擎 -->
+      <StackPanel Spacing="10">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <FontIcon Glyph="&#xE774;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
+          <TextBlock Text="浏览器" FontWeight="SemiBold" FontSize="14" TextWrapping="Wrap" />
+        </StackPanel>
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+          <StackPanel Spacing="8">
+            <TextBlock Text="解锁后打开" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+            <ComboBox x:Name="StartPageCombo" SelectionChanged="StartPageCombo_SelectionChanged" HorizontalAlignment="Stretch" AutomationProperties.Name="解锁后打开">
+              <ComboBoxItem Content="浏览器" />
+              <ComboBoxItem Content="媒体库" />
+              <ComboBoxItem Content="播放器" />
+              <ComboBoxItem Content="痕迹清理" />
+            </ComboBox>
+          </StackPanel>
+        </Border>
+        <!-- Card 1: Default Search Engine -->
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+          <Grid RowSpacing="12">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <StackPanel Spacing="4">
+              <TextBlock Text="默认搜索引擎" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+              <TextBlock Text="地址栏和新标签页搜索使用此引擎。" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <ComboBox x:Name="SearchEngineCombo" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="SearchEngineCombo_SelectionChanged" Grid.Row="1" MinWidth="240" MaxWidth="480" AutomationProperties.Name="默认搜索引擎">
+              <ComboBoxItem Content="DuckDuckGo" />
+              <ComboBoxItem Content="Startpage (私密 Google 代理)" />
+              <ComboBoxItem Content="Bing (必应)" />
+              <ComboBoxItem Content="Google" />
+            </ComboBox>
+          </Grid>
+        </Border>
+        <!-- Card 2: Auto Burn on Exit -->
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+          <Grid RowSpacing="12">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <StackPanel Spacing="4">
+              <TextBlock Text="会话数据" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+              <TextBlock Text="锁定、退出或点击“结束会话”时关闭标签并清除 Cookie、网页存储和缓存。切换至媒体库会保留当前网页；收藏和已下载的文件会保留。" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <FontIcon Glyph="&#xE72E;" FontSize="18" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Grid.Row="1" HorizontalAlignment="Left" />
+          </Grid>
+        </Border>
+      </StackPanel>
+      <!-- GROUP 5: 系统反取证与痕迹清理偏好 -->
+      <StackPanel Spacing="10">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <FontIcon Glyph="&#xE74D;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
+          <TextBlock Text="活动记录与清理" FontWeight="SemiBold" FontSize="14" TextWrapping="Wrap" />
+        </StackPanel>
+        <!-- Card 1: Thumbcache -->
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+          <Grid ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="4">
+              <TextBlock Text="启动时自动扫描 Windows 缩略图缓存" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+              <TextBlock Text="启动时检查 Windows 缩略图缓存并提示发现的项目；不会自动删除。" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <ToggleSwitch x:Name="AutoCheckThumbToggle" Toggled="AutoCheckThumbToggle_Toggled" IsOn="True" OnContent="已开启" OffContent="已关闭" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="启动时自动扫描 Windows 缩略图缓存" Grid.Column="1" />
+          </Grid>
+        </Border>
+        <!-- Card 2: DNS Cache Flush -->
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+          <Grid ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="4">
+              <TextBlock Text="退出工作台时自动刷新 Windows DNS 缓存" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+              <TextBlock Text="关闭应用时尝试清空 Windows 的 DNS 解析缓存。" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <ToggleSwitch x:Name="AutoFlushDnsToggle" Toggled="AutoFlushDnsToggle_Toggled" IsOn="True" OnContent="自动清空" OffContent="已关闭" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="退出工作台时自动刷新 Windows DNS 缓存" Grid.Column="1" />
+          </Grid>
+        </Border>
+      </StackPanel>
+      <!-- GROUP 6: 窗口标题与身份伪装 -->
+      <StackPanel Spacing="10">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <FontIcon Glyph="&#xE7EE;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
+          <TextBlock Text="外观与窗口标题" FontWeight="SemiBold" FontSize="14" TextWrapping="Wrap" />
+        </StackPanel>
+        <!-- Camouflage Dropdown -->
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+          <Grid RowSpacing="12">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <StackPanel Spacing="4">
+              <TextBlock Text="窗口标题栏身份伪装" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+              <TextBlock Text="修改窗口顶部及任务栏显示的标题名称，避免屏幕顶部的标识引人注意：" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <ComboBox x:Name="CamouflageCombo" SelectedIndex="0" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="CamouflageCombo_SelectionChanged" Grid.Row="1" MinWidth="240" MaxWidth="480" AutomationProperties.Name="窗口标题栏身份伪装">
+              <ComboBoxItem Content="默认标识: StealthWorkspace 隐私控制台" />
+              <ComboBoxItem Content="系统伪装: Windows 性能与系统诊断工具" />
+              <ComboBoxItem Content="办公伪装: Markdown 知识库与本地笔记" />
+              <ComboBoxItem Content="开发伪装: Terminal Developer Console" />
+            </ComboBox>
+          </Grid>
+        </Border>
+        <!-- Theme Selection -->
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+          <Grid RowSpacing="12">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <StackPanel Spacing="4">
+              <TextBlock Text="应用界面色彩主题" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+              <TextBlock Text="选择适合当前光线的界面，或跟随 Windows 系统设置。" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <ComboBox x:Name="ThemeCombo" SelectedIndex="0" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="ThemeCombo_SelectionChanged" Grid.Row="1" MinWidth="240" MaxWidth="480" AutomationProperties.Name="应用界面色彩主题">
+              <ComboBoxItem Content="跟随 Windows 系统" />
+              <ComboBoxItem Content="深色" />
+              <ComboBoxItem Content="浅色" />
+            </ComboBox>
+          </Grid>
+        </Border>
+      </StackPanel>
+      <!-- GROUP 7: 平台架构与技术指标 -->
+      <StackPanel Spacing="10">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <FontIcon Glyph="&#xE946;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
+          <TextBlock Text="关于 Stealth" FontWeight="SemiBold" FontSize="14" TextWrapping="Wrap" />
+        </StackPanel>
+        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
+          <StackPanel Spacing="10">
+            <Grid ColumnSpacing="12">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <FontIcon Glyph="&#xE7F4;" FontSize="16" Foreground="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Center" />
+              <StackPanel Grid.Column="1">
+                <TextBlock x:Name="RuntimeArchitectureText" FontWeight="SemiBold" FontSize="12" TextWrapping="Wrap" />
+                <TextBlock Text="媒体使用 AES-256-GCM 分块加密，解密时按需读取。" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+              </StackPanel>
+            </Grid>
+            <Grid ColumnSpacing="12">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <FontIcon Glyph="&#xE774;" FontSize="16" Foreground="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Center" />
+              <StackPanel Grid.Column="1">
+                <TextBlock Text="WinUI 3 · Microsoft Edge WebView2" FontWeight="SemiBold" FontSize="12" TextWrapping="Wrap" />
+                <TextBlock Text="界面跟随 Windows 的主题与动画设置；网页由本机 WebView2 Runtime 加载。" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+              </StackPanel>
+            </Grid>
+            <Grid ColumnSpacing="12">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <FontIcon Glyph="&#xE72E;" FontSize="16" Foreground="{ThemeResource StealthBrandBrush}" VerticalAlignment="Center" />
+              <StackPanel Grid.Column="1">
+                <TextBlock Text="独立浏览会话 · 加密媒体库" FontWeight="SemiBold" FontSize="12" TextWrapping="Wrap" />
+                <TextBlock Text="媒体播放不生成临时解密文件。锁定或退出时清理本应用的浏览会话；用户保存的下载文件会保留。" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+              </StackPanel>
+            </Grid>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </StackPanel>
+  </ScrollViewer>
 </Page>

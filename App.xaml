@@ -8,9 +8,79 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
-                <!-- Other merged dictionaries here -->
             </ResourceDictionary.MergedDictionaries>
-            <!-- Other app resources here -->
+
+            <!-- One quiet palette shared by the shell, browser and library. Native
+                 control templates, keyboard focus and system contrast stay intact. -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="StealthCanvasBrush" Color="#F3F6F5" />
+                    <SolidColorBrush x:Key="StealthSurfaceBrush" Color="#FAFCFB" />
+                    <SolidColorBrush x:Key="StealthBrandBrush" Color="#096F59" />
+                    <SolidColorBrush x:Key="StealthBrandSubtleBrush" Color="#E1F2EC" />
+                    <SolidColorBrush x:Key="LayerFillColorDefaultBrush" Color="#F3F6F5" />
+                    <SolidColorBrush x:Key="CardBackgroundFillColorDefaultBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="CardBackgroundFillColorSecondaryBrush" Color="#F5F8F6" />
+                    <SolidColorBrush x:Key="CardStrokeColorDefaultBrush" Color="#DEE6E2" />
+                    <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#087F69" />
+                    <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#0D735F" />
+                    <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#09634F" />
+                    <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="#086953" />
+                    <SolidColorBrush x:Key="AccentTextFillColorSecondaryBrush" Color="#087F69" />
+                    <SolidColorBrush x:Key="AccentTextFillColorTertiaryBrush" Color="#397C6A" />
+                    <SolidColorBrush x:Key="TextOnAccentFillColorPrimaryBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="TextOnAccentFillColorSecondaryBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="TextOnAccentFillColorDisabledBrush" Color="#FFFFFF" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="StealthCanvasBrush" Color="#111918" />
+                    <SolidColorBrush x:Key="StealthSurfaceBrush" Color="#17211F" />
+                    <SolidColorBrush x:Key="StealthBrandBrush" Color="#78DCC5" />
+                    <SolidColorBrush x:Key="StealthBrandSubtleBrush" Color="#233F36" />
+                    <SolidColorBrush x:Key="LayerFillColorDefaultBrush" Color="#111918" />
+                    <SolidColorBrush x:Key="CardBackgroundFillColorDefaultBrush" Color="#1C2724" />
+                    <SolidColorBrush x:Key="CardBackgroundFillColorSecondaryBrush" Color="#222F2B" />
+                    <SolidColorBrush x:Key="CardStrokeColorDefaultBrush" Color="#34443E" />
+                    <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#78DCC5" />
+                    <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#9AE5D3" />
+                    <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#5ABFA8" />
+                    <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="#94E5D0" />
+                    <SolidColorBrush x:Key="AccentTextFillColorSecondaryBrush" Color="#78DCC5" />
+                    <SolidColorBrush x:Key="AccentTextFillColorTertiaryBrush" Color="#6DBFA9" />
+                    <SolidColorBrush x:Key="TextOnAccentFillColorPrimaryBrush" Color="#102820" />
+                    <SolidColorBrush x:Key="TextOnAccentFillColorSecondaryBrush" Color="#102820" />
+                    <SolidColorBrush x:Key="TextOnAccentFillColorDisabledBrush" Color="#102820" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="HighContrast">
+                    <SolidColorBrush x:Key="StealthCanvasBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="StealthSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="StealthBrandBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+                    <SolidColorBrush x:Key="StealthBrandSubtleBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+
+            <!-- WinUI's native focus, selection and toggle resources consume the
+                 accent color palette directly. Contrast themes use SystemColor*. -->
+            <Color x:Key="SystemAccentColor">#087F69</Color>
+            <Color x:Key="SystemAccentColorLight1">#45B89D</Color>
+            <Color x:Key="SystemAccentColorLight2">#78DCC5</Color>
+            <Color x:Key="SystemAccentColorLight3">#ADEBDC</Color>
+            <Color x:Key="SystemAccentColorDark1">#096F59</Color>
+            <Color x:Key="SystemAccentColorDark2">#075B49</Color>
+            <Color x:Key="SystemAccentColorDark3">#064536</Color>
+
+            <CornerRadius x:Key="ControlCornerRadius">8</CornerRadius>
+            <CornerRadius x:Key="OverlayCornerRadius">12</CornerRadius>
+            <Style x:Key="StealthPageTitleStyle" TargetType="TextBlock" BasedOn="{StaticResource TitleTextBlockStyle}">
+                <Setter Property="FontSize" Value="28" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+            </Style>
+            <Style x:Key="StealthCaptionStyle" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextBlockStyle}">
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

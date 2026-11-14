@@ -12,7 +12,7 @@
         <MicaBackdrop Kind="BaseAlt" />
     </Window.SystemBackdrop>
 
-    <Grid x:Name="RootGrid">
+    <Grid x:Name="RootGrid" Background="{ThemeResource StealthCanvasBrush}">
         <Grid.RowDefinitions>
             <RowDefinition x:Name="TitleBarRow" Height="44" />
             <RowDefinition Height="*" />
@@ -42,33 +42,37 @@
             <!-- Quiet TitleBar Quick Actions -->
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" Margin="0,0,142,0" VerticalAlignment="Center">
                 <!-- Calm Ready Indicator (click = open trace cleaner when residue found) -->
-                <Border x:Name="StatusBadge"
+                <Button x:Name="StatusBadge"
+                        Style="{ThemeResource SubtleButtonStyle}"
                         Background="{ThemeResource SubtleFillColorSecondaryBrush}"
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                         BorderThickness="1"
                         CornerRadius="10"
                         Padding="8,3"
-                        Tapped="StatusBadge_Tapped"
-                        ToolTipService.ToolTip="底层防截屏/防录屏与易失性沙箱正常运行中">
+                        Click="StatusBadge_Tapped"
+                        AutomationProperties.Name="工作区状态，打开痕迹清理"
+                        ToolTipService.ToolTip="查看工作区状态与痕迹清理">
                     <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                        <Ellipse Width="6" Height="6" Fill="#10B981" />
-                        <TextBlock x:Name="StatusBadgeText" Text="就绪" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium" />
+                        <FontIcon Glyph="&#xE946;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock x:Name="StatusBadgeText" Text="就绪" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium" />
                     </StackPanel>
-                </Border>
+                </Button>
 
                 <!-- Quick Boss Key (Subtle & Quiet) -->
                 <Button Click="QuickBossKey_Click"
+                        AutomationProperties.Name="隐藏工作区"
                         Style="{ThemeResource SubtleButtonStyle}"
                         ToolTipService.ToolTip="老板键避险 (Ctrl + Alt + B)"
-                        Padding="6,4">
+                        Width="32" Height="32" Padding="0">
                     <FontIcon Glyph="&#xE7BA;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 </Button>
 
                 <!-- Quick Lock -->
                 <Button Click="QuickLockBtn_Click"
+                        AutomationProperties.Name="锁定工作区"
                         Style="{ThemeResource SubtleButtonStyle}"
                         ToolTipService.ToolTip="锁定工作区"
-                        Padding="6,4">
+                        Width="32" Height="32" Padding="0">
                     <FontIcon Glyph="&#xE72E;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 </Button>
             </StackPanel>
@@ -83,7 +87,7 @@
             PaneDisplayMode="Auto"
             ExpandedModeThresholdWidth="1050"
             CompactModeThresholdWidth="500"
-            OpenPaneLength="200"
+            OpenPaneLength="224"
             SelectionChanged="NavView_SelectionChanged">
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="浏览器" Tag="browser">
@@ -128,8 +132,8 @@
                            TextAlignment="Center"
                            LineHeight="28" />
                 <TextBlock Text="按 Esc 退出伪装"
-                           FontSize="10"
-                           Foreground="#40FFFFFF"
+                           FontSize="12"
+                           Foreground="#BFFFFFFF"
                            HorizontalAlignment="Center"
                            Margin="0,30,0,0" />
             </StackPanel>
