@@ -14,6 +14,8 @@
 
 本机两架构发布包各有 **206 项核心自检通过、0 失败、2 项 SUBST 环境限制跳过**，完整界面巡检通过；ARM64 另完成浏览器、图片体验、渲染、诊断隔离与三分钟持续测试。x64 在 ARM64 兼容层运行，不等同于原生 x64 实机验证。远程构建状态请查看对应版本的 Actions 记录。
 
+**公开发布验收已完成。** [正式版本构建](https://github.com/canonliuliang/StealthWorkspace/actions/runs/43618278910)中 ARM64 207 项通过 / 1 项环境跳过，x64 205 项通过 / 3 项环境跳过，均无失败。公开 ZIP 已完整重新下载，SHA-256 与清单及构建产物一致；两份下载包的隔离界面巡检也通过。跳过条件、验证范围和校验值见[公开验收记录](https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/VALIDATION.md#r15-公开发布与网站验收)。
+
 提供 Windows x64 / ARM64 两种便携包：
 
 - Intel / AMD：下载 `Stealth-2026.11.14-r15-preview-win-x64.zip`。

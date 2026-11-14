@@ -1,5 +1,28 @@
 # 验证范围
 
+## r15 公开发布与网站验收
+
+2026-11-14 16:59:29 UTC（本地 11 月 15 日），[r15 预览版](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.14-r15-preview) 已公开。标签 `v2026.11.14-r15-preview` 固定于提交 `631e123fdd7b57fd71ce009f0607959418073fda`，由 [PR #5](https://github.com/canonliuliang/StealthWorkspace/pull/5) 合并。以下是发布后的验证，后续文档补充不移动标签或替换 ZIP。
+
+[正式标签构建](https://github.com/canonliuliang/StealthWorkspace/actions/runs/43618278910)的两个架构与发布任务全部成功；[main 构建](https://github.com/canonliuliang/StealthWorkspace/actions/runs/43618271892)也成功。ARM64 为 207 通过 / 0 失败 / 1 跳过；x64 为 205 通过 / 0 失败 / 3 跳过。两者均跳过缺少现存 SUBST 映射的边界场景，x64 另有两个真实 8.3 别名场景因测试卷未提供短名称而跳过；未将跳过计为通过。两架构的 Removal SUBST 场景实际通过。
+
+从公开下载地址匿名完整下载 ZIP 与 `SHA256SUMS.txt`，重新计算 SHA-256，同时与公开清单、GitHub 资产 digest、正式标签构建产物比对一致：
+
+| 架构 | 下载字节数 | SHA-256 |
+| --- | ---: | --- |
+| ARM64 | 95,623,219 | `fac35b13721c9bb1127fcf271fadc40069f572fb89f404292fcc23aee6ac1cd8` |
+| x64 | 98,000,842 | `67852274c024372af33b4d1af9f098a8ef1911764ef16c59a824df714dbd44c0` |
+
+两包实际运行时与 ProtectedData 为 10.0.15，24 份第三方许可文件齐全，路径及私有数据排除检查通过。完整解压公开包后，两架构再次执行隔离 UI 巡检并通过；退出时保险箱锁定、浏览器控件释放、临时会话清理正常。下载后 x64 巡检仍在 ARM64 主机兼容层运行，原生 x64 的远程结果限于构建和核心检查。
+
+[官网部署](https://github.com/canonliuliang/StealthWorkspace/actions/runs/43618601895)的 build 与 deploy 都成功。在资源齐全前的首次 main 推送中，门禁正确跳过部署并保留原站；Release 发布后才重新部署。公网 8 个页面/样式/图片文件均 HTTP 200，Git blob 与标签中的原文件一致。桌面与 390 宽度手机页面、下载锚点、404 返回入口、图片和控制台均已检查。官网部署文件原始总大小由 601,492 字节降到 258,957 字节，减少约 56.9%；这是文件体积，不代表网络时间或性能评分。
+
+[个人网站](https://liu-digital-space.pages.dev/)也已同步 Stealth r15 提示、项目详情、Logo、真实截图与带实际发布时间的近况/RSS。桌面和手机展示已核对，保留原有粒子首页、其他作品与整体风格。
+
+发布证据保存在 `artifacts/publication-20261115`：公开包与校验记录位于 `public-downloads`，正式标签原始核心报告位于 `tag-run-43618278910`，下载后 UI 记录位于 `public-ui-win-arm64` 和 `public-ui-win-x64`。线上网站文件比对与本地/线上界面检查分别保存，未把“工作流存在”当作部署成功。
+
+公开更新前的源码已保存到 `backup/public-before-r15-20261115`（原 main `7260c3dd20e6f64db57ac2443360ce327bd28807`）。本机完整原版本仍可运行 `./tools/Restore-PreOverhaul.ps1` 恢复到新的旁路目录并逐文件校验；不会覆盖当前项目或用户数据。公网回退应从备份标签创建恢复分支并复核后发布，不移动已经公开的版本标签。
+
 ## r15 发布前 .NET 10 复验
 
 2026-11-15，发布前将目标框架升级为 .NET 10 LTS，运行时及 ProtectedData 固定为 10.0.15。下方较早的 .NET 8 验收与性能记录保留，不把不同运行时的结果混作同一性能对比。
