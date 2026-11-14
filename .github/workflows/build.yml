@@ -60,6 +60,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      actions: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -82,3 +83,5 @@ jobs:
           if ($packages.Count -ne 2) { throw 'Expected both portable packages.' }
           gh release create $env:RELEASE_TAG @packages artifacts/SHA256SUMS.txt --title "Stealth $env:RELEASE_TAG" --notes-file docs/RELEASE-NOTES.md --prerelease --verify-tag
           if ($LASTEXITCODE -ne 0) { throw 'GitHub Release creation failed.' }
+          gh workflow run pages.yml --ref main
+          if ($LASTEXITCODE -ne 0) { throw 'Release is published, but website dispatch failed; rerun Official website manually.' }

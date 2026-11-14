@@ -1,7 +1,7 @@
 name: Website checks
 on:
   pull_request:
-    paths: ['website/**', 'tools/site.mjs']
+    paths: ['website/**', 'tools/site.mjs', 'tools/release-readiness*']
 permissions:
   contents: read
 jobs:
@@ -13,3 +13,4 @@ jobs:
         with:
           persist-credentials: false
       - run: node tools/site.mjs check
+      - run: node --test tools/release-readiness.test.mjs

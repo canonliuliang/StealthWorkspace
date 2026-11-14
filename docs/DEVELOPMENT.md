@@ -45,3 +45,5 @@ ARM64 构建使用 `-r win-arm64 -p:Platform=ARM64`，x64 使用 `-r win-x64 -p:
 标签 `v*` 触发 GitHub Release 工作流，只有两个架构的构建与核心自检都成功才上传预览包。没有可信发布者证书时，Release 必须保持预览状态，并说明未签名限制。CI 通过不代表所有第三方网站可用。
 
 官网：运行 `node tools/site.mjs build`，产物位于 `website/dist`；运行 `node tools/site.mjs serve` 在 `http://127.0.0.1:4173` 预览。`node tools/site.mjs check` 校验页面引用与必需内容。GitHub Pages 使用独立最小权限工作流。
+
+官网部署前检查 Release 是否公开且 x64、ARM64 ZIP 与 SHA-256 清单都已上传；资料不完整时暂缓部署，保留已有官网。发布任务在 Release 创建成功后主动触发官网工作流。发布阶段仅该任务需要 `actions: write` 以发起部署；普通构建没有写权限。离线验证门控场景：`node --test tools/release-readiness.test.mjs`。

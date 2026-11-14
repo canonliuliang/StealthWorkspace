@@ -1,13 +1,15 @@
-import { readFile, writeFile, mkdir, readdir, stat, cp } from 'node:fs/promises';
+import { readFile, appendFile, mkdir, stat, cp } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { resolve, dirname, join, extname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { expectedDownloads, releaseIsReady } from './release-readiness.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'website');
 const output = join(root, 'dist');
 const allowed = ['index.html', '404.html', 'styles.css', 'app.js', '.nojekyll', 'assets'];
 async function check() {
   const html = await readFile(join(root, 'index.html'), 'utf8');
+  expectedDownloads(html);
   const ids = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]));
   for (const [, target] of html.matchAll(/(?:href|src)="([^"]+)"/g)) {
     if (/^https:\/\//.test(target)) continue;
@@ -27,6 +29,18 @@ async function check() {
 }
 const command = process.argv[2] || 'check';
 if (command === 'check') await check();
+else if (command === 'release-ready') {
+  const expected = expectedDownloads(await readFile(join(root, 'index.html'), 'utf8'));
+  const headers = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+  if (process.env.GH_TOKEN) headers.Authorization = `Bearer ${process.env.GH_TOKEN}`;
+  const response = await fetch(`https://api.github.com/repos/canonliuliang/StealthWorkspace/releases/tags/${encodeURIComponent(expected[0].tag)}`, {
+    headers, signal: AbortSignal.timeout(20000)
+  });
+  if (!response.ok && response.status !== 404) throw new Error(`Release verification returned HTTP ${response.status}`);
+  const ready = releaseIsReady(response.ok ? await response.json() : null, expected);
+  if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, `ready=${ready}\n`);
+  console.log(ready ? 'Release assets ready: both architectures and checksums.' : 'Deployment deferred: release assets are not all published yet.');
+}
 else if (command === 'build') {
   await check();
   await mkdir(output, { recursive: true });
