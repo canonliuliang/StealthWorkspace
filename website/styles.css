@@ -245,7 +245,7 @@ p {
   position:absolute;
   left:0;
   top:3px;
-  color:#8196b1;
+  color:#52647b;
   font-size:11px;
   letter-spacing:1px}
 .story-details h3 {
@@ -694,6 +694,6 @@ kbd {
   height:auto}
 .browser-visual figcaption {
   font-size:11px;
-  color:#72829a;
+  color:#52647b;
   padding:9px 14px;
   text-align:center}
