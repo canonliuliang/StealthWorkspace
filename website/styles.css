@@ -103,11 +103,35 @@ p {
   font-weight:650;
   letter-spacing:2px;
   margin-bottom:20px}
-.windows-mark {
-  font-size:20px;
-  vertical-align:-1px;
-  margin-right:8px;
-  letter-spacing:0}
+.icon-definitions {
+  position:absolute;
+  width:0;
+  height:0;
+  overflow:hidden;
+  pointer-events:none}
+.brand-icon {
+  display:block;
+  width:18px;
+  height:18px;
+  flex:0 0 auto;
+  fill:currentColor;
+  object-fit:contain}
+.button-label,.icon-link,.download-identity {
+  display:inline-flex;
+  align-items:center;
+  gap:9px}
+.download-identity {
+  gap:12px;
+  min-width:0}
+.download-identity>span {
+  min-width:0}
+.download-identity .brand-icon {
+  width:20px;
+  height:20px;
+  color:var(--blue)}
+.footer .brand-icon {
+  width:16px;
+  height:16px}
 .blue {
   color:var(--blue)}
 .intro {
@@ -144,6 +168,8 @@ p {
   font-size:14px;
   font-weight:600;
   display:inline-block}
+.text-link.icon-link {
+  display:inline-flex}
 .text-link:hover {
   text-decoration:underline;
   text-underline-offset:5px}
@@ -435,6 +461,7 @@ kbd {
   display:flex;
   align-items:center;
   justify-content:space-between;
+  gap:14px;
   background:#fff;
   padding:17px 23px;
   border:1px solid #d3dfef;
@@ -654,7 +681,13 @@ kbd {
 .download-options {
   gap:12px}
 .download-option {
-  padding:15px 17px}
+  padding:15px 14px;
+  gap:10px}
+.download-identity {
+  gap:10px}
+.download-identity .brand-icon {
+  width:18px;
+  height:18px}
 .download-option strong {
   font-size:16px}
 .download-option small {
