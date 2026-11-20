@@ -1,5 +1,34 @@
 # 验证范围
 
+## r16 公开发行
+
+GitHub 于 **2026-11-20 16:15:44 UTC（UTC+8 为 11 月 21 日 00:15:44）**发布 `v2026.11.20-r16-preview`。标签指向 `238f53b13566019a1e72b1246bd9a6d76313f4c9`。正式分发渠道为未签名预览版，便携包解压后运行。[GitHub Release](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.20-r16-preview) · [PR #6](https://github.com/canonliuliang/StealthWorkspace/pull/6) · [代码提交](https://github.com/canonliuliang/StealthWorkspace/commit/238f53b13566019a1e72b1246bd9a6d76313f4c9)
+
+正式标签的原生 ARM64 runner 通过 233 项、跳过 1 项，x64 runner 通过 231 项、跳过 3 项，两者均为 0 失败。两个 runner 都缺少覆盖测试目录的现存 SUBST 映射；x64 文件系统另有两个场景未提供独立的 8.3 短名称。两个架构的核心报告与 ZIP 一同保存在 Actions 工件中。[正式标签构建和发布](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44770942372) · [main 构建](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44770830049)
+
+| 公共资产 | 字节 | SHA-256 |
+| --- | ---: | --- |
+| Windows ARM64 ZIP | 95,688,173 | `15336d1796fbf5c74097825e2d9fdec09a7c69e46430e98ce316f16bc39acc00` |
+| Windows x64 ZIP | 98,065,820 | `b53cd1ce30895854922297f9abc6362a88557712f4247110f336a6e35e80c302` |
+
+官网首页、404 页、脚本、样式和五个图片资源已从公网读取并与正式标签的 Git blob 核对，两处架构按钮均指向本版 ZIP。预发布资产尚未齐全时，第一次 main 工作流保留了旧站；发布完成后第二次构建与部署均成功。[官网下载页](https://canonliuliang.github.io/StealthWorkspace/#download) · [官网生产部署](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44771582100)
+
+匿名重新下载这两个完整 ZIP，校验值与公开清单、GitHub Release 资产 digest 和正式标签 Actions 原件一致。解压后两份程序集的版本均指向上述发布提交。在本机再次运行公开包的核心自检，每架构均为 232 通过、0 失败、2 个 SUBST 环境跳过。
+
+两个公开包均在 Windows 11 ARM64 上从隔离目录启动，ARM64 原生运行，x64 通过系统兼容层运行。每次界面测试均完成 40 次标签打开、加载和关闭，退出码为 0。退出后，报告确认保险箱已锁定、浏览器控件已释放、会话配置目录已移除。
+
+个人站的[首页](https://liu-digital-space.pages.dev/)、[项目下载页](https://liu-digital-space.pages.dev/work/stealthworkspace/)及[版本公告](https://liu-digital-space.pages.dev/updates/#stealth-r16-preview)均在生产域名返回 r16。RSS 首条 Stealth r16 公告使用 GitHub 的公开时间并链接到上述公告。个人站源码提交为 `c350f7e1c07c2660b73a12c0719338b9e38111a0`。[RSS](https://liu-digital-space.pages.dev/feed.xml) · [个人站生产部署](https://github.com/canonliuliang/liu-digital-space/actions/runs/44771794291)
+
+## r16 本地发布候选与升级
+
+Windows 11 ARM64（Parallels 26300，WebView2 157.0.4341.60），自包含 .NET 10.0.15。ARM64 和 x64 解压包各通过 232 项核心检查，0 失败，2 个 SUBST 环境跳过。两架构都通过全界面巡检、锁定、控件释放与临时配置清理。x64 本机 UI 测试在 ARM64 兼容层运行。隔离诊断还验证了裸启动和核心自检没有改写合成的旧保险箱。
+
+ARM64 额外通过完整浏览器回归、减少动态效果的体验检查和前台渲染检查。三分钟测试进行了 12 次标签创建与关闭，保留的三个页面均恢复了原表单状态，最终会话清理成功。宿主私有内存采样峰值为 82.3 MiB，渲染进程另计。这次短时测试不足以判断全天内存增长或续航。
+
+升级测试使用公开 r15 ARM64 创建新的隔离保险箱并收藏回环测试网页。r16 解压包使用同一凭据打开同一目录，原收藏标题、地址和实际导航均核对通过，最近关闭列表为空。r15 在该次收藏面板展开的退出过程中写完清理记录后发生一次应用崩溃。r16 同场景退出码为 0，清理记录齐全。此处只记录观察结果。
+
+图片入库的 32 MiB 限制针对最终载荷。运行时没有提供资源长度时，宿主取得完整内容后才能检查大小，处理超大图片的峰值内存可能更高。各项来源、操作步骤与性能取舍见[研究与架构记录](R16-REVIEW.md)、[性能测量](R16-PERFORMANCE.md)和[隐私验证](R16-PRIVACY-TESTS.md)。
+
 ## r15 公开发布与网站验收
 
 2026-11-14 16:59:29 UTC（本地 11 月 15 日），[r15 预览版](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.14-r15-preview) 已公开。标签 `v2026.11.14-r15-preview` 固定于提交 `631e123fdd7b57fd71ce009f0607959418073fda`，由 [PR #5](https://github.com/canonliuliang/StealthWorkspace/pull/5) 合并。以下是发布后的验证，后续文档补充不移动标签或替换 ZIP。

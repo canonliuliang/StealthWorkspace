@@ -23,3 +23,7 @@ Stealth r16 更新了日常浏览中几个容易误操作的地方。现在可�
 升级前备份重要数据并退出旧版，核对同一 Release 的 `SHA256SUMS.txt`，将新 ZIP 完整解压到新的固定目录，然后打开 `StealthWorkspace.exe`。旧程序旁如有 `WorkspaceData`，按安装指南迁移完整目录并保留原件。发布包未签名，Windows 可能显示 SmartScreen。备份依赖原 Windows 用户；换机前请另外保存重要原始文件。[官网下载](https://canonliuliang.github.io/StealthWorkspace/#download) · [安装与升级指南](https://github.com/canonliuliang/StealthWorkspace/blob/v2026.11.20-r16-preview/docs/INSTALL.md)
 
 临时会话仍使用本机的网络连接。网站和网络服务可以看到访问流量或 IP 地址，WebView2 和 Windows 也有各自的后台行为。[隐私与数据说明](https://github.com/canonliuliang/StealthWorkspace/blob/v2026.11.20-r16-preview/docs/PRIVACY.md) · [源代码](https://github.com/canonliuliang/StealthWorkspace/tree/v2026.11.20-r16-preview)
+
+### 公开包验证
+
+GitHub 于 2026 年 11 月 20 日 16:15:44 UTC 发布本版。公开的 ARM64 和 x64 ZIP 均经匿名下载，与标签构建的原件和 SHA-256 清单一致。两份解压包均在 Windows 11 ARM64 上实际启动，各完成 40 次标签打开、加载和关闭，正常退出并清理临时会话。x64 界面测试使用系统兼容层，x64 构建和核心自检另在原生 x64 runner 上通过。[校验清单](https://github.com/canonliuliang/StealthWorkspace/releases/download/v2026.11.20-r16-preview/SHA256SUMS.txt) · [发布验收记录](https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/VALIDATION.md) · [更新公告](https://liu-digital-space.pages.dev/updates/#stealth-r16-preview)

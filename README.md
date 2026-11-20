@@ -48,7 +48,7 @@ dotnet run
 node tools/site.mjs serve
 ```
 
-两个架构分别在原生 Windows runner 上构建、自检。界面、浏览器和数据完整性通过独立的本地测试复核。[开发说明](docs/DEVELOPMENT.md) · [r16 研究与验收](docs/R16-REVIEW.md) · [构建记录](https://github.com/canonliuliang/StealthWorkspace/actions/workflows/build.yml)
+两个架构分别在原生 Windows runner 上构建、自检。两个公开 ZIP 均经下载校验、解压和实际启动验证。[开发说明](docs/DEVELOPMENT.md) · [r16 研究与架构](docs/R16-REVIEW.md) · [公开包与发布渠道验收](docs/VALIDATION.md) · [构建记录](https://github.com/canonliuliang/StealthWorkspace/actions/workflows/build.yml)
 
 ## 使用前应了解
 
