@@ -31,17 +31,18 @@ internal static class BookmarkHtml
                 skipped++;
                 continue;
             }
-            var item = new BookmarkItem { Url = address!.AbsoluteUri, Title = anchor.TextContent.Trim() };
+            var item = new BookmarkItem { Url = address!.AbsoluteUri, Title = anchor.TextContent.Trim(), CreatedAt = DateTime.MinValue };
             if (string.IsNullOrEmpty(item.Title)) item.Title = address.Host;
             if (long.TryParse(anchor.GetAttribute("add_date"), NumberStyles.None, CultureInfo.InvariantCulture, out long seconds)
-                && seconds is >= 0 and <= 253402214399)
-                item.CreatedAt = DateTimeOffset.FromUnixTimeSeconds(seconds).LocalDateTime;
+                && seconds is >= 0 and <= 253402300799)
+                item.CreatedAt = DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime;
             items.Add(item);
         }
         return new(items, skipped);
     }
 
-    internal static int Write(string path, IReadOnlyList<BookmarkItem> items, CancellationToken token)
+    internal static int Write(string path, IReadOnlyList<BookmarkItem> items, CancellationToken token,
+        Action<string, string> commit)
     {
         token.ThrowIfCancellationRequested();
         string destination = Path.GetFullPath(path);
@@ -66,9 +67,9 @@ internal static class BookmarkHtml
                     string added = "";
                     // ADD_DATE is optional. Older lists may contain an unknown date
                     // that cannot be converted to a local DateTimeOffset.
-                    if (item.CreatedAt.Year is >= 1970 and < 9999)
+                    if (item.CreatedAt != DateTime.MinValue)
                     {
-                        long timestamp = new DateTimeOffset(item.CreatedAt).ToUnixTimeSeconds();
+                        long timestamp = new DateTimeOffset(item.CreatedAt.ToUniversalTime()).ToUnixTimeSeconds();
                         if (timestamp >= 0) added = $" ADD_DATE=\"{timestamp.ToString(CultureInfo.InvariantCulture)}\"";
                     }
                     writer.WriteLine($"    <DT><A HREF=\"{url}\"{added}>{title}</A>");
@@ -80,7 +81,7 @@ internal static class BookmarkHtml
             }
             token.ThrowIfCancellationRequested();
             if (written == 0) throw new InvalidDataException("没有可以导出的 HTTP 或 HTTPS 收藏。");
-            File.Move(temp, destination, overwrite: true);
+            commit(temp, destination);
             return written;
         }
         finally

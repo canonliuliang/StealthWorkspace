@@ -18,6 +18,6 @@ Stealth r16.1 为 Windows 11 x64 和 ARM64 提供未签名便携预览包。本�
 
 ### 实测与升级
 
-在 Windows 11 ARM64 虚拟机上，5 万条合成收藏中重命名末条并刷新星标，两次独立运行的中位耗时由约 97–98 ms 降到约 56–57 ms。收藏保存的磁盘阶段现在在后台执行。首次建立索引的部分样本仍有退化。[测试环境、方法与完整数据](https://github.com/canonliuliang/StealthWorkspace/blob/v2026.11.21-r16.1-preview/docs/R161-PERFORMANCE.md)
+在 Windows 11 ARM64 虚拟机上，5 万条合成收藏中重命名末条并刷新星标，两次独立运行的中位耗时由约 97–98 ms 降到约 56–57 ms。在 5 万条收藏中连续输入长网址、共 27 次筛选，整段中位耗时从 12.59–17.40 ms 降至 0.87–1.10 ms。收藏保存的磁盘阶段现在在后台执行。新旧版本各 7 次热缓存启动的锁页就绪时间区间重叠。首次建立索引的部分样本仍有退化。[测试环境、方法与完整数据](https://github.com/canonliuliang/StealthWorkspace/blob/v2026.11.21-r16.1-preview/docs/R161-PERFORMANCE.md)
 
 Intel / AMD 电脑选择 win-x64，Windows on Arm 选择 win-arm64。升级前备份重要数据并退出旧版。核对本页的 SHA256SUMS.txt，将 ZIP 完整解压到新的固定目录后运行 StealthWorkspace.exe。WebView2 Runtime 由微软独立维护，应用使用手动升级。[官网下载](https://canonliuliang.github.io/StealthWorkspace/#download) · [安装与更新](https://github.com/canonliuliang/StealthWorkspace/blob/v2026.11.21-r16.1-preview/docs/INSTALL.md) · [隐私说明](https://github.com/canonliuliang/StealthWorkspace/blob/v2026.11.21-r16.1-preview/docs/PRIVACY.md)

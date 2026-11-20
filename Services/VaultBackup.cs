@@ -21,10 +21,38 @@ public partial class VaultService
         return Task.Run(() => CreateBackupCoreAsync(destination, epoch, progress, cancellationToken), cancellationToken);
     }
 
+    internal Task<int> ExportBookmarksAsync(string destination, IReadOnlyList<BookmarkItem> bookmarks, CancellationToken token)
+    {
+        long epoch = CaptureUnlockEpoch();
+        return Task.Run(() =>
+        {
+            string target = Path.GetFullPath(destination);
+            ValidatePersonalExport(target, epoch, token);
+            return BookmarkHtml.Write(target, bookmarks, token, (temp, final) => CommitPersonalExport(temp, final, epoch, token));
+        }, token);
+    }
+
+    private void ValidatePersonalExport(string target, long epoch, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        if (!IsCurrentUnlockSession(epoch, decoy: false)) throw new OperationCanceledException("保险箱会话已改变，导出已取消。");
+        if (IsInsideVault(target) || IsInsideVault(Path.GetDirectoryName(target) ?? target))
+            throw new InvalidDataException("请选择保险箱目录以外的位置保存文件。");
+    }
+
+    private void CommitPersonalExport(string temporary, string target, long epoch, CancellationToken token)
+    {
+        lock (_sync)
+        {
+            ValidatePersonalExport(target, epoch, token);
+            File.Move(temporary, target, overwrite: true);
+        }
+    }
+
     private async Task<int> CreateBackupCoreAsync(string destination, long epoch, IProgress<double>? progress, CancellationToken cancellationToken)
     {
         string target = Path.GetFullPath(destination);
-        if (IsInsideVault(target)) throw new InvalidOperationException("请选择保险箱目录以外的位置保存备份。");
+        ValidatePersonalExport(target, epoch, cancellationToken);
         string temporary = target + "." + Guid.NewGuid().ToString("N") + ".part";
         var pinned = new List<(VaultItem Item, FileStream Stream)>();
         byte[] catalog;
@@ -86,13 +114,7 @@ public partial class VaultService
             foreach (var file in pinned) file.Stream.Dispose();
             pinned.Clear();
             int count = await ReadBackupAsync(temporary, null, cancellationToken, fraction => Report(0.5 + 0.5 * fraction));
-            lock (_sync)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!IsCurrentUnlockSession(epoch, decoy: false)) throw new OperationCanceledException("保险箱会话已改变，备份已取消。");
-                if (IsInsideVault(target)) throw new InvalidOperationException("请选择保险箱目录以外的位置保存备份。");
-                File.Move(temporary, target, overwrite: true);
-            }
+            CommitPersonalExport(temporary, target, epoch, cancellationToken);
             progress?.Report(1);
             return count;
         }

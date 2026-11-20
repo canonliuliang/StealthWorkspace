@@ -40,7 +40,7 @@ public sealed partial class SettingsPage
                 token.ThrowIfCancellationRequested();
                 if (!ReferenceEquals(session, settings.PersonalBookmarkSession)) return;
                 var snapshot = settings.CurrentBookmarks;
-                int written = await Task.Run(() => BookmarkHtml.Write(result.Path, snapshot, token), token);
+                int written = await VaultService.Instance.ExportBookmarksAsync(result.Path, snapshot, token);
                 ReportBookmarkTransfer($"已导出 {written} 条收藏，跳过 {snapshot.Count - written} 条不支持的网址。", token);
             }
             else
