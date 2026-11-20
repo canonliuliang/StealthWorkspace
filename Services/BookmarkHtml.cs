@@ -18,7 +18,7 @@ internal static class BookmarkHtml
     {
         token.ThrowIfCancellationRequested();
         using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        if (file.Length > MaxImportBytes) throw new InvalidDataException("收藏文件超过 32 MiB，请分批导出后再导入。");
+        if (file.Length > MaxImportBytes) throw new InvalidDataException("收藏文件超过 32 MiB。请在本地将副本拆成较小的 HTML 文件，分次导入。");
         // A standalone HTML parser has no browsing context with a resource loader or script engine.
         using var document = await new HtmlParser().ParseDocumentAsync(file, token).ConfigureAwait(false);
         var items = new List<BookmarkItem>();

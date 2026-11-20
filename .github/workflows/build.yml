@@ -56,6 +56,9 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
+    concurrency:
+      group: publish-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -76,14 +79,37 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $checksums = Get-ChildItem artifacts/downloads -Recurse -Filter SHA256SUMS.txt
+          $checksums = @(Get-ChildItem artifacts/downloads -Recurse -Filter SHA256SUMS.txt | Sort-Object FullName)
           if ($checksums.Count -ne 2) { throw 'Expected checksums for both architectures.' }
-          $checksums | ForEach-Object { Get-Content $_.FullName } | Set-Content artifacts/SHA256SUMS.txt -Encoding ascii
+          $checksums | ForEach-Object { Get-Content $_.FullName } | Set-Content artifacts/downloads/SHA256SUMS.txt -Encoding ascii
+          $commit = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the checked-out release commit.' }
+          $version = $env:RELEASE_TAG.Substring(1)
+          ./tools/Test-ReleaseAssetFixtures.ps1 -Directory artifacts/downloads -Version $version -ExpectedCommit $commit
           $packages = @(Get-ChildItem artifacts/downloads -Recurse -Filter '*.zip' | ForEach-Object FullName)
           if ($packages.Count -ne 2) { throw 'Expected both portable packages.' }
           $title = (Get-Content docs/RELEASE-TITLE.txt -Raw).Trim()
           if ([string]::IsNullOrWhiteSpace($title) -or $title.Length -gt 120 -or $title.Contains("`n")) { throw 'Release title must be one concise line.' }
-          gh release create $env:RELEASE_TAG @packages artifacts/SHA256SUMS.txt --title $title --notes-file docs/RELEASE-NOTES.md --prerelease --verify-tag
-          if ($LASTEXITCODE -ne 0) { throw 'GitHub Release creation failed.' }
+          $releaseApi = "$env:GITHUB_API_URL/repos/$env:GH_REPO/releases/tags/$env:RELEASE_TAG"
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $response = Invoke-WebRequest -Uri $releaseApi -Headers $headers -SkipHttpErrorCheck
+          switch ([int]$response.StatusCode) {
+            404 {
+              gh release create $env:RELEASE_TAG @packages artifacts/downloads/SHA256SUMS.txt --title $title --notes-file docs/RELEASE-NOTES.md --prerelease --verify-tag
+              if ($LASTEXITCODE -ne 0) { throw 'GitHub Release creation failed.' }
+            }
+            200 {
+              $existing = $response.Content | ConvertFrom-Json
+              if ($existing.tag_name -cne $env:RELEASE_TAG -or $existing.draft -ne $false -or $existing.prerelease -ne $true) {
+                throw 'An existing release has different publication settings.'
+              }
+              Write-Output 'Release already exists. Checking its published assets against the tagged build.'
+            }
+            default { throw "Could not determine release status (HTTP $([int]$response.StatusCode))." }
+          }
+          gh release download $env:RELEASE_TAG --dir artifacts/published
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the published artifacts.' }
+          if (@(Get-ChildItem artifacts/published -File).Count -ne 3) { throw 'Expected two published ZIPs and one checksum manifest.' }
+          ./tools/Test-ReleaseAssets.ps1 -Directory artifacts/published -ReferenceDirectory artifacts/downloads -Version $version -ExpectedCommit $commit
           gh workflow run pages.yml --ref main
           if ($LASTEXITCODE -ne 0) { throw 'Release is published, but website dispatch failed; rerun Official website manually.' }

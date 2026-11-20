@@ -12,6 +12,7 @@ namespace StealthWorkspace.Services;
 
 public class BookmarkItem
 {
+    internal bool ContainsLoginInfo => Url.Contains('@') && Uri.TryCreate(Url, UriKind.Absolute, out var uri) && uri.UserInfo.Length != 0;
     public override string ToString() => string.IsNullOrWhiteSpace(Title) ? Url : Title;
     public string Title { get; set; } = string.Empty;
     public string Url { get; init; } = string.Empty;
@@ -432,7 +433,7 @@ public class SettingsService
     internal bool AddBookmark(string title, string url, BookmarkSession? session)
     {
         if (session == null) return false;
-        if (!Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return false;
+        if (!Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || uri.UserInfo.Length != 0) return false;
         lock (_saveGate)
         {
             if (!ReferenceEquals(_bookmarkSession, session)) return false;

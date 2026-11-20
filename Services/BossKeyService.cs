@@ -34,6 +34,7 @@ public class BossKeyService
     public event Action? BossKeyPressed;
     public event Action? WindowMinimized;
     public event Action? SystemSessionLeaving;
+    public event Action? SystemResumed;
     public event Action? WindowShown;
     public event Action<bool>? WindowVisibilityChanged;
 
@@ -90,6 +91,9 @@ public class BossKeyService
                     or NativeMethods.WTS_CONSOLE_DISCONNECT or NativeMethods.WTS_REMOTE_DISCONNECT:
                 case NativeMethods.WM_POWERBROADCAST when wParam.ToInt64() == NativeMethods.PBT_APMSUSPEND:
                     SystemSessionLeaving?.Invoke();
+                    break;
+                case NativeMethods.WM_POWERBROADCAST when wParam.ToInt64() is 7 or 18: // resume from suspend, automatic resume
+                    SystemResumed?.Invoke();
                     break;
                 case NativeMethods.WM_HOTKEY:
                     if (wParam.ToInt32() == NativeMethods.HOTKEY_BOSS_KEY_ID)

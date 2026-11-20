@@ -65,6 +65,7 @@ internal static class WorkspaceNativeDialogs
         if (Active.Count == 0) return;
         long generation = ++_generation;
         var pickers = Active.ToArray();
+        Active.Clear();
         foreach (var picker in pickers) picker.Revoked.TrySetResult();
         CloseOwnedNativeDialogs(owner);
         foreach (var picker in pickers) CancelOperation(picker);

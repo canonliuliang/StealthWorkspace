@@ -22,3 +22,4 @@ Third-party marks are secondary to the Stealth brand. No affiliation or endorsem
 ## Release and claims
 
 Both architecture links target the versioned x64 and ARM64 archives in `v2026.11.21-r16.1-preview`. The Pages workflow checks for both ZIPs and the checksum manifest before deploying the download page.
+r161-site-storage.png 是 r16.1 的真实 WinUI 站点面板，来自隔离的本机测试来源。

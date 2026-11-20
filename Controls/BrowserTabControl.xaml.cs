@@ -2161,7 +2161,7 @@ public sealed partial class BrowserTabControl : UserControl
     private void RefreshStartBookmarks()
     {
         if (_isDisposed || StartSurface.Visibility != Visibility.Visible) return;
-        var bookmarks = SettingsService.Instance.CurrentBookmarks.Take(12).ToArray();
+        var bookmarks = SettingsService.Instance.CurrentBookmarks.Where(item => !item.ContainsLoginInfo).Take(12).ToArray();
         // Loaded is raised again when returning to a tab. Retain the existing
         // controls and focus if the displayed bookmarks have not changed.
         if (StartBookmarks.ItemsSource is IReadOnlyList<BookmarkItem> existing && existing.SequenceEqual(bookmarks)) return;

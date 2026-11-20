@@ -61,7 +61,7 @@ internal static class BrowserAddressSuggestions
 
         void Add(string title, string url, bool bookmark)
         {
-            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || uri.UserInfo.Length != 0) return;
             if (!seen.Add(uri.AbsoluteUri)) return;
             result.Add(new BrowserAddressSuggestion { Title = string.IsNullOrWhiteSpace(title) ? uri.Host : title,
                 Detail = (bookmark ? "收藏 · " : "本次会话 · ") + uri.AbsoluteUri, Input = uri.AbsoluteUri,

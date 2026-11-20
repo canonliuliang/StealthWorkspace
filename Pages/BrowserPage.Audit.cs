@@ -40,6 +40,7 @@ public sealed partial class BrowserPage
         await ((BrowserTabControl)reloadItem.Content).CheckSiteStorageAndAddressAuditAsync();
         await ((BrowserTabControl)reloadItem.Content).CheckBookmarkEditWorkflowAsync();
         await ((BrowserTabControl)reloadItem.Content).CheckNetworkPrivacyBoundaryAsync();
+        await ((BrowserTabControl)reloadItem.Content).CheckShareLinkWorkflowAsync();
         await CloseTabAsync(reloadItem);
         await CheckFullScreenWorkflowAsync();
         var imageItem = CreateNewTab()!;

@@ -13,7 +13,7 @@ public sealed partial class SettingsPage
         // A page can load again after navigation. Undo the old filter before reading
         // the current layout, and exclude controls hidden for the active workspace.
         _searchSections.Clear();
-        SettingsSearch.Text = string.Empty;
+        if (!_isLoaded) SettingsSearch.Text = string.Empty;
         SettingsMatches.Visibility = Visibility.Collapsed;
         bool decoy = Services.VaultService.Instance.IsDecoyMode;
         foreach (var section in SettingsSections.Children.OfType<FrameworkElement>())
@@ -35,6 +35,7 @@ public sealed partial class SettingsPage
             }
             if (cards.Count > 0) _searchSections.Add((group, cards));
         }
+        ApplySettingsFilter();
     }
 
     private static string ReadControlText(UIElement element) => element switch
@@ -47,7 +48,9 @@ public sealed partial class SettingsPage
         _ => ""
     };
 
-    private void SettingsSearch_TextChanged(object sender, TextChangedEventArgs e)
+    private void SettingsSearch_TextChanged(object sender, TextChangedEventArgs e) => ApplySettingsFilter();
+
+    private void ApplySettingsFilter()
     {
         if (_searchSections.Count == 0) return;
         string query = SettingsSearch.Text.Trim();

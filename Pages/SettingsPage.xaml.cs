@@ -87,7 +87,6 @@ public sealed partial class SettingsPage : Page
         };
 
         RefreshVaultSecuritySection();
-        IndexVisibleSettings();
 
         if (!BossKeyService.Instance.IsBossKeyEnabled && cfg.BossKeyEnabled)
         {
@@ -107,14 +106,16 @@ public sealed partial class SettingsPage : Page
         BookmarkTransferSection.Visibility = decoyMode ? Visibility.Collapsed : Visibility.Visible;
         BackupSection.Visibility = decoyMode ? Visibility.Collapsed : Visibility.Visible;
         VaultSecuritySection.Visibility = decoyMode ? Visibility.Collapsed : Visibility.Visible;
-        if (decoyMode) return;
-
-        bool hasDecoy = VaultService.Instance.HasDecoyVault;
-        VaultSecurityStatusText.Text = hasDecoy
-            ? "主密码已启用 · 诱饵密码已设置 · 媒体采用 AES-256-GCM 分块加密"
-            : "主密码已启用 · 尚未设置诱饵密码 · 媒体采用 AES-256-GCM 分块加密";
-        DecoyPwdBtn.Content = hasDecoy ? "修改诱饵密码" : "设置诱饵密码";
-        ClearDecoyBtn.IsEnabled = hasDecoy;
+        if (!decoyMode)
+        {
+            bool hasDecoy = VaultService.Instance.HasDecoyVault;
+            VaultSecurityStatusText.Text = hasDecoy
+                ? "主密码已启用 · 诱饵密码已设置 · 媒体采用 AES-256-GCM 分块加密"
+                : "主密码已启用 · 尚未设置诱饵密码 · 媒体采用 AES-256-GCM 分块加密";
+            DecoyPwdBtn.Content = hasDecoy ? "修改诱饵密码" : "设置诱饵密码";
+            ClearDecoyBtn.IsEnabled = hasDecoy;
+        }
+        IndexVisibleSettings();
     }
 
     private void StartPageCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -178,6 +179,7 @@ public sealed partial class SettingsPage : Page
             2 => 30,
             _ => 0
         };
+        MainWindow.Current?.RefreshIdleDeadline();
         SavePreferences();
     }
 
@@ -660,8 +662,11 @@ public sealed partial class SettingsPage : Page
         UpdateActions();
         try
         {
-            var picker = new Windows.Storage.Pickers.FileSavePicker { SuggestedFileName = $"保险箱备份-{DateTime.Now:yyyyMMdd-HHmm}" };
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, MainWindow.CurrentHandle);
+            var picker = new Microsoft.Windows.Storage.Pickers.FileSavePicker(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(MainWindow.CurrentHandle))
+            {
+                SuggestedFileName = $"保险箱备份-{DateTime.Now:yyyyMMdd-HHmm}",
+                DefaultFileExtension = ".swbackup"
+            };
             picker.FileTypeChoices.Add("加密保险箱备份", new[] { ".swbackup" });
             var target = await WorkspaceNativeDialogs.PickAsync(picker.PickSaveFileAsync);
             if (target == null || !BeginWork("创建备份")) return;
@@ -679,8 +684,7 @@ public sealed partial class SettingsPage : Page
         UpdateActions();
         try
         {
-            var picker = new Windows.Storage.Pickers.FileOpenPicker();
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, MainWindow.CurrentHandle);
+            var picker = new Microsoft.Windows.Storage.Pickers.FileOpenPicker(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(MainWindow.CurrentHandle));
             picker.FileTypeFilter.Add(".swbackup");
             var source = await WorkspaceNativeDialogs.PickAsync(picker.PickSingleFileAsync);
             if (source == null || !BeginWork("检查备份")) return;

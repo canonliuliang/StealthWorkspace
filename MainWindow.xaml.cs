@@ -74,6 +74,7 @@ public sealed partial class MainWindow : Window
             bossKey.BossKeyPressed += OnBossKeyPressed;
             bossKey.WindowMinimized += OnWindowMinimized;
             bossKey.SystemSessionLeaving += OnSystemSessionLeaving;
+            bossKey.SystemResumed += RefreshIdleDeadline;
             bossKey.WindowVisibilityChanged += OnWindowVisibilityChanged;
         }
         catch (Exception ex)
@@ -431,6 +432,7 @@ public sealed partial class MainWindow : Window
 
             // The popup layer sits above page transitions. Lock while a real modal
             // is open and ensure its awaiting action receives cancellation.
+            await WorkspaceNativeDialogsAudit.CheckRevocationAsync();
             var dialog = new ContentDialog { XamlRoot = RootGrid.XamlRoot, Content = "测试", CloseButtonText = "关闭" };
             var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             dialog.Opened += (_, _) => opened.TrySetResult();
@@ -638,45 +640,48 @@ public sealed partial class MainWindow : Window
 
     private void SetupIdleDetection()
     {
-        // The isolated smoke walk explicitly exercises locking; the desktop's
-        // pre-existing idle time must not interrupt it mid-page.
-        if (SmokeTest.UiSmoke) return;
-        _idleTimer.Interval = TimeSpan.FromSeconds(5);
         _idleTimer.Tick += OnIdleTick;
-        _idleTimer.Start();
     }
 
-    private void OnIdleTick(object? sender, object e)
+    internal void RefreshIdleDeadline() => ScheduleIdleCheck(false);
+
+    private void OnIdleTick(object? sender, object e) => ScheduleIdleCheck(true);
+
+    private void ScheduleIdleCheck(bool lockIfDue)
     {
+        _idleTimer.Stop();
+        int minutes = SettingsService.Instance.Data.AutoLockMinutes;
+        // The fixture has its own inputs. Production uses the session's actual
+        // Windows input timestamp, so activity in other applications counts.
+        if (SmokeTest.UiSmoke || _isLocked || _shutdownStarted || minutes <= 0 || !VaultService.Instance.IsUnlocked) return;
+        long delayMs = 5_000;
         try
         {
-            RestoreBossKeyMuteIfSettled();
-
-            if (!VaultService.Instance.IsUnlocked) return;
-
-            int minutes = SettingsService.Instance.Data.AutoLockMinutes;
-            if (minutes <= 0) return;
-
             var info = new NativeMethods.LASTINPUTINFO
             {
                 cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.LASTINPUTINFO>()
             };
 
-            if (!NativeMethods.GetLastInputInfo(ref info)) return;
-
-            // Unchecked uint subtraction handles the 49.7 day TickCount wrap correctly.
-            uint elapsedMs = unchecked((uint)Environment.TickCount - info.dwTime);
-            long thresholdMs = Math.Max(60_000L, minutes * 60_000L);
-            if (elapsedMs >= thresholdMs)
+            if (NativeMethods.GetLastInputInfo(ref info))
             {
-                LockWorkspace();
+                delayMs = MillisecondsUntilIdleLock(minutes, unchecked((uint)Environment.TickCount), info.dwTime);
+                if (lockIfDue && delayMs == 0)
+                {
+                    LockWorkspace();
+                    return;
+                }
             }
         }
         catch (Exception ex)
         {
             AppLog.Error("闲置锁定检测失败", ex);
         }
+        _idleTimer.Interval = TimeSpan.FromMilliseconds(Math.Max(1, delayMs));
+        _idleTimer.Start();
     }
+
+    internal static long MillisecondsUntilIdleLock(int minutes, uint now, uint lastInput) =>
+        Math.Max(0L, minutes * 60_000L - unchecked(now - lastInput));
 
     private void OnWindowMinimized()
     {
@@ -691,7 +696,10 @@ public sealed partial class MainWindow : Window
     }
 
     private void OnWindowVisibilityChanged(bool visible) => DispatcherQueue.TryEnqueue(() =>
-        Controls.BrowserTabControl.SetHostWindowVisible(visible));
+    {
+        Controls.BrowserTabControl.SetHostWindowVisible(visible);
+        if (visible) RestoreBossKeyMuteIfSettled();
+    });
 
     #endregion
 
@@ -769,8 +777,8 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// If the window was restored through the taskbar (not via the boss key), the
-    /// boss-key mute would otherwise stay active indefinitely. The 5s idle timer is a
-    /// cheap place to heal that state. Camouflage mode keeps the mute until dismissed.
+    /// boss-key mute would otherwise stay active indefinitely. Check after the
+    /// native show/restore message. Camouflage keeps the mute until dismissed.
     /// </summary>
     private void RestoreBossKeyMuteIfSettled()
     {
@@ -899,6 +907,7 @@ public sealed partial class MainWindow : Window
             bool firstLock = !_isLocked;
             bool endingUnlockedSession = firstLock && VaultService.Instance.IsUnlocked;
             _isLocked = true;
+            _idleTimer.Stop();
             SettingsService.Instance.SetBookmarkWorkspace(null);
 
             // Every explicit lock must revoke pending verification/setup, including
@@ -958,6 +967,7 @@ public sealed partial class MainWindow : Window
         if (!VaultService.Instance.IsUnlocked) return;
         SettingsService.Instance.SetBookmarkWorkspace(VaultService.Instance.IsDecoyMode);
         _isLocked = false;
+        RefreshIdleDeadline();
         NavView.IsPaneVisible = true;
         AppTitleBar.IsPaneToggleButtonVisible = true;
         StatusBadge.Visibility = Visibility.Visible;

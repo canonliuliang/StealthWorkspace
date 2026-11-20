@@ -17,10 +17,11 @@ public sealed partial class BrowserTabControl
     {
         if (_isDisposed) return;
         string url = GetCurrentDocumentUrl();
-        bool valid = TryCreateWebUri(url, out _) && SettingsService.Instance.ActiveBookmarkSession != null;
+        bool valid = TryCreateWebUri(url, out var address) && SettingsService.Instance.ActiveBookmarkSession != null;
         bool bookmarked = valid && SettingsService.Instance.IsBookmarked(url);
-        BookmarkStarBtn.IsEnabled = valid && !_savingBookmark;
-        string action = _savingBookmark ? "正在保存收藏" : bookmarked ? "取消收藏" : "收藏本页";
+        bool privateAddress = valid && address!.UserInfo.Length != 0 && !bookmarked;
+        BookmarkStarBtn.IsEnabled = valid && !privateAddress && !_savingBookmark;
+        string action = _savingBookmark ? "正在保存收藏" : bookmarked ? "取消收藏" : privateAddress ? "无法收藏含登录信息的网址" : "收藏本页";
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(BookmarkStarBtn, action);
         ToolTipService.SetToolTip(BookmarkStarBtn, action + " (Ctrl+D)");
         VisualStateManager.GoToState(this, bookmarked ? "Bookmarked" : "NotBookmarked", false);
@@ -30,9 +31,10 @@ public sealed partial class BrowserTabControl
     {
         if (_isDisposed || _savingBookmark) return;
         string url = GetCurrentDocumentUrl();
-        if (!TryCreateWebUri(url, out _)) return;
+        if (!TryCreateWebUri(url, out var address)) return;
         var settings = SettingsService.Instance;
         bool bookmarked = settings.IsBookmarked(url);
+        if (!bookmarked && address!.UserInfo.Length != 0) return;
         string title = string.IsNullOrWhiteSpace(CurrentTitle) ? url : CurrentTitle;
         bool saved = await SaveBookmarkEditAsync(settings.ActiveBookmarkSession, session => bookmarked ?
             settings.RemoveBookmark(url, session) : settings.AddBookmark(title, url, session));

@@ -72,4 +72,6 @@ ARM64 构建使用 `-r win-arm64 -p:Platform=ARM64`，x64 使用 `-r win-x64 -p:
 
 官网：运行 `node tools/site.mjs build`，产物位于 `website/dist`；运行 `node tools/site.mjs serve` 在 `http://127.0.0.1:4173` 预览。`node tools/site.mjs check` 校验页面引用与必需内容。GitHub Pages 使用独立最小权限工作流。
 
-官网部署前检查 Release 是否公开且 x64、ARM64 ZIP 与 SHA-256 清单都已上传；资料不完整时暂缓部署，保留已有官网。发布任务在 Release 创建成功后主动触发官网工作流。发布阶段仅该任务需要 `actions: write` 以发起部署；普通构建没有写权限。离线验证门控场景：`node --test tools/release-readiness.test.mjs`。
+官网部署前检查 Release 是否公开且 x64、ARM64 ZIP 与 SHA-256 清单都已上传。标签发布任务核对公开 ZIP 的 SHA-256、内部架构和程序集提交之后，再触发官网工作流。重跑会检查已经发布的资产。[校验脚本](../tools/Test-ReleaseAssets.ps1) · [错误包测试](../tools/Test-ReleaseAssetFixtures.ps1)
+
+使用 `./tools/Test-UI.ps1 -AppDirectory <解压目录> -Mode Web -Url <公开测试网址>` 可检查真实 WebView2 访问。保持测试窗口在前台。脚本核对成功的 HTTP 导航、文档加载状态以及退出清理，把当前样本写到 `navigation.json`。建议仅使用可公开的页面，保留网站标题与资源计数的诊断报告应先审阅再分享。
