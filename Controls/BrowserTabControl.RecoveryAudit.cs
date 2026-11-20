@@ -13,9 +13,16 @@ public sealed partial class BrowserTabControl
         var core = _hookedCore!;
         string? sessionDirectory = BrowserProfileManager.ActiveSessionDirectory;
         uint processId = core.BrowserProcessId;
+        // Native crash reporting can hold the injected process alive after CDP
+        // disconnects. Observe OS exit separately from the app's recovery event.
+        using var oldBrowser = System.Diagnostics.Process.GetProcessById((int)processId);
+        Task exited = oldBrowser.WaitForExitAsync();
         core.CookieManager.AddOrUpdateCookie(core.CookieManager.CreateCookie("browser-recovery", "keep", "127.0.0.1", "/"));
         try { await core.CallDevToolsProtocolMethodAsync("Browser.crash", "{}").AsTask().WaitAsync(TimeSpan.FromSeconds(3)); }
         catch (Exception ex) { SmokeTest.Report("browser-process crash injection ended=" + ex.GetType().Name); }
+        try { await exited.WaitAsync(TimeSpan.FromSeconds(30)); }
+        catch (TimeoutException) { throw new InvalidOperationException("Fixture browser process did not exit after crash injection"); }
+        SmokeTest.Report("recovery audit: old browser process exit verified by operating system=True");
         for (int i = 0; i < 200 && !_needsRecreate; i++) await Task.Delay(50);
         if (!_needsRecreate || _isInitialized) throw new InvalidOperationException("Browser exit not detected");
         await NavigateAuditAsync(fixture.Address + "/page?recovered");
@@ -34,7 +41,7 @@ public sealed partial class BrowserTabControl
         await using var fixture = new BrowserHttpFixture();
         await NavigateAuditAsync(fixture.Address + "/page");
         var operation = await BeginDownloadAuditAsync(fixture.Address + "/download-slow");
-        var record = BrowserDownloads.Items.Single(item => item.FilePath == operation.ResultFilePath);
+        var record = BrowserDownloads.Items.Single(item => item.IsPending && item.FilePath == operation.ResultFilePath);
         operation.Pause();
         for (int i = 0; i < 100 && !record.CanResume; i++) await Task.Delay(25);
         if (!record.CanResume || !record.Status.StartsWith("已暂停")) throw new InvalidOperationException("Paused download not represented correctly");

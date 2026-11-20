@@ -80,6 +80,11 @@ public sealed partial class BrowserTabControl
 
     private void MoreActionsFlyout_Closed(object sender, object args)
     {
+        if (_historyAfterMenuClose && !_isDisposed)
+        {
+            _historyAfterMenuClose = false;
+            OpenSessionHistory();
+        }
         if (_zoomAfterMenuClose is { } key && !_isDisposed)
         {
             _zoomAfterMenuClose = null;

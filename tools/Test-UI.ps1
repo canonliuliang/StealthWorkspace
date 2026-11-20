@@ -1,14 +1,18 @@
 param(
     [Parameter(Mandatory)][string]$AppDirectory,
-    [ValidateSet('Smoke','Render','Browser','Experience','Soak')][string]$Mode = 'Smoke',
+    [ValidateSet('Smoke','Render','Browser','Experience','Soak','Web')][string]$Mode = 'Smoke',
     [string]$OutputDirectory,
     [ValidateSet('Dark','Light')][string]$Theme = 'Dark',
     [ValidateRange(480,2000)][int]$Width = 1100,
     [ValidateRange(480,1600)][int]$Height = 740,
     [ValidateRange(1,120)][int]$SoakMinutes = 3,
-    [switch]$ReducedMotion
+    [switch]$ReducedMotion,
+    [uri]$Url
 )
 $ErrorActionPreference = 'Stop'
+if ($Mode -eq 'Web' -and (!$Url -or !$Url.IsAbsoluteUri -or $Url.Scheme -notin 'http','https' -or $Url.UserInfo)) {
+    throw 'Web requires an absolute HTTP(S) test URL without embedded credentials.'
+}
 $appRoot = (Resolve-Path -LiteralPath $AppDirectory).Path
 $exe = Join-Path $appRoot 'StealthWorkspace.exe'
 if (!(Test-Path -LiteralPath $exe)) { throw 'Application executable is missing.' }
@@ -29,6 +33,7 @@ switch ($Mode) {
     'Browser' { $info.ArgumentList.Add('--browser-audit'); $marker = 'AUDIT RESULT: OK' }
     'Experience' { $info.ArgumentList.Add('--experience-test'); $marker = 'EXPERIENCE RESULT: OK' }
     'Soak' { $info.ArgumentList.Add('--browser-soak-minutes'); $info.ArgumentList.Add("$SoakMinutes"); $marker = 'SOAK RESULT: OK' }
+    'Web' { $info.ArgumentList.Add('--browser-probe-url'); $info.ArgumentList.Add($Url.AbsoluteUri); $marker = 'NETWORK PROBE: completed' }
 }
 $process = [Diagnostics.Process]::Start($info)
 $timeout = if ($Mode -eq 'Soak') { ($SoakMinutes + 2) * 60 } else { 240 }
@@ -48,3 +53,13 @@ if ($process.ExitCode -ne 0 -or !$result.Contains($marker) -or
     throw "UI test failed. Inspect $report"
 }
 Write-Output "$marker — $report"
+if ($Mode -eq 'Web') {
+    $lines = Get-Content -LiteralPath $report
+    $sample = $lines | Where-Object { $_ -match ' probe: "\{' } | Select-Object -Last 1
+    if (!$sample -or $result -notmatch 'success=True; HTTP=2\d\d;') { throw "No successful website navigation. Inspect $report" }
+    $outer = $sample.Substring($sample.IndexOf(' probe: ') + 8) | ConvertFrom-Json
+    $metrics = $outer | ConvertFrom-Json
+    if ($metrics.ready -ne 'complete' -or !$metrics.navigation -or $metrics.origin -notmatch '^https?://') { throw "Document did not finish loading. Inspect $report" }
+    $metrics | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 -LiteralPath (Join-Path $output 'navigation.json')
+    Write-Output "Page loaded: $($metrics.origin), resources=$($metrics.resources)"
+}

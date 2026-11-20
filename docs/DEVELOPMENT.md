@@ -21,8 +21,8 @@ ARM64 构建使用 `-r win-arm64 -p:Platform=ARM64`，x64 使用 `-r win-x64 -p:
 `tools/Test-Core.ps1` 启动发布目录里的无界面自检，设超时，检查进程退出码以及报告中的失败计数。它覆盖加密、流式读取、密码轮换、备份恢复、地址解析、下载命名、站点数据边界和诊断日志。它不代表 XAML、网站兼容性或桌面启动已通过。
 
 ```powershell
-./tools/Build-Release.ps1 -Runtime win-arm64 -Version 2026.11.20-r16-preview
-./tools/Test-Core.ps1 -PublishDirectory artifacts/releases/2026.11.20-r16-preview/win-arm64/app
+./tools/Build-Release.ps1 -Runtime win-arm64 -Version 2026.11.21-r16.1-preview
+./tools/Test-Core.ps1 -PublishDirectory artifacts/releases/2026.11.21-r16.1-preview/win-arm64/app
 ```
 
 交互烟测必须使用新建的独立测试数据目录；不要把真实保险箱传给 `--data-root`，不要在真实数据上运行诊断 fixture。普通 UI 验证可使用 WinApp CLI 的 inspect / invoke / set-value / screenshot。锁定、导入、下载、切图、休眠、崩溃恢复和关闭会话需要实际交互复核。系统安全提示不应被自动绕过。
@@ -32,13 +32,13 @@ ARM64 构建使用 `-r win-arm64 -p:Platform=ARM64`，x64 使用 `-r win-x64 -p:
 `Test-UI.ps1` 总是创建独立数据目录，要求先关闭现有应用，并检查最终结果标记及进程退出码。支持 `Smoke`、`Render`、`Browser`、`Experience`、`Soak`；例如：
 
 ```powershell
-./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.20-r16-preview/win-arm64/app -Mode Smoke
-./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.20-r16-preview/win-arm64/app -Mode Render
-./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.20-r16-preview/win-arm64/app -Mode Soak -SoakMinutes 3
-./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.20-r16-preview/win-arm64/app -Theme Light -Width 640
-# 地址栏与收藏基准使用公开 r15 源码，准备基线的方法见 R16-PERFORMANCE.md。
-./tools/Measure-VaultContention.ps1 -AppDirectory artifacts/releases/2026.11.20-r16-preview/win-arm64/app -OutputPath artifacts/contention-new.json
-./tools/Test-DiagnosticIsolation.ps1 -AppDirectory artifacts/releases/2026.11.20-r16-preview/win-arm64/app -OutputDirectory artifacts/isolation-new
+./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.21-r16.1-preview/win-arm64/app -Mode Smoke
+./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.21-r16.1-preview/win-arm64/app -Mode Render
+./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.21-r16.1-preview/win-arm64/app -Mode Soak -SoakMinutes 3
+./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.21-r16.1-preview/win-arm64/app -Theme Light -Width 640
+# 本次收藏检索和保存基准使用公开 r16 源码，完整命令见 R161-PERFORMANCE.md。
+./tools/Measure-VaultContention.ps1 -AppDirectory artifacts/releases/2026.11.21-r16.1-preview/win-arm64/app -OutputPath artifacts/contention-new.json
+./tools/Test-DiagnosticIsolation.ps1 -AppDirectory artifacts/releases/2026.11.21-r16.1-preview/win-arm64/app -OutputDirectory artifacts/isolation-new
 ```
 
 渲染检查需要应用保持前台，使用本地合成网页。建议、锁争用及列表通知的测量不能等同于任意网页的帧率。`--ui-smoke` 还支持 `--ui-width`、`--ui-height` 和 `--ui-theme`；这些选项不会修改真实用户设置。
@@ -72,4 +72,6 @@ ARM64 构建使用 `-r win-arm64 -p:Platform=ARM64`，x64 使用 `-r win-x64 -p:
 
 官网：运行 `node tools/site.mjs build`，产物位于 `website/dist`；运行 `node tools/site.mjs serve` 在 `http://127.0.0.1:4173` 预览。`node tools/site.mjs check` 校验页面引用与必需内容。GitHub Pages 使用独立最小权限工作流。
 
-官网部署前检查 Release 是否公开且 x64、ARM64 ZIP 与 SHA-256 清单都已上传；资料不完整时暂缓部署，保留已有官网。发布任务在 Release 创建成功后主动触发官网工作流。发布阶段仅该任务需要 `actions: write` 以发起部署；普通构建没有写权限。离线验证门控场景：`node --test tools/release-readiness.test.mjs`。
+官网部署前检查 Release 是否公开且 x64、ARM64 ZIP 与 SHA-256 清单都已上传。标签发布任务核对公开 ZIP 的 SHA-256、内部架构和程序集提交之后，再触发官网工作流。重跑会检查已经发布的资产。[校验脚本](../tools/Test-ReleaseAssets.ps1) · [错误包测试](../tools/Test-ReleaseAssetFixtures.ps1)
+
+使用 `./tools/Test-UI.ps1 -AppDirectory <解压目录> -Mode Web -Url <公开测试网址>` 可检查真实 WebView2 访问。保持测试窗口在前台。脚本核对成功的 HTTP 导航、文档加载状态以及退出清理，把当前样本写到 `navigation.json`。建议仅使用可公开的页面，保留网站标题与资源计数的诊断报告应先审阅再分享。

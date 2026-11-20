@@ -4,6 +4,15 @@ namespace StealthWorkspace.Services;
 
 internal static class BrowserSiteData
 {
+    internal static Task ClearOfflineDataForOriginAsync(CoreWebView2 core, Uri page)
+    {
+        if (page.Scheme is not ("http" or "https") || string.IsNullOrEmpty(page.Host))
+            throw new ArgumentException("A web origin is required.", nameof(page));
+        string origin = page.GetComponents(UriComponents.SchemeAndServer, UriFormat.UriEscaped);
+        return core.CallDevToolsProtocolMethodAsync("Storage.clearDataForOrigin",
+            System.Text.Json.JsonSerializer.Serialize(new { origin, storageTypes = "local_storage,indexeddb,cache_storage" })).AsTask();
+    }
+
     // CacheStorage belongs to web apps and can contain the only offline copy.
     internal static Task ClearHttpCacheAsync(CoreWebView2 core) =>
         core.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache).AsTask();

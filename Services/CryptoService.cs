@@ -121,26 +121,28 @@ public static class CryptoService
 
     public static VaultFileHeader ReadHeader(Stream stream)
     {
-        if (stream.Length < HeaderSizeV1) throw new InvalidDataException("保险箱文件头不完整。");
-
-        Span<byte> magic = stackalloc byte[8];
-        ReadExactly(stream, magic);
         stream.Position = 0;
-
-        VaultFileFormat format;
-        if (magic.SequenceEqual(MagicV1)) format = VaultFileFormat.LegacyV1;
-        else if (magic.SequenceEqual(MagicV2)) format = VaultFileFormat.V2;
-        else throw new InvalidDataException("无效的保险箱文件格式（Magic 不匹配）。");
-
-        return format == VaultFileFormat.V2 ? ReadHeaderV2(stream) : ReadHeaderV1(stream);
+        return ReadHeader(stream, stream.Length, CancellationToken.None);
     }
 
-    private static VaultFileHeader ReadHeaderV1(Stream stream)
+    // A ZIP entry is forward-only. Its uncompressed length is supplied by the caller.
+    internal static VaultFileHeader ReadHeader(Stream stream, long encryptedLength, CancellationToken token)
     {
-        stream.Position = 0;
-        Span<byte> buffer = stackalloc byte[HeaderSizeV1];
-        ReadExactly(stream, buffer);
+        if (encryptedLength < HeaderSizeV1) throw new InvalidDataException("保险箱文件头不完整。");
+        Span<byte> header = stackalloc byte[HeaderSizeV2];
+        ReadExactly(stream, header[..8]);
+        if (header[..8].SequenceEqual(MagicV1))
+        {
+            ReadExactly(stream, header[8..HeaderSizeV1]);
+            return ReadHeaderV1(stream, header[..HeaderSizeV1], encryptedLength, token);
+        }
+        if (!header[..8].SequenceEqual(MagicV2)) throw new InvalidDataException("无效的保险箱文件格式。");
+        ReadExactly(stream, header[8..]);
+        return ReadHeaderV2(header, encryptedLength);
+    }
 
+    private static VaultFileHeader ReadHeaderV1(Stream stream, ReadOnlySpan<byte> buffer, long fileLength, CancellationToken token)
+    {
         int chunkSize = BinaryPrimitives.ReadInt32LittleEndian(buffer.Slice(8 + SaltSize, 4));
         if (chunkSize < MinChunkSize || chunkSize > MaxChunkSize)
             throw new InvalidDataException("保险箱文件的分块大小无效。");
@@ -151,23 +153,35 @@ public static class CryptoService
         // V1 has no length header: walk the record headers once to build the chunk table.
         long plainTotal = 0;
         long pos = dataOffset;
-        long fileLength = stream.Length;
-        var table = new List<(long Offset, int Length)>();
-        Span<byte> lengthBuffer = stackalloc byte[sizeof(int)];
+        var table = stream.CanSeek ? new List<(long Offset, int Length)>() : null;
+        byte[]? skipBuffer = stream.CanSeek ? null : new byte[64 * 1024];
+        int count = 0;
+        Span<byte> record = stackalloc byte[RecordHeaderSize];
 
         while (pos < fileLength)
         {
             if (fileLength - pos < RecordHeaderSize) throw new InvalidDataException("保险箱文件块头不完整。");
-            stream.Position = pos + NonceSize + TagSize;
-            ReadExactly(stream, lengthBuffer);
-            int cipherLen = BinaryPrimitives.ReadInt32LittleEndian(lengthBuffer);
+            token.ThrowIfCancellationRequested();
+            ReadExactly(stream, record);
+            int cipherLen = BinaryPrimitives.ReadInt32LittleEndian(record[(NonceSize + TagSize)..]);
             if (cipherLen <= 0 || cipherLen > chunkSize) throw new InvalidDataException("保险箱文件块长度无效。");
             long next = pos + RecordHeaderSize + cipherLen;
             if (next > fileLength) throw new InvalidDataException("保险箱文件被截断。");
-            table.Add((pos, cipherLen));
+            table?.Add((pos, cipherLen));
+            if (stream.CanSeek) stream.Position = next;
+            else
+            {
+                for (int left = cipherLen; left > 0;)
+                {
+                    token.ThrowIfCancellationRequested();
+                    int block = Math.Min(left, skipBuffer!.Length);
+                    ReadExactly(stream, skipBuffer.AsSpan(0, block));
+                    left -= block;
+                }
+            }
             pos = next;
             plainTotal += cipherLen;
-            if (table.Count > 4_000_000) throw new InvalidDataException("保险箱文件块数量异常。");
+            if (++count > 4_000_000) throw new InvalidDataException("保险箱文件块数量异常。");
         }
 
         if (pos != fileLength) throw new InvalidDataException("保险箱文件结构损坏。");
@@ -179,17 +193,13 @@ public static class CryptoService
             PlainLength = plainTotal,
             FileSalt = salt,
             DataOffset = dataOffset,
-            ChunkCount = table.Count,
-            ChunkTable = table.ToArray()
+            ChunkCount = count,
+            ChunkTable = table?.ToArray()
         };
     }
 
-    private static VaultFileHeader ReadHeaderV2(Stream stream)
+    private static VaultFileHeader ReadHeaderV2(ReadOnlySpan<byte> buffer, long encryptedLength)
     {
-        stream.Position = 0;
-        Span<byte> buffer = stackalloc byte[HeaderSizeV2];
-        ReadExactly(stream, buffer);
-
         int version = BinaryPrimitives.ReadInt32LittleEndian(buffer.Slice(8, 4));
         if (version != 2) throw new InvalidDataException("不支持的保险箱文件版本。");
 
@@ -201,14 +211,8 @@ public static class CryptoService
         if (plainLength < 0) throw new InvalidDataException("保险箱文件长度无效。");
 
         byte[] salt = buffer.Slice(24, SaltSize).ToArray();
-        int chunkCount = plainLength == 0 ? 0 : (int)((plainLength + chunkSize - 1) / chunkSize);
-
-        long expectedLength = HeaderSizeV2
-            + (long)chunkCount * RecordHeaderSize
-            + plainLength;
-
-        long actualLength = stream.Length;
-        if (actualLength != expectedLength)
+        long chunkCount = plainLength == 0 ? 0 : 1 + (plainLength - 1) / chunkSize;
+        if (chunkCount > int.MaxValue || encryptedLength - HeaderSizeV2 - chunkCount * RecordHeaderSize != plainLength)
             throw new InvalidDataException("保险箱文件长度与头部不一致（可能被截断或篡改）。");
 
         return new VaultFileHeader
@@ -218,7 +222,7 @@ public static class CryptoService
             PlainLength = plainLength,
             FileSalt = salt,
             DataOffset = HeaderSizeV2,
-            ChunkCount = chunkCount
+            ChunkCount = (int)chunkCount
         };
     }
 

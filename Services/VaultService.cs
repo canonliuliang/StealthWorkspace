@@ -176,7 +176,7 @@ public partial class VaultService
 
         lock (_sync)
         {
-            if (HasVaultCore) throw new InvalidOperationException("保险箱已存在，不能重复初始化。");
+            EnsureNewVaultTarget();
         }
 
         byte[] realKey = Array.Empty<byte>();
@@ -197,7 +197,7 @@ public partial class VaultService
             progress?.Report(0.9);
             lock (_sync)
             {
-                if (HasVaultCore) throw new InvalidOperationException("保险箱已存在，不能重复初始化。");
+                EnsureNewVaultTarget();
                 var candidate = new VaultConfig
                 {
                     Version = 2,
@@ -1295,6 +1295,21 @@ public partial class VaultService
     #region Helpers
 
     private bool HasVaultCore => _config != null && (IsHexHash(_config.RealHashHex) || _corrupted);
+
+    private void EnsureNewVaultTarget()
+    {
+        if (HasVaultCore) throw new InvalidOperationException("保险箱已存在，不能重复初始化。");
+        EnsureMediaDirectory();
+        if (Directory.EnumerateFileSystemEntries(_mediaFolder).Any())
+            throw new InvalidOperationException("现有媒体目录含有待恢复的文件，未创建新保险箱。请先恢复匹配的备份或保留原件后检查目录。");
+    }
+
+    private void EnsureMediaDirectory()
+    {
+        if (!SafeFileSystem.IsPlainPath(_vaultRoot)) throw new IOException("保险箱目录不可安全访问。");
+        Directory.CreateDirectory(_mediaFolder);
+        if (!SafeFileSystem.IsPlainPath(_mediaFolder)) throw new IOException("媒体目录不可安全访问。");
+    }
 
     private void ReplaceCurrentKey(byte[] newKey)
     {

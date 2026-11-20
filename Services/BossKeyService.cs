@@ -28,10 +28,13 @@ public class BossKeyService
     public bool IsBossKeyEnabled { get; private set; }
     public bool IsPeekExcluded { get; private set; }
     public bool IsWindowMinimized { get; private set; }
+    public bool SessionNotificationsRegistered { get; private set; }
     public string LastBossKeyError { get; private set; } = string.Empty;
 
     public event Action? BossKeyPressed;
     public event Action? WindowMinimized;
+    public event Action? SystemSessionLeaving;
+    public event Action? SystemResumed;
     public event Action? WindowShown;
     public event Action<bool>? WindowVisibilityChanged;
 
@@ -53,10 +56,18 @@ public class BossKeyService
         SetDisplayAffinityProtection(settings.DisplayAffinityProtected);
         SetTaskbarPeekProtection(settings.TaskbarPeekExcluded);
         InstallSubclass();
+        RegisterSessionNotifications();
         EnableBossKey(settings.BossKeyEnabled);
     }
 
     #region Subclassing
+
+    internal void RegisterSessionNotifications()
+    {
+        if (!_isSubclassed || SessionNotificationsRegistered) return;
+        SessionNotificationsRegistered = NativeMethods.WTSRegisterSessionNotification(_windowHandle, 0);
+        if (!SessionNotificationsRegistered) AppLog.Warn("未能订阅当前 Windows 会话通知");
+    }
 
     private void InstallSubclass()
     {
@@ -76,6 +87,14 @@ public class BossKeyService
         {
             switch (uMsg)
             {
+                case NativeMethods.WM_WTSSESSION_CHANGE when wParam.ToInt64() is NativeMethods.WTS_SESSION_LOCK
+                    or NativeMethods.WTS_CONSOLE_DISCONNECT or NativeMethods.WTS_REMOTE_DISCONNECT:
+                case NativeMethods.WM_POWERBROADCAST when wParam.ToInt64() == NativeMethods.PBT_APMSUSPEND:
+                    SystemSessionLeaving?.Invoke();
+                    break;
+                case NativeMethods.WM_POWERBROADCAST when wParam.ToInt64() is 7 or 18: // resume from suspend, automatic resume
+                    SystemResumed?.Invoke();
+                    break;
                 case NativeMethods.WM_HOTKEY:
                     if (wParam.ToInt32() == NativeMethods.HOTKEY_BOSS_KEY_ID)
                     {
@@ -278,6 +297,11 @@ public class BossKeyService
             NativeMethods.UnregisterHotKey(_windowHandle, NativeMethods.HOTKEY_BOSS_KEY_ID);
             if (_isSubclassed && _subclassProc != null)
             {
+                if (SessionNotificationsRegistered)
+                {
+                    NativeMethods.WTSUnRegisterSessionNotification(_windowHandle);
+                    SessionNotificationsRegistered = false;
+                }
                 NativeMethods.RemoveWindowSubclass(_windowHandle, _subclassProc, SubclassId);
                 _isSubclassed = false;
             }

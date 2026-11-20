@@ -12,7 +12,7 @@ using StealthWorkspace.Models;
 using StealthWorkspace.Services;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
-using Windows.Storage.Pickers;
+using Microsoft.Windows.Storage.Pickers;
 
 namespace StealthWorkspace.Pages;
 
@@ -308,21 +308,16 @@ public sealed partial class VaultPage : Page
             List<string> selectedPaths;
             try
             {
-                var picker = new FileOpenPicker();
-                if (MainWindow.CurrentHandle != IntPtr.Zero)
-                {
-                    WinRT.Interop.InitializeWithWindow.Initialize(picker, MainWindow.CurrentHandle);
-                }
-
+                var picker = new FileOpenPicker(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(MainWindow.CurrentHandle));
                 picker.FileTypeFilter.Add("*");
-                var files = await picker.PickMultipleFilesAsync();
+                var files = await WorkspaceNativeDialogs.PickAsync(picker.PickMultipleFilesAsync);
                 if (files == null || files.Count == 0) return;
                 selectedPaths = files.Select(f => f.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
             }
             catch (Exception pickerEx)
             {
-                AppLog.Warn($"WinRT 文件选择器失败，改用 Win32（0x{pickerEx.HResult:X8}）");
-                selectedPaths = Services.NativeMethods.PickMultipleFilesWin32(MainWindow.CurrentHandle);
+                AppLog.Warn($"Windows App SDK 文件选择器失败，改用 Win32（0x{pickerEx.HResult:X8}）");
+                selectedPaths = WorkspaceNativeDialogs.PickWin32(() => Services.NativeMethods.PickMultipleFilesWin32(MainWindow.CurrentHandle)) ?? new();
             }
 
             if (selectedPaths.Count == 0 || !_loaded || !VaultService.Instance.IsUnlocked) return;
@@ -700,18 +695,24 @@ public sealed partial class VaultPage : Page
             string? destination;
             if (toFolder)
             {
-                var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.Downloads };
-                WinRT.Interop.InitializeWithWindow.Initialize(picker, MainWindow.CurrentHandle);
-                picker.FileTypeFilter.Add("*");
-                destination = (await picker.PickSingleFolderAsync())?.Path;
+                var picker = new FolderPicker(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(MainWindow.CurrentHandle))
+                {
+                    SuggestedStartLocation = PickerLocationId.Downloads
+                };
+                destination = (await WorkspaceNativeDialogs.PickAsync(picker.PickSingleFolderAsync))?.Path;
             }
             else
             {
                 var item = items[0];
-                var picker = new FileSavePicker { SuggestedStartLocation = PickerLocationId.Downloads, SuggestedFileName = item.OriginalFileName };
-                WinRT.Interop.InitializeWithWindow.Initialize(picker, MainWindow.CurrentHandle);
-                picker.FileTypeChoices.Add("原媒体格式", new[] { string.IsNullOrEmpty(item.FileExtension) ? ".bin" : item.FileExtension });
-                destination = (await picker.PickSaveFileAsync())?.Path;
+                string extension = string.IsNullOrEmpty(item.FileExtension) ? ".bin" : item.FileExtension;
+                var picker = new FileSavePicker(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(MainWindow.CurrentHandle))
+                {
+                    SuggestedStartLocation = PickerLocationId.Downloads,
+                    SuggestedFileName = item.OriginalFileName,
+                    DefaultFileExtension = extension
+                };
+                picker.FileTypeChoices.Add("原媒体格式", new[] { extension });
+                destination = (await WorkspaceNativeDialogs.PickAsync(picker.PickSaveFileAsync))?.Path;
             }
             if (string.IsNullOrEmpty(destination) || !_loaded) return;
             using var work = VaultWork.TryBegin("正在解密导出");

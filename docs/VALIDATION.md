@@ -1,5 +1,11 @@
 # 验证范围
 
+## r16.1 发行验证
+
+在 Windows 11 ARM64 上使用隔离测试目录，实测 HTML 收藏导入（2 条新增、1 条重复、1 条本地路径跳过），再用系统「另存为」导出并读回原网址与日期。向实际 WinUI 窗口发送 Windows 会话锁定通知后，已打开的原生保存窗口及嵌套覆盖确认在 59 ms 内被收回。直接关闭时两层窗口在 57 ms 内消失，进程在 114 ms 内退出，既有目标文件内容均保留。此项没有锁定整个测试设备。
+
+[浏览、下载与原生对话框](R161-BROWSING.md) · [旧版数据迁移与恢复](R161-DATA.md) · [性能方法和原始区间](R161-PERFORMANCE.md) · [审查范围与用户研究](R161-REVIEW.md)
+
 ## r16 公开发行
 
 GitHub 于 **2026-11-20 16:15:44 UTC（UTC+8 为 11 月 21 日 00:15:44）**发布 `v2026.11.20-r16-preview`。标签指向 `238f53b13566019a1e72b1246bd9a6d76313f4c9`。正式分发渠道为未签名预览版，便携包解压后运行。[GitHub Release](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.20-r16-preview) · [PR #6](https://github.com/canonliuliang/StealthWorkspace/pull/6) · [代码提交](https://github.com/canonliuliang/StealthWorkspace/commit/238f53b13566019a1e72b1246bd9a6d76313f4c9)

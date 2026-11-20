@@ -12,7 +12,7 @@ internal static class BrowserSessionHistory
     internal static void RememberClosed(string title, string address, int position)
     {
         if (position < 0 || !Uri.TryCreate(address, UriKind.Absolute, out var uri) ||
-            uri.Scheme is not ("http" or "https")) return;
+            uri.Scheme is not ("http" or "https") || uri.UserInfo.Length != 0) return;
         Closed.Insert(0, new ClosedBrowserTab(string.IsNullOrWhiteSpace(title) ? uri.Host : title, uri.AbsoluteUri, position));
         if (Closed.Count > 20) Closed.RemoveAt(Closed.Count - 1);
     }
@@ -33,7 +33,7 @@ internal static class BrowserSessionHistory
 
     internal static void Record(string title, string address)
     {
-        if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return;
+        if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || uri.UserInfo.Length != 0) return;
         // History lives only in memory for this unlocked browser session. Keep a
         // bounded MRU list; URL paths remain case-sensitive.
         string url = uri.AbsoluteUri;

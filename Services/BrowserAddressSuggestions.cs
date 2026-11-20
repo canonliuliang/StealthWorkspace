@@ -5,23 +5,40 @@ namespace StealthWorkspace.Services;
 
 internal static class BrowserAddressSuggestions
 {
-    // An editing session can reuse a proven miss as the user keeps typing. Only
-    // the immutable bookmark snapshot participates: history changes across tabs.
+    // Reuse a completely scanned, small matching set as a query narrows.
+    // History remains live across tabs and is checked on every keystroke.
     internal sealed class EditSession
     {
         private ImmutableList<BookmarkItem>? _source;
-        private string _miss = "";
+        private ImmutableList<BookmarkItem>? _deepScan;
+        private string _query = "";
+        private BookmarkItem[] _previous = new BookmarkItem[8];
+        private BookmarkItem[] _current = new BookmarkItem[8];
+        private int _previousCount, _currentCount;
 
-        internal bool CanSkip(IEnumerable<BookmarkItem> bookmarks, string query) =>
-            ReferenceEquals(_source, bookmarks) && query.StartsWith(_miss, StringComparison.Ordinal);
-
-        internal void RememberMiss(IEnumerable<BookmarkItem> bookmarks, string query)
+        internal IEnumerable<BookmarkItem> Candidates(IEnumerable<BookmarkItem> bookmarks, string query)
         {
-            if (bookmarks is ImmutableList<BookmarkItem> snapshot && query.Length > 0 && !char.IsHighSurrogate(query[^1]))
-            {
-                _source = snapshot;
-                _miss = query;
-            }
+            _currentCount = 0;
+            if (ReferenceEquals(_source, bookmarks) && query.StartsWith(_query, StringComparison.Ordinal))
+                return new ArraySegment<BookmarkItem>(_previous, 0, _previousCount);
+            return ReferenceEquals(_deepScan, bookmarks) && _deepScan != null ? BookmarkFilter.FullScan(_deepScan) : BookmarkFilter.AvailableRows(bookmarks);
+        }
+
+        internal void Match(BookmarkItem item)
+        {
+            if (_currentCount < _current.Length) _current[_currentCount] = item;
+            _currentCount++;
+        }
+
+        internal void Finish(IEnumerable<BookmarkItem> bookmarks, string query, int inspected, bool complete)
+        {
+            if (bookmarks is not ImmutableList<BookmarkItem> snapshot) return;
+            if (inspected >= 512) _deepScan = snapshot;
+            if (!complete || query.Length == 0 || char.IsHighSurrogate(query[^1]) || _currentCount > _current.Length) return;
+            (_previous, _current) = (_current, _previous);
+            _source = snapshot;
+            _query = query;
+            _previousCount = _currentCount;
         }
     }
 
@@ -44,24 +61,26 @@ internal static class BrowserAddressSuggestions
 
         void Add(string title, string url, bool bookmark)
         {
-            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || uri.UserInfo.Length != 0) return;
             if (!seen.Add(uri.AbsoluteUri)) return;
             result.Add(new BrowserAddressSuggestion { Title = string.IsNullOrWhiteSpace(title) ? uri.Host : title,
                 Detail = (bookmark ? "收藏 · " : "本次会话 · ") + uri.AbsoluteUri, Input = uri.AbsoluteUri,
                 Target = uri.AbsoluteUri, Glyph = bookmark ? "\uE734" : "\uE81C" });
         }
-        if (edit?.CanSkip(bookmarks, query) != true)
+        int inspected = 0;
+        foreach (var bookmark in edit?.Candidates(bookmarks, query) ?? BookmarkFilter.AvailableRows(bookmarks))
         {
-            bool matched = false;
-            foreach (var bookmark in bookmarks)
+            inspected++;
+            if (!Matches(bookmark.Title, bookmark.Url)) continue;
+            edit?.Match(bookmark);
+            Add(bookmark.Title, bookmark.Url, true);
+            if (result.Count == 8)
             {
-                if (!Matches(bookmark.Title, bookmark.Url)) continue;
-                matched = true;
-                Add(bookmark.Title, bookmark.Url, true);
-                if (result.Count == 8) return result;
+                edit?.Finish(bookmarks, query, inspected, complete: false);
+                return result;
             }
-            if (!matched) edit?.RememberMiss(bookmarks, query);
         }
+        edit?.Finish(bookmarks, query, inspected, complete: true);
         foreach (var item in history)
         {
             if (Matches(item.Title, item.Url)) Add(item.Title, item.Url, false);

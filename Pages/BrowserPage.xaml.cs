@@ -19,6 +19,7 @@ public sealed partial class BrowserPage : Page
     private bool _isPageLoaded;
     private bool _isBurningAll;
     private bool _confirmingEnd;
+    private bool _confirmingCloseOthers;
     private bool _isUnloading;
     private bool _browserFullScreen;
     private BrowserTabControl? _selectedTab;
@@ -215,11 +216,7 @@ public sealed partial class BrowserPage : Page
         var mute = new MenuFlyoutItem { Text = "静音 / 取消静音" };
         mute.Click += (_, _) => tabControl.ToggleAudioMute();
         var closeOthers = new MenuFlyoutItem { Text = "关闭其他标签页" };
-        closeOthers.Click += async (_, _) =>
-        {
-            BrowserTabView.SelectedItem = tabItem;
-            foreach (var other in BrowserTabView.TabItems.OfType<TabViewItem>().Where(t => t != tabItem).ToArray()) await CloseTabAsync(other);
-        };
+        closeOthers.Click += async (_, _) => await CloseOtherTabsAsync(tabItem);
         var close = new MenuFlyoutItem { Text = "关闭标签页    Ctrl+W" };
         close.Click += async (_, _) => await CloseTabAsync(tabItem);
         menu.Items.Add(duplicate); menu.Items.Add(mute); menu.Items.Add(closeOthers); menu.Items.Add(new MenuFlyoutSeparator()); menu.Items.Add(close);
@@ -302,6 +299,13 @@ public sealed partial class BrowserPage : Page
             ReferenceEquals(BrowserTabView.SelectedItem, secondItem) && second.HasBrowserControl;
         SmokeTest.Report("browser: clicking end session prompts and dismissal preserves loaded tabs=" + preservedTabs);
         if (!preservedTabs) return false;
+        Task closeOthers = CloseOtherTabsAsync(secondItem!);
+        await Task.Delay(120);
+        bool confirmingOthers = _confirmingCloseOthers;
+        WorkspaceDialogs.DismissForPrivacy();
+        await closeOthers;
+        if (!confirmingOthers || BrowserTabView.TabItems.Count != countBeforeConfirm || !first.HasBrowserControl) return false;
+        SmokeTest.Report("browser: cancelling close-other-tabs preserves both loaded pages=True");
         if (!await second.HasSmokeCookieAsync(create: true)) return false;
 
         var sleep = await first.CheckSmokeBackgroundSleepAsync();
@@ -443,6 +447,34 @@ public sealed partial class BrowserPage : Page
     #endregion
 
     #region Tab closing & burning
+
+    private async Task CloseOtherTabsAsync(TabViewItem keep)
+    {
+        if (_confirmingCloseOthers || _confirmingEnd || _isBurningAll || _isUnloading ||
+            !BrowserTabView.TabItems.Contains(keep)) return;
+        var others = BrowserTabView.TabItems.OfType<TabViewItem>().Where(t => t != keep).ToArray();
+        if (others.Length == 0) return;
+        _confirmingCloseOthers = true;
+        try
+        {
+            if (others.Any(t => t.Content is BrowserTabControl { HasBrowserControl: true }))
+            {
+                var dialog = new ContentDialog
+                {
+                    XamlRoot = XamlRoot, Title = $"关闭其他 {others.Length} 个标签页？",
+                    Content = "将保留此标签页。其他网页未提交的表单内容可能丢失，进行中的下载会继续。",
+                    PrimaryButtonText = "关闭其他标签页", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close
+                };
+                if (await WorkspaceDialogs.ShowAsync(dialog) != ContentDialogResult.Primary) return;
+            }
+            if (_isUnloading || _isBurningAll || !BrowserTabView.TabItems.Contains(keep) ||
+                !VaultService.Instance.IsUnlocked || MainWindow.Current?.IsPrivacyCoverVisible == true) return;
+            BrowserTabView.SelectedItem = keep;
+            foreach (var other in others) await CloseTabAsync(other);
+        }
+        catch (Exception ex) { AppLog.Warn("Close other tabs: " + ex.GetType().Name); }
+        finally { _confirmingCloseOthers = false; }
+    }
 
     private async Task CloseTabAsync(TabViewItem? tabItem)
     {
@@ -593,12 +625,14 @@ public sealed partial class BrowserPage : Page
         CreateNewTab();
     }
 
-    private async void BurnAllTabs_Click(object sender, RoutedEventArgs e)
+    private async void BurnAllTabs_Click(object sender, RoutedEventArgs e) => await RequestEndSessionAsync();
+
+    private async Task RequestEndSessionAsync()
     {
-        if (_confirmingEnd || _isBurningAll || _isUnloading) return;
-        int loaded = BrowserTabView.TabItems.OfType<TabViewItem>().Count(item => item.Content is BrowserTabControl { HasBrowserControl: true });
+        if (_confirmingEnd || _confirmingCloseOthers || _isBurningAll || _isUnloading) return;
         int pending = BrowserDownloads.PendingCount;
-        if (loaded > 1 || pending > 0)
+        if (BrowserProfileManager.ActiveSessionDirectory != null || pending > 0 ||
+            BrowserTabView.TabItems.OfType<TabViewItem>().Any(item => item.Content is BrowserTabControl { HasBrowserControl: true }))
         {
             _confirmingEnd = true;
             try
@@ -606,7 +640,7 @@ public sealed partial class BrowserPage : Page
                 var dialog = new ContentDialog
                 {
                     XamlRoot = XamlRoot, Title = "结束本次浏览会话？",
-                    Content = $"将关闭全部标签页，并清除本次浏览记录和网站登录状态。" +
+                    Content = "将关闭全部标签页，清除本次浏览记录、最近关闭的标签及网站登录状态。未提交的表单内容可能丢失。" +
                         (pending > 0 ? $"\n{pending} 个未完成下载也将取消。" : ""),
                     PrimaryButtonText = "结束会话", CloseButtonText = "继续浏览", DefaultButton = ContentDialogButton.Close
                 };
@@ -682,6 +716,13 @@ public sealed partial class BrowserPage : Page
         args.Handled = true;
     }
 
+    private void HistoryAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (_selectedTab == null) return;
+        _selectedTab.OpenSessionHistory();
+        args.Handled = true;
+    }
+
     private void CloseTabAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
         args.Handled = true;
@@ -694,7 +735,7 @@ public sealed partial class BrowserPage : Page
     private void BurnAllTabsAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
         args.Handled = true;
-        _ = BurnAllTabsAsync();
+        _ = RequestEndSessionAsync();
     }
 
     #endregion

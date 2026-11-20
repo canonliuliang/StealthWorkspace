@@ -323,6 +323,7 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void BrowserTabControl_Unloaded(object sender, RoutedEventArgs e)
     {
+        SetHistorySearchActive(false);
         BrowserDownloads.PendingCountChanged -= UpdateDownloadBadge;
         DetachFaviconScale();
         // Do not dispose here: the tab itself is disposed by BrowserPage when it is
@@ -496,6 +497,7 @@ public sealed partial class BrowserTabControl : UserControl
             BrowserDownloads.PendingCountChanged -= UpdateDownloadBadge;
             _displayedDownload = null;
             if (PrivacySections != null) PrivacySections.SelectionChanged -= PrivacySections_SelectionChanged;
+            SetHistorySearchActive(false);
             DetachBookmarkUi();
             foreach (var reservation in _downloadPaths.Values) reservation.Dispose();
             _downloadPaths.Clear();
@@ -1292,7 +1294,8 @@ public sealed partial class BrowserTabControl : UserControl
         if (_isDisposed) return;
 
         DispatcherQueue? dispatcher = this.DispatcherQueue;
-        if (dispatcher == null || dispatcher.HasThreadAccess)
+        if (dispatcher == null) return;
+        if (dispatcher.HasThreadAccess)
         {
             LoadPermissionSettings();
             UpdateBookmarkStarState();
@@ -1463,10 +1466,12 @@ public sealed partial class BrowserTabControl : UserControl
                     if (!operation.CanResume) DetachDownloadStateHandler(operation);
                     else ScheduleBackgroundSleep();
                     bool paused = operation.CanResume && Models.BrowserDownloadItem.IsUserPause(operation.InterruptReason);
-                    ShowDownloadToast(paused ? "\uE769" : "\uE7BA", paused ? "下载已暂停" : "下载已中断",
-                        operation.CanResume ? "可以在下载列表中继续" : "下载未完成，可重新下载");
-                    SetHubStatus($"下载被中断（{operation.InterruptReason}）");
-                    AppLog.Warn($"Download interrupted: {operation.InterruptReason}");
+                    bool cancelled = !operation.CanResume && operation.InterruptReason == CoreWebView2DownloadInterruptReason.UserCanceled;
+                    string title = cancelled ? "下载已取消" : paused ? "下载已暂停" : "下载已中断";
+                    ShowDownloadToast(cancelled || paused ? "\uE769" : "\uE7BA", title,
+                        cancelled ? "已停止接收此文件" : operation.CanResume ? "可以在下载列表中继续" : "下载未完成，可重新下载");
+                    SetHubStatus(title);
+                    if (!paused && !cancelled) AppLog.Warn($"Download interrupted: {operation.InterruptReason}");
                     break;
 
                 case CoreWebView2DownloadState.InProgress:
@@ -1544,11 +1549,14 @@ public sealed partial class BrowserTabControl : UserControl
         if (_isDisposed) return;
         if (_nativeFindDispatching && (e.Key is VirtualKey.F or VirtualKey.F3)) return;
 
-        bool isCtrl = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control) & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
-        if (isCtrl && e.Key == VirtualKey.J) { e.Handled = true; ShowDownloads_Click(this, new RoutedEventArgs()); return; }
-        bool isAlt = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Menu) & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
+        bool isCtrl = IsKeyPressed(VirtualKey.Control), isAlt = IsKeyPressed(VirtualKey.Menu), shift = IsKeyPressed(VirtualKey.Shift);
+        // AltGr is reported as Ctrl+Alt on Windows. Keep these keystrokes available to text editors.
+        if (isCtrl && isAlt || IsKeyPressed(VirtualKey.LeftWindows) || IsKeyPressed(VirtualKey.RightWindows)) return;
+        bool plainCtrl = isCtrl && !shift;
+        if (plainCtrl && e.Key == VirtualKey.J) { e.Handled = true; ShowDownloads_Click(this, new RoutedEventArgs()); return; }
+        if (plainCtrl && e.Key == VirtualKey.H) { e.Handled = true; OpenSessionHistory(); return; }
 
-        if (isCtrl && e.Key == VirtualKey.D)
+        if (plainCtrl && e.Key == VirtualKey.D)
         {
             BookmarkStarBtn_Click(this, new RoutedEventArgs());
             e.Handled = true;
@@ -1558,30 +1566,28 @@ public sealed partial class BrowserTabControl : UserControl
             CloseFindBar();
             e.Handled = true;
         }
-        else if (e.Key == VirtualKey.F3)
+        else if (!isCtrl && !isAlt && e.Key == VirtualKey.F3)
         {
-            bool shift = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
             FindFromShortcut(advance: true, backwards: shift);
             e.Handled = true;
         }
         else if (!isAlt && (e.Key == VirtualKey.F5 || isCtrl && e.Key == VirtualKey.R))
         {
-            bool shift = IsKeyPressed(VirtualKey.Shift);
             if (shift || isCtrl && e.Key == VirtualKey.F5) _ = ReloadIgnoringCacheAsync();
             else ReloadCurrentPage();
             e.Handled = true;
         }
-        else if (isAlt && e.Key == VirtualKey.Left)
+        else if (isAlt && !shift && e.Key == VirtualKey.Left)
         {
             NavigateBack();
             e.Handled = true;
         }
-        else if (isAlt && e.Key == VirtualKey.Right)
+        else if (isAlt && !shift && e.Key == VirtualKey.Right)
         {
             NavigateForward();
             e.Handled = true;
         }
-        else if (isCtrl && e.Key == VirtualKey.F)
+        else if (plainCtrl && e.Key == VirtualKey.F)
         {
             ToggleFindBar();
             e.Handled = true;
@@ -1602,44 +1608,6 @@ public sealed partial class BrowserTabControl : UserControl
 
     #region Bookmarks
 
-    private void UpdateBookmarkStarState()
-    {
-        if (_isDisposed) return;
-
-        string currentUrl = GetCurrentDocumentUrl();
-        BookmarkStarBtn.IsEnabled = TryCreateWebUri(currentUrl, out _);
-        bool bookmarked = BookmarkStarBtn.IsEnabled && SettingsService.Instance.IsBookmarked(currentUrl);
-        string action = bookmarked ? "取消收藏" : "收藏本页";
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(BookmarkStarBtn, action);
-        ToolTipService.SetToolTip(BookmarkStarBtn, action + " (Ctrl+D)");
-
-        VisualStateManager.GoToState(this, bookmarked ? "Bookmarked" : "NotBookmarked", false);
-    }
-
-    private void BookmarkStarBtn_Click(object sender, RoutedEventArgs e)
-    {
-        if (_isDisposed) return;
-
-        string currentUrl = GetCurrentDocumentUrl();
-        if (string.IsNullOrEmpty(currentUrl) || IsBlankDocumentUrl(currentUrl)) return;
-
-        bool bookmarked = SettingsService.Instance.IsBookmarked(currentUrl);
-        bool saved;
-        if (bookmarked)
-        {
-            saved = SettingsService.Instance.RemoveBookmark(currentUrl);
-        }
-        else
-        {
-            string title = string.IsNullOrWhiteSpace(CurrentTitle) ? currentUrl : CurrentTitle;
-            saved = SettingsService.Instance.AddBookmark(title, currentUrl);
-        }
-
-        UpdateBookmarkStarState();
-        if (saved) UiMotion.Reveal(BookmarkStarIcon, MotionCue.Fade);
-        else ShowBookmarkSaveError();
-    }
-
     private void BookmarksFlyout_Opening(object? sender, object e)
     {
         if (_isDisposed) return;
@@ -1657,17 +1625,6 @@ public sealed partial class BrowserTabControl : UserControl
             if (IsKeyPressed(VirtualKey.Control)) NewTabRequested?.Invoke(bookmark.Url, !IsKeyPressed(VirtualKey.Shift));
             else NavigateToText(bookmark.Url);
             BookmarksFlyout.Hide();
-        }
-    }
-
-    private void BookmarkDelete_Click(object sender, RoutedEventArgs e)
-    {
-        if ((sender as FrameworkElement)?.Tag is BookmarkItem bookmark)
-        {
-            bool saved = SettingsService.Instance.RemoveBookmark(bookmark.Url);
-            RefreshBookmarkList();
-            UpdateBookmarkStarState();
-            if (!saved) { BookmarksFlyout.Hide(); ShowBookmarkSaveError(); }
         }
     }
 
@@ -1746,7 +1703,7 @@ public sealed partial class BrowserTabControl : UserControl
         UiMotion.SetVisible((FrameworkElement)PrivacyPanels.Children[index], true, fromRight ? MotionCue.FromRight : MotionCue.FromLeft);
         if (selection == CookiesSection) _ = RefreshCookiesAsync();
         else ClearCookieRows();
-        if (selection == HistorySection) UpdateEmptyNotices();
+        SetHistorySearchActive(selection == HistorySection && PrivacyFlyout.IsOpen);
     }
 
     private void CloseFlyout_Click(object sender, RoutedEventArgs e)
@@ -1756,8 +1713,10 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void PrivacyFlyout_Closed(object? sender, object e)
     {
+        _focusHistoryOnOpen = false;
         _permissionPanelOrigin = null;
         ClearCookieRows();
+        SetHistorySearchActive(false);
     }
 
     private void PrivacyFlyout_Opening(object? sender, object e)
@@ -1768,6 +1727,7 @@ public sealed partial class BrowserTabControl : UserControl
         _tabPermissions.SetDocument(currentUrl);
         _permissionPanelOrigin = _tabPermissions.Origin;
         CurrentSiteScope.IsEnabled = _tabPermissions.Origin != null;
+        ClearSiteStorageBtn.IsEnabled = CurrentSiteScope.IsEnabled;
         PermissionScope.SelectedIndex = CurrentSiteScope.IsEnabled ? 0 : 1;
         LoadPermissionSettings();
         FlyoutDomainText.Text = DescribeHost(currentUrl);
@@ -1780,6 +1740,7 @@ public sealed partial class BrowserTabControl : UserControl
         {
             _ = RefreshCookiesAsync();
         }
+        SetHistorySearchActive(PanelHistory.Visibility == Visibility.Visible);
     }
 
     private void EnsurePrivacyContent()
@@ -2075,6 +2036,28 @@ public sealed partial class BrowserTabControl : UserControl
 
     #region Storage & Cache
 
+    private async void ClearSiteStorage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_hookedCore is not { } core || _permissionPanelOrigin is not { } origin ||
+            origin != _tabPermissions.Origin || !TryCreateWebUri(core.Source, out var page) || page == null) return;
+        ulong documentId = _imageDocumentId;
+        try
+        {
+            string address = page.GetComponents(UriComponents.SchemeAndServer, UriFormat.UriEscaped);
+            if (!await ConfirmSessionDataClearAsync(core, "清除本站的离线数据？",
+                $"{address}\n本次会话中，此来源的本地存储、IndexedDB 数据库和离线缓存都将被清除，未同步草稿可能丢失。Cookie 会保留。") ||
+                documentId != _imageDocumentId || origin != _tabPermissions.Origin) return;
+            await BrowserSiteData.ClearOfflineDataForOriginAsync(core, page);
+            if (!_isDisposed && ReferenceEquals(core, _hookedCore) && documentId == _imageDocumentId)
+                SetHubStatus("已清除本站的本地存储、IndexedDB 和离线缓存");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("Clear site offline data: " + ex.GetType().Name);
+            if (!_isDisposed && documentId == _imageDocumentId) SetHubStatus("未能清除本站的离线数据，请重试");
+        }
+    }
+
     private async Task<bool> ConfirmSessionDataClearAsync(CoreWebView2 core, string title, string detail)
     {
         if (!IsLoaded || !IsForegroundTab || _isDisposed || core != _hookedCore) return false;
@@ -2178,7 +2161,7 @@ public sealed partial class BrowserTabControl : UserControl
     private void RefreshStartBookmarks()
     {
         if (_isDisposed || StartSurface.Visibility != Visibility.Visible) return;
-        var bookmarks = SettingsService.Instance.Data.Bookmarks.Take(12).ToArray();
+        var bookmarks = SettingsService.Instance.CurrentBookmarks.Where(item => !item.ContainsLoginInfo).Take(12).ToArray();
         // Loaded is raised again when returning to a tab. Retain the existing
         // controls and focus if the displayed bookmarks have not changed.
         if (StartBookmarks.ItemsSource is IReadOnlyList<BookmarkItem> existing && existing.SequenceEqual(bookmarks)) return;
@@ -2201,10 +2184,21 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void ShowHistory_Click(object sender, RoutedEventArgs e)
     {
+        _historyAfterMenuClose = true;
         MoreActionsFlyout.Hide();
+    }
+
+    internal void OpenSessionHistory()
+    {
+        if (_isDisposed || !IsLoaded || !IsForegroundTab || !VaultService.Instance.IsUnlocked) return;
         EnsurePrivacyContent();
-        PrivacyFlyout.ShowAt(SiteShieldBtn);
         PrivacySections.SelectedItem = HistorySection;
+        if (PrivacyFlyout.IsOpen) HistorySearchBox.Focus(FocusState.Keyboard);
+        else
+        {
+            _focusHistoryOnOpen = true;
+            PrivacyFlyout.ShowAt(SiteShieldBtn);
+        }
     }
 
     private async void OpenDownloadsFolder_Click(object sender, RoutedEventArgs e)
@@ -2245,7 +2239,7 @@ public sealed partial class BrowserTabControl : UserControl
     private void CoreWebView2_DocumentTitleChanged(CoreWebView2 sender, object args)
     {
         if (_isDisposed || string.IsNullOrWhiteSpace(sender.DocumentTitle)) return;
-        CurrentTitle = sender.DocumentTitle;
+        CurrentTitle = DisplayAddress(sender.DocumentTitle);
         TitleChanged?.Invoke(CurrentTitle);
         BrowserSessionHistory.UpdateTitle(CurrentTitle, sender.Source);
     }
@@ -2255,7 +2249,7 @@ public sealed partial class BrowserTabControl : UserControl
         if (_isDisposed) return;
         BackBtn.IsEnabled = sender.CanGoBack;
         ForwardBtn.IsEnabled = sender.CanGoForward;
-        if (UrlTextBox.FocusState == FocusState.Unfocused && !IsBlankDocumentUrl(sender.Source)) UrlTextBox.Text = sender.Source;
+        if (UrlTextBox.FocusState == FocusState.Unfocused) UrlTextBox.Text = DisplayAddress(sender.Source);
     }
 
     private void CoreWebView2_SourceChanged(CoreWebView2 sender, CoreWebView2SourceChangedEventArgs args)
@@ -2266,13 +2260,12 @@ public sealed partial class BrowserTabControl : UserControl
         UpdatePopupButton();
         if (PrivacyFlyout.IsOpen) PrivacyFlyout.Hide();
         ClearCookieRows();
-        if (IsBlankDocumentUrl(sender.Source)) return;
         // Commit the real address on redirects/SPA navigation without waiting for
         // slow images or ads. Preserve an address the user has started editing.
         if (UrlTextBox.FocusState == FocusState.Unfocused || UrlTextBox.Text == _addressAtNavigationStart)
         {
-            UrlTextBox.Text = sender.Source;
-            _addressAtNavigationStart = sender.Source;
+            UrlTextBox.Text = DisplayAddress(sender.Source);
+            _addressAtNavigationStart = UrlTextBox.Text;
         }
         UpdateBookmarkStarState();
         if (!args.IsNewDocument && _documentReady) AddSessionHistory(sender.DocumentTitle, sender.Source);
@@ -2347,7 +2340,7 @@ public sealed partial class BrowserTabControl : UserControl
         if (e.Key == VirtualKey.Escape)
         {
             if (UrlTextBox.IsSuggestionListOpen) { UrlTextBox.IsSuggestionListOpen = false; e.Handled = true; return; }
-            UrlTextBox.Text = IsBlankDocumentUrl(CurrentUrl) ? "" : CurrentUrl;
+            UrlTextBox.Text = DisplayAddress(CurrentUrl);
             _browserControl?.Focus(FocusState.Programmatic);
             e.Handled = true;
             return;
@@ -2465,6 +2458,11 @@ public sealed partial class BrowserTabControl : UserControl
             || url.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
             || url.StartsWith("edge:", StringComparison.OrdinalIgnoreCase);
     }
+
+    // A data: URL contains the document itself. Its scheme identifies the active
+    // document without copying a potentially large body into native UI controls.
+    internal static string DisplayAddress(string url) =>
+        url.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ? "data:" : url;
 
     private static string DescribeHost(string url)
     {
@@ -2621,7 +2619,13 @@ public sealed partial class BrowserTabControl : UserControl
         string url = core?.Source ?? string.Empty;
         if (IsBlankDocumentUrl(url))
         {
-            // about:blank / initial empty document: ignore for history and title.
+            if (UrlTextBox.FocusState == FocusState.Unfocused || UrlTextBox.Text == _addressAtNavigationStart)
+                UrlTextBox.Text = DisplayAddress(url);
+            string? documentTitle = core?.DocumentTitle;
+            CurrentTitle = !string.IsNullOrWhiteSpace(documentTitle) && !IsBlankDocumentUrl(documentTitle)
+                ? documentTitle : DisplayAddress(url) switch { "about:blank" or "" => "空白页", "data:" => "内嵌文档", var address => address };
+            TitleChanged?.Invoke(CurrentTitle);
+            UpdateBookmarkStarState();
             return;
         }
 
@@ -2673,7 +2677,7 @@ public sealed partial class BrowserTabControl : UserControl
 
         if (HistoryEmptyNotice != null)
         {
-            UiMotion.SetVisible(HistoryEmptyNotice, _sessionHistory.Count == 0, MotionCue.Fade);
+            UiMotion.SetVisible(HistoryEmptyNotice, HistoryListView.Items.Count == 0, MotionCue.Fade);
         }
     }
 

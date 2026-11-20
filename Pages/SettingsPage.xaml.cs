@@ -15,8 +15,22 @@ public sealed partial class SettingsPage : Page
     public SettingsPage()
     {
         InitializeComponent();
+        var find = new Microsoft.UI.Xaml.Input.KeyboardAccelerator { Key = Windows.System.VirtualKey.F, Modifiers = Windows.System.VirtualKeyModifiers.Control };
+        find.Invoked += (_, e) =>
+        {
+            SettingsSearch.StartBringIntoView();
+            SettingsSearch.Focus(FocusState.Keyboard);
+            SettingsSearch.SelectAll();
+            e.Handled = true;
+        };
+        KeyboardAccelerators.Add(find);
         Loaded += SettingsPage_Loaded;
-        Unloaded += (_, _) => { VaultWork.Changed -= UpdateActions; _isLoaded = false; };
+        Unloaded += (_, _) =>
+        {
+            VaultWork.Changed -= UpdateActions;
+            _isLoaded = false;
+            _bookmarkTransfer?.Cancel();
+        };
     }
 
     private void SettingsPage_Loaded(object sender, RoutedEventArgs e)
@@ -37,6 +51,7 @@ public sealed partial class SettingsPage : Page
             _ => 3
         };
         LockOnMinimizeToggle.IsOn = cfg.LockOnMinimize;
+        LockOnSystemToggle.IsOn = cfg.LockOnSystemSessionEnd;
         StartPageCombo.SelectedIndex = cfg.DefaultStartPage switch { "vault" => 1, "player" => 2, "cleaner" => 3, _ => 0 };
 
         ShredPassesCombo.SelectedIndex = cfg.ShredPasses switch
@@ -88,23 +103,26 @@ public sealed partial class SettingsPage : Page
         // In the decoy space the password management UI is hidden: showing "诱饵已设置"
         // would immediately reveal the decoy to anyone who coerced the password.
         bool decoyMode = VaultService.Instance.IsDecoyMode;
+        BookmarkTransferSection.Visibility = decoyMode ? Visibility.Collapsed : Visibility.Visible;
         BackupSection.Visibility = decoyMode ? Visibility.Collapsed : Visibility.Visible;
         VaultSecuritySection.Visibility = decoyMode ? Visibility.Collapsed : Visibility.Visible;
-        if (decoyMode) return;
-
-        bool hasDecoy = VaultService.Instance.HasDecoyVault;
-        VaultSecurityStatusText.Text = hasDecoy
-            ? "主密码已启用 · 诱饵密码已设置 · 媒体采用 AES-256-GCM 分块加密"
-            : "主密码已启用 · 尚未设置诱饵密码 · 媒体采用 AES-256-GCM 分块加密";
-        DecoyPwdBtn.Content = hasDecoy ? "修改诱饵密码" : "设置诱饵密码";
-        ClearDecoyBtn.IsEnabled = hasDecoy;
+        if (!decoyMode)
+        {
+            bool hasDecoy = VaultService.Instance.HasDecoyVault;
+            VaultSecurityStatusText.Text = hasDecoy
+                ? "主密码已启用 · 诱饵密码已设置 · 媒体采用 AES-256-GCM 分块加密"
+                : "主密码已启用 · 尚未设置诱饵密码 · 媒体采用 AES-256-GCM 分块加密";
+            DecoyPwdBtn.Content = hasDecoy ? "修改诱饵密码" : "设置诱饵密码";
+            ClearDecoyBtn.IsEnabled = hasDecoy;
+        }
+        IndexVisibleSettings();
     }
 
     private void StartPageCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_isLoaded) return;
         SettingsService.Instance.Data.DefaultStartPage = StartPageCombo.SelectedIndex switch { 1 => "vault", 2 => "player", 3 => "cleaner", _ => "browser" };
-        SettingsService.Instance.SaveSettings();
+        SavePreferences();
     }
 
     #region Display protection
@@ -125,7 +143,7 @@ public sealed partial class SettingsPage : Page
         }
 
         SettingsService.Instance.Data.DisplayAffinityProtected = requested;
-        SettingsService.Instance.SaveSettings();
+        SavePreferences();
     }
 
     private void TaskbarThumbnailToggle_Toggled(object sender, RoutedEventArgs e)
@@ -144,7 +162,7 @@ public sealed partial class SettingsPage : Page
         }
 
         SettingsService.Instance.Data.TaskbarPeekExcluded = requested;
-        SettingsService.Instance.SaveSettings();
+        SavePreferences();
     }
 
     #endregion
@@ -161,14 +179,15 @@ public sealed partial class SettingsPage : Page
             2 => 30,
             _ => 0
         };
-        SettingsService.Instance.SaveSettings();
+        MainWindow.Current?.RefreshIdleDeadline();
+        SavePreferences();
     }
 
     private void LockOnMinimizeToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (!_isLoaded) return;
         SettingsService.Instance.Data.LockOnMinimize = LockOnMinimizeToggle.IsOn;
-        SettingsService.Instance.SaveSettings();
+        SavePreferences();
     }
 
     private void ShredPassesCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -181,14 +200,37 @@ public sealed partial class SettingsPage : Page
             2 => 7,
             _ => 3
         };
-        SettingsService.Instance.SaveSettings();
+        SavePreferences();
+    }
+
+    private void LockOnSystemToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (!_isLoaded) return;
+        var settings = SettingsService.Instance;
+        bool previous = settings.Data.LockOnSystemSessionEnd;
+        settings.Data.LockOnSystemSessionEnd = LockOnSystemToggle.IsOn;
+        if (!settings.SaveSettings())
+        {
+            settings.Data.LockOnSystemSessionEnd = previous;
+            _isLoaded = false;
+            LockOnSystemToggle.IsOn = previous;
+            _isLoaded = true;
+            ShowInfo("系统锁定偏好未能保存。", InfoBarSeverity.Error);
+            return;
+        }
+        if (LockOnSystemToggle.IsOn)
+        {
+            BossKeyService.Instance.RegisterSessionNotifications();
+            if (!BossKeyService.Instance.SessionNotificationsRegistered)
+                ShowInfo("Windows 锁屏通知暂不可用，重新打开应用后重试。", InfoBarSeverity.Warning);
+        }
     }
 
     private void ClearClipboardToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (!_isLoaded) return;
         SettingsService.Instance.Data.ClearClipboardOnLock = ClearClipboardToggle.IsOn;
-        SettingsService.Instance.SaveSettings();
+        SavePreferences();
     }
 
     #endregion
@@ -208,26 +250,26 @@ public sealed partial class SettingsPage : Page
             _isLoaded = true;
             ShowInfo(BossKeyService.Instance.LastBossKeyError, InfoBarSeverity.Error);
             SettingsService.Instance.Data.BossKeyEnabled = false;
-            SettingsService.Instance.SaveSettings();
+            SavePreferences();
             return;
         }
 
         SettingsService.Instance.Data.BossKeyEnabled = requested;
-        SettingsService.Instance.SaveSettings();
+        SavePreferences();
     }
 
     private void BossKeyActionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_isLoaded) return;
         SettingsService.Instance.Data.BossKeyAction = Math.Clamp(BossKeyActionCombo.SelectedIndex, 0, 2);
-        SettingsService.Instance.SaveSettings();
+        SavePreferences();
     }
 
     private void BossKeyMuteToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (!_isLoaded) return;
         SettingsService.Instance.Data.MuteOnBossKey = BossKeyMuteToggle.IsOn;
-        SettingsService.Instance.SaveSettings();
+        SavePreferences();
     }
 
     #endregion
@@ -244,21 +286,21 @@ public sealed partial class SettingsPage : Page
             3 => "Google",
             _ => "DuckDuckGo"
         };
-        SettingsService.Instance.SaveSettings();
+        SavePreferences();
     }
 
     private void AutoCheckThumbToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (!_isLoaded) return;
         SettingsService.Instance.Data.AutoCheckThumbcacheOnStartup = AutoCheckThumbToggle.IsOn;
-        SettingsService.Instance.SaveSettings();
+        SavePreferences();
     }
 
     private void AutoFlushDnsToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (!_isLoaded) return;
         SettingsService.Instance.Data.AutoFlushDnsOnExit = AutoFlushDnsToggle.IsOn;
-        SettingsService.Instance.SaveSettings();
+        SavePreferences();
     }
 
     #endregion
@@ -270,7 +312,7 @@ public sealed partial class SettingsPage : Page
         if (!_isLoaded || MainWindow.Current == null) return;
 
         SettingsService.Instance.Data.CamouflageIndex = Math.Clamp(CamouflageCombo.SelectedIndex, 0, 3);
-        SettingsService.Instance.SaveSettings();
+        SavePreferences();
 
         MainWindow.Current.UpdateTitle(MainWindow.GetCamouflageTitle(CamouflageCombo.SelectedIndex));
     }
@@ -292,7 +334,7 @@ public sealed partial class SettingsPage : Page
             2 => "Light",
             _ => "Default"
         };
-        SettingsService.Instance.SaveSettings();
+        SavePreferences();
 
         if (MainWindow.Current.Content is FrameworkElement fe)
         {
@@ -535,6 +577,12 @@ public sealed partial class SettingsPage : Page
         UiMotion.Open(SettingsInfoBar);
     }
 
+    private void SavePreferences()
+    {
+        if (!SettingsService.Instance.SaveSettings())
+            ShowInfo("此项更改未能保存到磁盘。请检查设置文件的可用性，重启后核对偏好。", InfoBarSeverity.Warning);
+    }
+
     private void ShowActivity(string message, bool indeterminate = true)
     {
         _work?.SetPhase(message.TrimEnd('…'));
@@ -597,6 +645,8 @@ public sealed partial class SettingsPage : Page
     private void UpdateActions()
     {
         bool busy = VaultWork.IsBusy || _picking;
+        ImportBookmarksButton.IsEnabled = !busy && !SettingsService.Instance.ReadDeferred;
+        ExportBookmarksButton.IsEnabled = !busy && SettingsService.Instance.CurrentBookmarks.Count > 0;
         BackupButton.IsEnabled = !busy;
         VerifyBackupButton.IsEnabled = !busy;
         ChangeMasterPwdBtn.IsEnabled = !busy;
@@ -612,14 +662,16 @@ public sealed partial class SettingsPage : Page
         UpdateActions();
         try
         {
-            var picker = new Windows.Storage.Pickers.FileSavePicker { SuggestedFileName = $"保险箱备份-{DateTime.Now:yyyyMMdd-HHmm}" };
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, MainWindow.CurrentHandle);
+            var picker = new Microsoft.Windows.Storage.Pickers.FileSavePicker(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(MainWindow.CurrentHandle))
+            {
+                SuggestedFileName = $"保险箱备份-{DateTime.Now:yyyyMMdd-HHmm}",
+                DefaultFileExtension = ".swbackup"
+            };
             picker.FileTypeChoices.Add("加密保险箱备份", new[] { ".swbackup" });
-            var target = await picker.PickSaveFileAsync();
+            var target = await WorkspaceNativeDialogs.PickAsync(picker.PickSaveFileAsync);
             if (target == null || !BeginWork("创建备份")) return;
-            await VaultService.Instance.CreateBackupAsync(target.Path, CreateProgress("正在创建备份…"), _work!.Token);
-            int count = await VaultService.Instance.VerifyBackupAsync(target.Path, _work.Token, CreateProgress("正在校验备份…"));
-            ShowInfo($"备份已保存并校验通过，共 {count} 个文件。", InfoBarSeverity.Success);
+            int count = await VaultService.Instance.CreateVerifiedBackupAsync(target.Path, CreateProgress("正在创建并核对备份…"), _work!.Token);
+            ShowInfo($"备份已保存，已核对 {count} 个媒体文件的摘要、文件头和索引。", InfoBarSeverity.Success);
         }
         catch (Exception ex) { ShowInfo("备份未完成：" + ex.Message, InfoBarSeverity.Error); }
         finally { _picking = false; EndWork(); if (IsLoaded) UpdateActions(); }
@@ -632,13 +684,12 @@ public sealed partial class SettingsPage : Page
         UpdateActions();
         try
         {
-            var picker = new Windows.Storage.Pickers.FileOpenPicker();
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, MainWindow.CurrentHandle);
+            var picker = new Microsoft.Windows.Storage.Pickers.FileOpenPicker(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(MainWindow.CurrentHandle));
             picker.FileTypeFilter.Add(".swbackup");
-            var source = await picker.PickSingleFileAsync();
+            var source = await WorkspaceNativeDialogs.PickAsync(picker.PickSingleFileAsync);
             if (source == null || !BeginWork("检查备份")) return;
             int count = await VaultService.Instance.VerifyBackupAsync(source.Path, _work!.Token, CreateProgress("正在检查备份…"));
-            ShowInfo($"完整性检查通过，共 {count} 个文件。此 Windows 用户可以读取备份索引，打开媒体仍需原保险箱密码。", InfoBarSeverity.Success);
+            ShowInfo($"已核对 {count} 个媒体文件的摘要、文件头和索引。要确认媒体可解密，请用原密码恢复后打开或导出。", InfoBarSeverity.Success);
         }
         catch (Exception ex) { ShowInfo("备份检查失败：" + ex.Message, InfoBarSeverity.Error); }
         finally { _picking = false; EndWork(); if (IsLoaded) UpdateActions(); }

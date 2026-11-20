@@ -95,6 +95,13 @@ public static class SelfTest
         try
         {
             CollectionSelfTest.Run(Report);
+            Report(MainWindow.MillisecondsUntilIdleLock(5, 100_000, 90_000) == 290_000
+                && MainWindow.MillisecondsUntilIdleLock(5, 400_000, 50_000) == 0
+                && MainWindow.MillisecondsUntilIdleLock(5, 100, uint.MaxValue - 99) == 299_800,
+                "Idle deadline handles new input, overdue lock and Windows tick counter wrap");
+            await BookmarkHtmlSelfTest.RunAsync(testRoot, Report);
+            BrowserAddressSelfTest.Run(Report, testRoot);
+            await BrowserShareLinkTests.RunAsync(Report);
             await VaultIntegritySelfTest.RunAsync(testRoot, Report, Skip);
             await LegacyVaultMigrationSelfTest.RunAsync(testRoot, Report);
             SettingsMigrationSelfTest.Run(testRoot, Report);
@@ -145,7 +152,7 @@ public static class SelfTest
             using (var afterExisting = BrowserDownloadPath.Reserve(testRoot, "same-name.bin"))
                 Report(Path.GetFileName(afterExisting.FilePath) != "same-name.bin" && File.ReadAllText(Path.Combine(testRoot, "same-name.bin")) == "keep existing bytes",
                     "Download reservation preserves an existing file");
-            foreach (string unsafeName in new[] { "CON.txt", "..", "NUL", "x/y\\z.bin", new string('a', 180) + ".jpg" })
+            foreach (string unsafeName in new[] { "CON.txt", "COM¹.txt", "lpt².tar.gz", "CONOUT$.txt", "..", "NUL", "x/y\\z.bin", new string('a', 180) + ".jpg" })
             {
                 using var reserved = BrowserDownloadPath.Reserve(testRoot, unsafeName);
                 try { File.WriteAllText(reserved.FilePath, "fixture"); Report(File.Exists(reserved.FilePath), "Download name accepted by Windows: " + unsafeName); }
@@ -246,6 +253,15 @@ public static class SelfTest
             Report(BrowserSessionHistory.RecentlyClosed.Count == 20 && BrowserSessionHistory.RecentlyClosed[0].Position == 24 &&
                 BrowserSessionHistory.RecentlyClosed[^1].Position == 5, "Closed tabs retain only the newest twenty web addresses");
             BrowserSessionHistory.Clear();
+            string privateUrl = "https://user:pass@fixture.invalid/only";
+            BrowserSessionHistory.Record(privateUrl, privateUrl);
+            BrowserSessionHistory.RememberClosed(privateUrl, privateUrl, 0);
+            Report(BrowserSessionHistory.Items.Count == 0 && BrowserSessionHistory.RecentlyClosed.Count == 0
+                && !bookmarkSettings.AddBookmark("Fixture", privateUrl)
+                && new BookmarkItem { Url = privateUrl }.ContainsLoginInfo
+                && !new BookmarkItem { Url = "https://fixture.invalid/@name" }.ContainsLoginInfo
+                && BrowserAddressSuggestions.Get("", [new BookmarkItem { Url = privateUrl }], [], Search).Count == 0,
+                "Credentials in explicit web addresses are omitted from session history, closed tabs and new bookmarks");
             BrowserSessionHistory.UpdateTitle("Too late", "https://example.test/A");
             Report(BrowserSessionHistory.Items.Count == 0 && BrowserSessionHistory.RecentlyClosed.Count == 0,
                 "Clearing session history erases tab recovery and ignores late title changes");
@@ -588,7 +604,7 @@ public static class SelfTest
     }
 
     /// <summary>Writes a file using the legacy (V1) format so compatibility can be verified.</summary>
-    private static void WriteLegacyV1File(string path, byte[] plaintext, byte[] key)
+    internal static void WriteLegacyV1File(string path, byte[] plaintext, byte[] key)
     {
         byte[] magic = Encoding.ASCII.GetBytes("SVAULT01");
         byte[] salt = CryptoService.GenerateRandomBytes(CryptoService.SaltSize);

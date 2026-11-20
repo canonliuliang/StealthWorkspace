@@ -73,6 +73,8 @@ public sealed partial class MainWindow : Window
             bossKey.Initialize(CurrentHandle);
             bossKey.BossKeyPressed += OnBossKeyPressed;
             bossKey.WindowMinimized += OnWindowMinimized;
+            bossKey.SystemSessionLeaving += OnSystemSessionLeaving;
+            bossKey.SystemResumed += RefreshIdleDeadline;
             bossKey.WindowVisibilityChanged += OnWindowVisibilityChanged;
         }
         catch (Exception ex)
@@ -390,7 +392,32 @@ public sealed partial class MainWindow : Window
             NavigateToPage(typeof(SettingsPage), null, null, force: true);
             await Task.Delay(600);
 
-            var titles = (ComboBox)((SettingsPage)NavFrame.Content).FindName("CamouflageCombo");
+            var settingsPage = (SettingsPage)NavFrame.Content;
+            var search = (TextBox)settingsPage.FindName("SettingsSearch");
+            var transfer = (Border)settingsPage.FindName("BookmarkTransferSection");
+            var backupCard = (Border)settingsPage.FindName("BackupSection");
+            async Task EnterSettingQueryAsync(string value)
+            {
+                var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                void OnChanged(object sender, TextChangedEventArgs args) => changed.TrySetResult();
+                search.TextChanged += OnChanged;
+                try
+                {
+                    search.Text = value;
+                    await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                finally { search.TextChanged -= OnChanged; }
+            }
+            await EnterSettingQueryAsync("HTML");
+            if (transfer.Visibility != Visibility.Visible || backupCard.Visibility != Visibility.Collapsed)
+                throw new InvalidOperationException($"Settings search failed to isolate matching controls: transfer={transfer.Visibility}, backup={backupCard.Visibility}");
+            await EnterSettingQueryAsync("nonexistent synthetic preference");
+            if (transfer.Visibility != Visibility.Collapsed) throw new InvalidOperationException("Settings search retained a non-match");
+            await EnterSettingQueryAsync("");
+            if (transfer.Visibility != Visibility.Visible || backupCard.Visibility != Visibility.Visible)
+                throw new InvalidOperationException("Clearing settings search did not restore controls");
+            SmokeTest.Report("settings: bookmark transfer search, empty results and clearing the filter passed");
+            var titles = (ComboBox)settingsPage.FindName("CamouflageCombo");
             int originalTitleIndex = titles.SelectedIndex;
             titles.SelectedIndex = 2;
             if (!string.IsNullOrEmpty(AppTitleBar.Subtitle) || AppTitleBar.Title != Title ||
@@ -417,6 +444,7 @@ public sealed partial class MainWindow : Window
 
             // The popup layer sits above page transitions. Lock while a real modal
             // is open and ensure its awaiting action receives cancellation.
+            await WorkspaceNativeDialogsAudit.CheckRevocationAsync();
             var dialog = new ContentDialog { XamlRoot = RootGrid.XamlRoot, Content = "测试", CloseButtonText = "关闭" };
             var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             dialog.Opened += (_, _) => opened.TrySetResult();
@@ -449,6 +477,30 @@ public sealed partial class MainWindow : Window
                 if (!revoked) throw new InvalidOperationException("Minimize did not revoke pending credentials");
             }
             finally { SettingsService.Instance.Data.LockOnMinimize = originalMinimizeSetting; }
+
+            // Deliver notifications to this isolated window without locking the desktop.
+            var cfg = SettingsService.Instance.Data;
+            var previousSystemLock = cfg.LockOnSystemSessionEnd;
+            try
+            {
+                using var pending = await VaultService.Instance.VerifyPasswordAsync("SmokeTest#123");
+                if (!VaultService.Instance.ApplyUnlock(pending)) throw new InvalidOperationException("System lock setup failed");
+                OnUnlocked();
+                cfg.LockOnSystemSessionEnd = false;
+                NativeMethods.SendMessage(CurrentHandle, NativeMethods.WM_WTSSESSION_CHANGE, NativeMethods.WTS_SESSION_LOCK, 0);
+                if (!VaultService.Instance.IsUnlocked) throw new InvalidOperationException("Disabled Windows lock changed the session");
+                cfg.LockOnSystemSessionEnd = true;
+                NativeMethods.SendMessage(CurrentHandle, NativeMethods.WM_WTSSESSION_CHANGE, 8, 0); // WTS_SESSION_UNLOCK
+                if (!VaultService.Instance.IsUnlocked) throw new InvalidOperationException("Unlock notification ended the session");
+                NativeMethods.SendMessage(CurrentHandle, NativeMethods.WM_WTSSESSION_CHANGE, NativeMethods.WTS_SESSION_LOCK, 0);
+                if (VaultService.Instance.IsUnlocked || NavFrame.Content is not LockPage)
+                    throw new InvalidOperationException("Windows lock did not close the workspace");
+                using var verifying = await VaultService.Instance.VerifyPasswordAsync("SmokeTest#123");
+                NativeMethods.SendMessage(CurrentHandle, NativeMethods.WM_POWERBROADCAST, NativeMethods.PBT_APMSUSPEND, 0);
+                if (VaultService.Instance.ApplyUnlock(verifying)) throw new InvalidOperationException("Suspend did not revoke pending verification");
+                SmokeTest.Report("privacy: native session lock, disabled option, unlock notification and suspend revocation passed; WTS registration=" + BossKeyService.Instance.SessionNotificationsRegistered);
+            }
+            finally { cfg.LockOnSystemSessionEnd = previousSystemLock; }
 
             using var unlock = await VaultService.Instance.VerifyPasswordAsync("SmokeTest#123");
             SmokeTest.Report("ui-smoke: password re-verified");
@@ -575,12 +627,14 @@ public sealed partial class MainWindow : Window
                 : work.Percent is int percent ? $"{taskName} {percent}%" : taskName;
             hint = label;
         }
+        else if (SettingsService.Instance.ReadDeferred)
+            (label, hint) = ("设置暂时只读", "设置文件暂不可访问。解除占用后重启，即可读取并保存最新设置。");
         else if (_pendingResidueCount > 0)
             (label, hint) = ("发现系统残留", $"检测到 {_pendingResidueCount} 个资源管理器缩略图缓存文件，点击前往清理。");
         else if (!BossKeyService.Instance.IsBossKeyEnabled && SettingsService.Instance.Data.BossKeyEnabled)
             (label, hint) = ("老板键未注册", BossKeyService.Instance.LastBossKeyError);
         else if (SettingsService.Instance.LoadFailed)
-            (label, hint) = ("设置已重置", "设置文件无法读取，已使用默认配置。");
+            (label, hint) = ("设置未能读取", "本次启动使用默认配置。");
         StatusBadgeText.Text = label;
         ToolTipService.SetToolTip(StatusBadge, hint);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(StatusBadge, busy ? label : $"{label}，打开痕迹清理");
@@ -598,45 +652,48 @@ public sealed partial class MainWindow : Window
 
     private void SetupIdleDetection()
     {
-        // The isolated smoke walk explicitly exercises locking; the desktop's
-        // pre-existing idle time must not interrupt it mid-page.
-        if (SmokeTest.UiSmoke) return;
-        _idleTimer.Interval = TimeSpan.FromSeconds(5);
         _idleTimer.Tick += OnIdleTick;
-        _idleTimer.Start();
     }
 
-    private void OnIdleTick(object? sender, object e)
+    internal void RefreshIdleDeadline() => ScheduleIdleCheck(false);
+
+    private void OnIdleTick(object? sender, object e) => ScheduleIdleCheck(true);
+
+    private void ScheduleIdleCheck(bool lockIfDue)
     {
+        _idleTimer.Stop();
+        int minutes = SettingsService.Instance.Data.AutoLockMinutes;
+        // The fixture has its own inputs. Production uses the session's actual
+        // Windows input timestamp, so activity in other applications counts.
+        if (SmokeTest.UiSmoke || _isLocked || _shutdownStarted || minutes <= 0 || !VaultService.Instance.IsUnlocked) return;
+        long delayMs = 5_000;
         try
         {
-            RestoreBossKeyMuteIfSettled();
-
-            if (!VaultService.Instance.IsUnlocked) return;
-
-            int minutes = SettingsService.Instance.Data.AutoLockMinutes;
-            if (minutes <= 0) return;
-
             var info = new NativeMethods.LASTINPUTINFO
             {
                 cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.LASTINPUTINFO>()
             };
 
-            if (!NativeMethods.GetLastInputInfo(ref info)) return;
-
-            // Unchecked uint subtraction handles the 49.7 day TickCount wrap correctly.
-            uint elapsedMs = unchecked((uint)Environment.TickCount - info.dwTime);
-            long thresholdMs = Math.Max(60_000L, minutes * 60_000L);
-            if (elapsedMs >= thresholdMs)
+            if (NativeMethods.GetLastInputInfo(ref info))
             {
-                LockWorkspace();
+                delayMs = MillisecondsUntilIdleLock(minutes, unchecked((uint)Environment.TickCount), info.dwTime);
+                if (lockIfDue && delayMs == 0)
+                {
+                    LockWorkspace();
+                    return;
+                }
             }
         }
         catch (Exception ex)
         {
             AppLog.Error("闲置锁定检测失败", ex);
         }
+        _idleTimer.Interval = TimeSpan.FromMilliseconds(Math.Max(1, delayMs));
+        _idleTimer.Start();
     }
+
+    internal static long MillisecondsUntilIdleLock(int minutes, uint now, uint lastInput) =>
+        Math.Max(0L, minutes * 60_000L - unchecked(now - lastInput));
 
     private void OnWindowMinimized()
     {
@@ -645,8 +702,16 @@ public sealed partial class MainWindow : Window
         if (SettingsService.Instance.Data.LockOnMinimize) LockWorkspace();
     }
 
+    private void OnSystemSessionLeaving()
+    {
+        if (SettingsService.Instance.Data.LockOnSystemSessionEnd) LockWorkspace();
+    }
+
     private void OnWindowVisibilityChanged(bool visible) => DispatcherQueue.TryEnqueue(() =>
-        Controls.BrowserTabControl.SetHostWindowVisible(visible));
+    {
+        Controls.BrowserTabControl.SetHostWindowVisible(visible);
+        if (visible) RestoreBossKeyMuteIfSettled();
+    });
 
     #endregion
 
@@ -724,8 +789,8 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// If the window was restored through the taskbar (not via the boss key), the
-    /// boss-key mute would otherwise stay active indefinitely. The 5s idle timer is a
-    /// cheap place to heal that state. Camouflage mode keeps the mute until dismissed.
+    /// boss-key mute would otherwise stay active indefinitely. Check after the
+    /// native show/restore message. Camouflage keeps the mute until dismissed.
     /// </summary>
     private void RestoreBossKeyMuteIfSettled()
     {
@@ -852,7 +917,10 @@ public sealed partial class MainWindow : Window
         try
         {
             bool firstLock = !_isLocked;
+            bool endingUnlockedSession = firstLock && VaultService.Instance.IsUnlocked;
             _isLocked = true;
+            _idleTimer.Stop();
+            SettingsService.Instance.SetBookmarkWorkspace(null);
 
             // Every explicit lock must revoke pending verification/setup, including
             // another lock request while the lock page is already visible.
@@ -862,7 +930,7 @@ public sealed partial class MainWindow : Window
             if (firstLock)
             {
                 // Isolated diagnostics must not clear the user's global clipboard.
-                if (!SmokeTest.Enabled && SettingsService.Instance.Data.ClearClipboardOnLock)
+                if (endingUnlockedSession && !SmokeTest.Enabled && SettingsService.Instance.Data.ClearClipboardOnLock)
                 {
                     try { Windows.ApplicationModel.DataTransfer.Clipboard.Clear(); } catch { }
                 }
@@ -909,7 +977,9 @@ public sealed partial class MainWindow : Window
         }
 
         if (!VaultService.Instance.IsUnlocked) return;
+        SettingsService.Instance.SetBookmarkWorkspace(VaultService.Instance.IsDecoyMode);
         _isLocked = false;
+        RefreshIdleDeadline();
         NavView.IsPaneVisible = true;
         AppTitleBar.IsPaneToggleButtonVisible = true;
         StatusBadge.Visibility = Visibility.Visible;

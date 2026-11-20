@@ -53,6 +53,23 @@ public static class NativeMethods
     public const int WM_SHOWWINDOW = 0x0018;
     public const int WM_CLOSE = 0x0010;
     public const int SIZE_MINIMIZED = 1;
+    public const uint WM_WTSSESSION_CHANGE = 0x02B1;
+    public const int WTS_SESSION_LOCK = 7;
+    public const int WTS_CONSOLE_DISCONNECT = 2;
+    public const int WTS_REMOTE_DISCONNECT = 4;
+    public const uint WM_POWERBROADCAST = 0x0218;
+    public const int PBT_APMSUSPEND = 4;
+
+    [DllImport("wtsapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool WTSRegisterSessionNotification(IntPtr window, uint flags);
+
+    [DllImport("wtsapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool WTSUnRegisterSessionNotification(IntPtr window);
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    public static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
 
     public delegate IntPtr SubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, nuint uIdSubclass, nuint dwRefData);
 
