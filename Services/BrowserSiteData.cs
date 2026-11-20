@@ -4,6 +4,10 @@ namespace StealthWorkspace.Services;
 
 internal static class BrowserSiteData
 {
+    // CacheStorage belongs to web apps and can contain the only offline copy.
+    internal static Task ClearHttpCacheAsync(CoreWebView2 core) =>
+        core.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache).AsTask();
+
     internal static bool CookieBelongsToHost(string cookieDomain, string host)
     {
         // A leading dot denotes a domain cookie. A host-only cookie on the

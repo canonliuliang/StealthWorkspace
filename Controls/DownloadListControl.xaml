@@ -30,6 +30,7 @@
                                 <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis" FontWeight="SemiBold" ToolTipService.ToolTip="{Binding FileName}" />
                                 <TextBlock Text="{Binding Status}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                                 <ProgressBar Value="{Binding Percent}" IsIndeterminate="{Binding IsIndeterminate}" Visibility="{Binding ActionVisibility}" AutomationProperties.Name="下载进度" />
+                                <Button Content="加密入库并粉碎原件" Click="StoreDownload_Click" Visibility="{Binding StoreVisibility}" IsEnabled="{Binding CanStore}" />
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <Button Content="{Binding ActionLabel}" AutomationProperties.Name="{Binding ActionName}" Click="PauseResume_Click" Visibility="{Binding ActionVisibility}" />
                                     <Button Content="取消" Click="Cancel_Click" Visibility="{Binding ActionVisibility}" />

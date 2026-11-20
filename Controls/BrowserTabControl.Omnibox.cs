@@ -8,6 +8,8 @@ namespace StealthWorkspace.Controls;
 
 public sealed partial class BrowserTabControl
 {
+    private BrowserAddressSuggestions.EditSession? _addressEdit;
+
     private static TextBox? FindAddressEditor(DependencyObject root)
     {
         for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
@@ -26,12 +28,17 @@ public sealed partial class BrowserTabControl
         if (_isDisposed || args.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return;
         // No request leaves the computer while typing. Enter alone commits a
         // search/navigation; arrows select only local bookmarks/session history.
-        sender.ItemsSource = BrowserAddressSuggestions.Get(sender.Text, SettingsService.Instance.Data.Bookmarks,
-            BrowserSessionHistory.Items, SettingsService.Instance.GetSearchUrl);
+        var bookmarks = SettingsService.Instance.Data.Bookmarks;
+        if (bookmarks.Count >= 256) _addressEdit ??= new();
+        sender.ItemsSource = BrowserAddressSuggestions.Get(sender.Text, bookmarks,
+            BrowserSessionHistory.Items, SettingsService.Instance.GetSearchUrl, _addressEdit);
     }
+
+    private void AddressLostFocus(object sender, RoutedEventArgs args) => _addressEdit = null;
 
     private void AddressQuerySubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs args)
     {
+        _addressEdit = null;
         sender.IsSuggestionListOpen = false;
         string input = args.ChosenSuggestion is BrowserAddressSuggestion suggestion ? suggestion.Target : args.QueryText;
         SubmitAddress(input);

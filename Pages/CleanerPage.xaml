@@ -87,13 +87,13 @@
                                         <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" FontSize="14" TextWrapping="Wrap" />
                                         <TextBlock Text="{x:Bind GroupName}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                                     </StackPanel>
-                                    <TextBlock Grid.Column="1" Text="{x:Bind DisplaySize}" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource StealthBrandBrush}" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                    <TextBlock Grid.Column="1" Text="{x:Bind DisplaySize, Mode=OneWay}" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource StealthBrandBrush}" VerticalAlignment="Top" Margin="0,2,0,0" />
                                 </Grid>
                                 <TextBlock Text="{x:Bind Description}" Style="{StaticResource StealthCaptionStyle}" />
                                 <Grid ColumnSpacing="12">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                    <TextBlock Text="{x:Bind Status}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" VerticalAlignment="Center" />
-                                    <Button Grid.Column="1" Content="查看明细" Tag="{x:Bind}" IsEnabled="{x:Bind HasDetails}" Click="DetailsBtn_Click" Style="{ThemeResource SubtleButtonStyle}" FontSize="12" ToolTipService.ToolTip="查看本次扫描到的文件或注册表条目样本" />
+                                    <TextBlock Text="{x:Bind Status, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                    <Button Grid.Column="1" Content="查看明细" Tag="{x:Bind}" IsEnabled="{x:Bind HasDetails, Mode=OneWay}" Click="DetailsBtn_Click" Style="{ThemeResource SubtleButtonStyle}" FontSize="12" ToolTipService.ToolTip="查看本次扫描到的文件或注册表条目样本" />
                                 </Grid>
                             </StackPanel>
                         </Grid>

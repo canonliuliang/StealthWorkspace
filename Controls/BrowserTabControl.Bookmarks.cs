@@ -10,18 +10,19 @@ public sealed partial class BrowserTabControl
 {
     private BookmarkItem? _bookmarkToRename;
     private ContentDialog? _bookmarkDialog;
+    private BookmarkFilter? _bookmarkFilter;
 
     private void BookmarkSearch_Changed(object sender, TextChangedEventArgs args) => RefreshBookmarkList();
 
     private void RefreshBookmarkList()
     {
-        if (_isDisposed || BookmarksListView == null || BookmarkSearchBox == null) return;
+        if (_isDisposed || _bookmarkFilter == null || BookmarksListView == null || BookmarkSearchBox == null) return;
         string query = BookmarkSearchBox.Text.Trim();
-        var matches = SettingsService.Instance.Data.Bookmarks.Where(item => query.Length == 0 ||
-            item.Title.Contains(query, StringComparison.OrdinalIgnoreCase) || item.Url.Contains(query, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var matches = _bookmarkFilter.Filter(SettingsService.Instance.Data.Bookmarks, query);
+        if (ReferenceEquals(BookmarksListView.ItemsSource, matches)) return;
         BookmarksListView.ItemsSource = matches;
         BookmarksEmptyText.Text = query.Length == 0 ? "还没有收藏的网页" : "没有找到匹配的收藏";
-        BookmarksEmptyText.Visibility = matches.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UiMotion.SetVisible(BookmarksEmptyText, matches.Count == 0, MotionCue.Fade);
     }
 
     private void BookmarkItem_PointerPressed(object sender, PointerRoutedEventArgs args)
@@ -49,9 +50,10 @@ public sealed partial class BrowserTabControl
 
     private async void BookmarksFlyout_Closed(object sender, object args)
     {
+        ReleaseBookmarkList();
         var item = _bookmarkToRename;
         _bookmarkToRename = null;
-        if (item == null || _isDisposed || !IsLoaded || _bookmarkDialog != null) return;
+        if (item == null || _isDisposed || !IsLoaded || !VaultService.Instance.IsUnlocked || _bookmarkDialog != null) return;
         var name = new TextBox { Header = "名称", Text = item.Title, MaxLength = 200, MinWidth = 280 };
         var content = new StackPanel { Spacing = 12 };
         content.Children.Add(name);
@@ -64,7 +66,7 @@ public sealed partial class BrowserTabControl
         _bookmarkDialog = dialog;
         try
         {
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary && !_isDisposed && VaultService.Instance.IsUnlocked &&
+            if (await WorkspaceDialogs.ShowAsync(dialog) == ContentDialogResult.Primary && !_isDisposed && VaultService.Instance.IsUnlocked &&
                 !SettingsService.Instance.RenameBookmark(item.Url, name.Text)) ShowBookmarkSaveError();
         }
         catch (Exception ex) { AppLog.Warn("Rename bookmark: " + ex.GetType().Name); }
@@ -78,6 +80,13 @@ public sealed partial class BrowserTabControl
         _bookmarkToRename = null;
         _bookmarkDialog?.Hide();
         BookmarksFlyout.Hide();
+        ReleaseBookmarkList();
+    }
+
+    private void ReleaseBookmarkList()
+    {
+        _bookmarkFilter = null;
         if (BookmarksListView != null) BookmarksListView.ItemsSource = null;
+        if (BookmarkSearchBox != null) BookmarkSearchBox.Text = "";
     }
 }

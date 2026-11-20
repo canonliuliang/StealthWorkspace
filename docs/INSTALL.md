@@ -10,6 +10,8 @@ Stealth 是 Windows 桌面应用，当前提供预览版本。建议使用 Windo
 
 从仓库 Releases 下载 ZIP，完整解压到固定且可写的目录，然后打开 `StealthWorkspace.exe`。不要只复制 EXE，也不要直接在 ZIP 中运行。发布包包含 .NET 和 Windows App SDK；网页需要 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。
 
+当前版本为 `2026.11.20-r16-preview`。便携包使用手动更新；WebView2 Evergreen 运行时由 Microsoft 独立维护。[下载 r16 和 SHA-256 清单](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.20-r16-preview)
+
 当前预览包未使用受信任发布者证书签名，Windows 可能显示 SmartScreen 提示。校验值只能检查下载内容是否一致，不能代替发布者签名。由使用者判断是否信任；不要关闭系统保护。参见 [Microsoft 应用声誉说明](https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation)。
 
 ## 快捷方式

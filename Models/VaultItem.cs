@@ -1,9 +1,12 @@
 using System;
+using System.ComponentModel;
+using System.Text.Json.Serialization;
 
 namespace StealthWorkspace.Models;
 
-public class VaultItem
+public class VaultItem : INotifyPropertyChanged
 {
+    public event PropertyChangedEventHandler? PropertyChanged;
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string OriginalFileName { get; set; } = string.Empty;
     public string StoredFileName { get; set; } = string.Empty;
@@ -13,6 +16,40 @@ public class VaultItem
     public DateTime ImportedAt { get; set; } = DateTime.Now;
     public string Tags { get; set; } = string.Empty;
     public bool IsDecoy { get; set; }
+
+    [JsonIgnore]
+    public string DisplayDuration { get; private set; } = "";
+
+    internal void SetVideoDuration(TimeSpan duration)
+    {
+        if (duration <= TimeSpan.Zero) return;
+        string text = duration.TotalHours >= 1
+            ? $"{(int)duration.TotalHours}:{duration.Minutes:00}:{duration.Seconds:00}"
+            : $"{duration.Minutes}:{duration.Seconds:00}";
+        if (text == DisplayDuration) return;
+        DisplayDuration = text;
+        PropertyChanged?.Invoke(this, new(nameof(DisplayDuration)));
+    }
+
+    internal void NotifyNameChanged() => PropertyChanged?.Invoke(this, new(nameof(OriginalFileName)));
+
+    [JsonIgnore]
+    public string MimeType => (FileExtension ?? "").ToLowerInvariant() switch
+    {
+        ".mkv" => "video/x-matroska",
+        ".webm" => "video/webm",
+        ".mov" => "video/quicktime",
+        ".avi" => "video/x-msvideo",
+        ".wmv" => "video/x-ms-wmv",
+        ".ts" => "video/mp2t",
+        ".flv" => "video/x-flv",
+        ".mp3" => "audio/mpeg",
+        ".m4a" or ".aac" => "audio/mp4",
+        ".flac" => "audio/flac",
+        ".wav" => "audio/wav",
+        ".ogg" => "audio/ogg",
+        _ => "video/mp4"
+    };
 
     public string DisplaySize
     {

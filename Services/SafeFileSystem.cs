@@ -60,7 +60,7 @@ internal static class SafeFileSystem
     }
 
     internal static List<string> EnumerateFiles(string root, bool recursive, out int failures,
-        Func<string, bool>? skipDirectory = null)
+        Func<string, bool>? skipDirectory = null, CancellationToken cancellationToken = default)
     {
         failures = 0;
         var files = new List<string>();
@@ -70,11 +70,13 @@ internal static class SafeFileSystem
         pending.Push(root);
         while (pending.TryPop(out string? directory))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!IsPlainPath(directory)) { failures++; continue; }
             try
             {
                 foreach (string entry in Directory.EnumerateFileSystemEntries(directory))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     try
                     {
                         FileAttributes attributes = File.GetAttributes(entry);

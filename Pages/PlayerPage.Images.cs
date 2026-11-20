@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Windows.Foundation;
 using Windows.System;
@@ -17,9 +18,18 @@ public sealed partial class PlayerPage
     private double _imageDragHorizontal;
     private double _imageDragVertical;
     internal bool IsWidthReading => _imageWidthMode && ImageContainer.ScrollableHeight > 0;
-    internal double ImageDisplayedWidth => ImageViewer.ActualWidth;
+    internal double ImageDisplayedWidth => ImageBounds.ActualWidth;
     internal double ImageViewportWidth => ImageContainer.ViewportWidth;
     internal (int Width, int Height) ImageDecodedSize => (_imagePixelWidth, _imagePixelHeight);
+
+    private void RotateImage_Click(object sender, RoutedEventArgs e) => RotateImage();
+
+    internal void RotateImage()
+    {
+        if (!CanUseControls || !IsImageReady) return;
+        ImageRotation.Angle = (ImageRotation.Angle + 90) % 360;
+        ApplyImageLayout(resetViewport: true);
+    }
 
     internal void FitImageToWindow()
     {
@@ -40,19 +50,30 @@ public sealed partial class PlayerPage
         {
             StopImageDrag();
             double verticalFraction = ImageContainer.VerticalOffset / Math.Max(1, ImageStage.Height * ImageContainer.ZoomFactor);
-            double scale = (viewportWidth - 24) / _imagePixelWidth;
-            if (!_imageWidthMode) scale = Math.Min(scale, (viewportHeight - 24) / _imagePixelHeight);
-            double width = _imagePixelWidth * scale;
-            double height = _imagePixelHeight * scale;
+            bool sideways = ImageRotation.Angle is 90 or 270;
+            int pixelWidth = sideways ? _imagePixelHeight : _imagePixelWidth;
+            int pixelHeight = sideways ? _imagePixelWidth : _imagePixelHeight;
+            double scale = (viewportWidth - 24) / pixelWidth;
+            if (!_imageWidthMode) scale = Math.Min(scale, (viewportHeight - 24) / pixelHeight);
+            double width = pixelWidth * scale;
+            double height = pixelHeight * scale;
             ImageStage.Width = viewportWidth;
             ImageStage.Height = Math.Max(viewportHeight, height + 24);
-            ImageViewer.Width = width;
-            ImageViewer.Height = height;
-            ImageViewer.VerticalAlignment = _imageWidthMode ? VerticalAlignment.Top : VerticalAlignment.Center;
-            ImageContainer.UpdateLayout();
+            ImageBounds.Width = width;
+            ImageBounds.Height = height;
+            ImageBounds.VerticalAlignment = _imageWidthMode ? VerticalAlignment.Top : VerticalAlignment.Center;
+            ImageViewer.Width = _imagePixelWidth * scale;
+            ImageViewer.Height = _imagePixelHeight * scale;
+            Canvas.SetLeft(ImageViewer, (width - ImageViewer.Width) / 2);
+            Canvas.SetTop(ImageViewer, (height - ImageViewer.Height) / 2);
             if (resetViewport) ImageContainer.ChangeView(0, 0, 1, disableAnimation: true);
-            else if (double.IsFinite(verticalFraction))
+            else if (ImageContainer.VerticalOffset > 0 && double.IsFinite(verticalFraction))
+            {
+                // A scrolled reader needs the new scroll extent to restore its
+                // position. Ordinary resizes and image changes can use normal layout.
+                ImageContainer.UpdateLayout();
                 ImageContainer.ChangeView(null, verticalFraction * ImageStage.Height * ImageContainer.ZoomFactor, null, disableAnimation: true);
+            }
             UpdateImageZoomLabel();
         }
         finally { _updatingImageLayout = false; }
@@ -62,8 +83,9 @@ public sealed partial class PlayerPage
 
     private void UpdateImageZoomLabel()
     {
-        if (ImageZoomResetButton != null)
-            ImageZoomResetButton.Content = ImageContainer.ZoomFactor < 1.01f ? (_imageWidthMode ? "宽度" : "适应") : $"{ImageContainer.ZoomFactor:0.##}×";
+        if (ImageZoomResetButton == null) return;
+        string label = ImageContainer.ZoomFactor < 1.01f ? (_imageWidthMode ? "宽度" : "适应") : $"{ImageContainer.ZoomFactor:0.##}×";
+        if (!Equals(ImageZoomResetButton.Content, label)) ImageZoomResetButton.Content = label;
     }
 
     private void ImageLayout_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)

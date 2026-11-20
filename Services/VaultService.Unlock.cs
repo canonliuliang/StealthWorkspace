@@ -71,6 +71,13 @@ public partial class VaultService
             byte[]? key = null;
             try
             {
+                // Recovery can change the catalog after a file handle is released.
+                // Take the password snapshot after this attempt, off the UI thread.
+                if (!IsUnlocked && _mutationGate.Wait(0))
+                {
+                    try { RecoverPendingOperations(); }
+                    finally { _mutationGate.Release(); }
+                }
                 UnlockSnapshot snapshot;
                 lock (_sync)
                 {

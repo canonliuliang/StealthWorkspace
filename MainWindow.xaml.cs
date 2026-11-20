@@ -26,11 +26,16 @@ public sealed partial class MainWindow : Window
     private bool _isLocked;
     private bool _locking;
     private bool _suppressNavSelection;
+    private bool _pageNavigationBlocked;
     private bool _camouflageVisible;
+    internal bool IsPrivacyCoverVisible => _camouflageVisible;
+    private WeakReference<UIElement>? _focusBeforeCamouflage;
     private bool _bossKeyMuted;
+    private bool _restoreAppAudioAfterCover;
     private bool _paneVisibleBeforeFullScreen = true;
     private bool _browserNavigationLayout;
     private bool _paneOpenBeforeBrowser;
+    private MotionCue _navigationCue;
     private bool _shutdownStarted;
     private bool _shutdownComplete;
     private int _pendingResidueCount;
@@ -41,7 +46,8 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         VaultService.Instance.BindToUiContext(System.Threading.SynchronizationContext.Current
             ?? new Microsoft.UI.Dispatching.DispatcherQueueSynchronizationContext(DispatcherQueue));
-        if (SmokeTest.Enabled) UpdateTitle("Stealth");
+        UpdateTitle(GetCamouflageTitle(SettingsService.Instance.Data.CamouflageIndex));
+        VaultWork.Changed += RefreshStatusBadge;
 
         try
         {
@@ -145,6 +151,7 @@ public sealed partial class MainWindow : Window
 
         if (SmokeTest.Enabled)
         {
+            SmokeTest.Report($"motion: custom animations={UiMotion.AnimationsEnabled}, scale={RootGrid.XamlRoot.RasterizationScale:0.##}");
             if (SmokeTest.UiSmoke)
             {
                 if (SmokeTest.InteractiveFixture) _ = OpenInteractiveFixtureAsync();
@@ -243,7 +250,8 @@ public sealed partial class MainWindow : Window
                 NavigateToVault();
                 await Task.Delay(400);
                 await ImageExperienceAcceptance.RunAsync((VaultPage)NavFrame.Content, NavigateToPlayer,
-                    () => NavFrame.Content as PlayerPage, () => NavFrame.Content as VaultPage);
+                    () => NavFrame.Content as PlayerPage, () => NavFrame.Content as VaultPage,
+                    () => NavigateToPage(typeof(PlayerPage), null, "player", force: true));
                 SmokeTest.Report("experience complete");
                 return;
             }
@@ -314,10 +322,21 @@ public sealed partial class MainWindow : Window
             try
             {
                 if (NavFrame.Content is not VaultPage vaultPage) throw new InvalidOperationException("媒体库未加载。");
-                var result = await vaultPage.ImportFilesAsync(new[] { fixture });
+                var import = vaultPage.ImportFilesAsync(new[] { fixture });
+                NavigateToPage(typeof(SettingsPage), null, null, force: true);
+                if (NavFrame.Content is not SettingsPage || !VaultWork.IsBusy || !StatusProgress.IsActive)
+                    throw new InvalidOperationException("切换页面后导入任务或窗口进度不可见。");
+                using (var conflict = VaultWork.TryBegin("测试冲突任务"))
+                    if (conflict != null) throw new InvalidOperationException("导入期间启动了冲突任务。");
+                var result = await import;
+                if (!StatusBadge.IsEnabled || VaultWork.IsBusy || _pageNavigationBlocked)
+                    throw new InvalidOperationException("导入结束后工作区仍显示忙碌。");
+                SmokeTest.Report("vault: import survived navigation, showed window progress and blocked conflicting work");
                 if (result.Imported != 1 || result.Failed != 0 || !File.Exists(fixture))
                     throw new InvalidOperationException("媒体导入回归检查未通过。");
                 SmokeTest.Report("vault: image imported and original preserved");
+                NavigateToVault();
+                vaultPage = (VaultPage)NavFrame.Content;
                 if (!await vaultPage.WaitForSmokeThumbnailAsync())
                     throw new InvalidOperationException("媒体库图片缩略图未显示。");
                 SmokeTest.Report("vault: encrypted image thumbnail displayed");
@@ -371,10 +390,42 @@ public sealed partial class MainWindow : Window
             NavigateToPage(typeof(SettingsPage), null, null, force: true);
             await Task.Delay(600);
 
+            var titles = (ComboBox)((SettingsPage)NavFrame.Content).FindName("CamouflageCombo");
+            int originalTitleIndex = titles.SelectedIndex;
+            titles.SelectedIndex = 2;
+            if (!string.IsNullOrEmpty(AppTitleBar.Subtitle) || AppTitleBar.Title != Title ||
+                !Title.StartsWith(GetCamouflageTitle(2), StringComparison.Ordinal))
+                throw new InvalidOperationException("伪装标题与窗口显示不一致。");
+            titles.SelectedIndex = originalTitleIndex;
+            SmokeTest.Report("privacy: office title applied to the window and title bar with an empty subtitle");
+
             NavigateToPage(typeof(PlayerPage), null, "player", force: true);
             await Task.Delay(600);
 
+            var flyout = new Flyout { Content = new TextBlock { Text = "测试" } };
+            var flyoutOpened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            flyout.Opened += (_, _) => flyoutOpened.TrySetResult();
+            flyout.ShowAt(StatusBadge);
+            await flyoutOpened.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            ShowCamouflage();
+            await Task.Delay(300);
+            if (flyout.IsOpen || WorkspaceContent.Visibility != Visibility.Collapsed ||
+                !ReferenceEquals(FocusManager.GetFocusedElement(RootGrid.XamlRoot), CamouflageOverlay))
+                throw new InvalidOperationException("Privacy cover retained an open flyout or underlying focus");
+            HideCamouflage();
+            SmokeTest.Report("motion: camouflage closed the flyout and removed workspace controls from focus");
+
+            // The popup layer sits above page transitions. Lock while a real modal
+            // is open and ensure its awaiting action receives cancellation.
+            var dialog = new ContentDialog { XamlRoot = RootGrid.XamlRoot, Content = "测试", CloseButtonText = "关闭" };
+            var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            dialog.Opened += (_, _) => opened.TrySetResult();
+            var dismissed = WorkspaceDialogs.ShowAsync(dialog);
+            await opened.Task.WaitAsync(TimeSpan.FromSeconds(5));
             LockWorkspace();
+            if (NavFrame.Content is not LockPage || await dismissed.WaitAsync(TimeSpan.FromSeconds(5)) != ContentDialogResult.None)
+                throw new InvalidOperationException("Lock did not dismiss the modal and replace the private page");
+            SmokeTest.Report("motion: locking with an open dialog returned cancellation and displayed the lock page");
             await Task.Delay(600);
             SmokeTest.Report($"ui-smoke: locked={!VaultService.Instance.IsUnlocked}");
 
@@ -412,7 +463,11 @@ public sealed partial class MainWindow : Window
 
             // Leave a live native WebView for the direct Window.Close regression.
             NavigateToPage(typeof(BrowserPage), null, "browser", force: true);
-            var closingTab = ((BrowserPage)NavFrame.Content).SmokeSelectedTab;
+            var closingBrowser = (BrowserPage)NavFrame.Content;
+            // Unlock may finish while the old browser profile is still closing.
+            // The page selects a fresh tab once that cleanup has completed.
+            for (int i = 0; i < 150 && closingBrowser.SmokeSelectedTab == null; i++) await Task.Delay(100);
+            var closingTab = closingBrowser.SmokeSelectedTab;
             if (closingTab == null || !await closingTab.RunSmokeNavigationAsync())
                 throw new InvalidOperationException("Closing fixture could not initialize WebView");
             SmokeTest.Report("closing fixture: live WebView before direct Window.Close");
@@ -446,21 +501,7 @@ public sealed partial class MainWindow : Window
 
             NavView.PaneDisplayMode = cfg.IsCompactNav ? NavigationViewPaneDisplayMode.LeftCompact : NavigationViewPaneDisplayMode.Auto;
 
-            if (cfg.CamouflageIndex > 0)
-            {
-                UpdateTitle(GetCamouflageTitle(cfg.CamouflageIndex));
-            }
-
-            if (!BossKeyService.Instance.IsBossKeyEnabled && cfg.BossKeyEnabled)
-            {
-                StatusBadgeText.Text = "老板键未注册";
-                ToolTipService.SetToolTip(StatusBadge, BossKeyService.Instance.LastBossKeyError);
-            }
-            else if (SettingsService.Instance.LoadFailed)
-            {
-                StatusBadgeText.Text = "设置已重置";
-                ToolTipService.SetToolTip(StatusBadge, "设置文件无法读取，已使用默认配置；原始文件已备份。");
-            }
+            RefreshStatusBadge();
         }
         catch (Exception ex)
         {
@@ -492,12 +533,7 @@ public sealed partial class MainWindow : Window
             if (residue <= 0) return;
 
             _pendingResidueCount = residue;
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                if (_isLocked) return;
-                StatusBadgeText.Text = "发现系统残留";
-                ToolTipService.SetToolTip(StatusBadge, $"检测到 {residue} 个资源管理器缩略图缓存文件，点击前往清理。");
-            });
+            RefreshStatusBadge();
         }
         catch (Exception ex)
         {
@@ -519,6 +555,35 @@ public sealed partial class MainWindow : Window
         {
             return 0;
         }
+    }
+
+    private void RefreshStatusBadge()
+    {
+        if (_shutdownStarted || _windowClosed) return;
+        var work = VaultWork.Current;
+        bool busy = work != null && !_isLocked;
+        StatusIcon.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
+        StatusProgress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        StatusProgress.IsActive = busy;
+        StatusBadge.IsEnabled = !_pageNavigationBlocked && !busy;
+
+        (string label, string hint) = ("就绪", "打开痕迹清理");
+        if (busy && work != null)
+        {
+            string taskName = SettingsService.Instance.Data.CamouflageIndex > 0 ? "处理中" : work.Label;
+            label = work.Token.IsCancellationRequested ? "任务正在结束"
+                : work.Percent is int percent ? $"{taskName} {percent}%" : taskName;
+            hint = label;
+        }
+        else if (_pendingResidueCount > 0)
+            (label, hint) = ("发现系统残留", $"检测到 {_pendingResidueCount} 个资源管理器缩略图缓存文件，点击前往清理。");
+        else if (!BossKeyService.Instance.IsBossKeyEnabled && SettingsService.Instance.Data.BossKeyEnabled)
+            (label, hint) = ("老板键未注册", BossKeyService.Instance.LastBossKeyError);
+        else if (SettingsService.Instance.LoadFailed)
+            (label, hint) = ("设置已重置", "设置文件无法读取，已使用默认配置。");
+        StatusBadgeText.Text = label;
+        ToolTipService.SetToolTip(StatusBadge, hint);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(StatusBadge, busy ? label : $"{label}，打开痕迹清理");
     }
 
     private void StatusBadge_Tapped(object sender, RoutedEventArgs e)
@@ -635,6 +700,7 @@ public sealed partial class MainWindow : Window
                     break;
 
                 default:
+                    PrepareWorkspaceForPrivacy();
                     BossKeyService.Instance.MinimizeWindow();
                     break;
             }
@@ -698,16 +764,52 @@ public sealed partial class MainWindow : Window
 
     public void ShowCamouflage()
     {
+        if (_camouflageVisible) return;
+        if (FocusManager.GetFocusedElement(RootGrid.XamlRoot) is UIElement focused)
+            _focusBeforeCamouflage = new WeakReference<UIElement>(focused);
         CamouflageOverlay.Visibility = Visibility.Visible;
+        CamouflageProgress.IsActive = UiMotion.AnimationsEnabled;
         _camouflageVisible = true;
+        _restoreAppAudioAfterCover = !PrivacyMediaGuard.IsAppAudioMuted;
+        if (_restoreAppAudioAfterCover) PrivacyMediaGuard.SetAppAudioMuted(true);
+        PrepareWorkspaceForPrivacy();
+        WorkspaceContent.Visibility = Visibility.Collapsed;
+        Controls.BrowserTabControl.SetPrivacyCoverActive(true);
         CamouflageOverlay.Focus(FocusState.Programmatic);
+    }
+
+    private void PrepareWorkspaceForPrivacy()
+    {
+        (NavFrame.Content as CleanerPage)?.CancelOperation();
+        // Menus and dialogs live in the window's popup layer above the frame.
+        // Close them in this turn as well as replacing the page beneath them.
+        try
+        {
+            WorkspaceDialogs.DismissForPrivacy();
+            if (RootGrid.XamlRoot is not { } root) return;
+            foreach (var popup in Microsoft.UI.Xaml.Media.VisualTreeHelper.GetOpenPopupsForXamlRoot(root))
+                if (popup.IsLightDismissEnabled) popup.IsOpen = false;
+        }
+        catch (Exception ex) { AppLog.Warn("关闭临时面板失败: " + ex.GetType().Name); }
     }
 
     public void HideCamouflage()
     {
         bool wasVisible = _camouflageVisible;
         CamouflageOverlay.Visibility = Visibility.Collapsed;
+        CamouflageProgress.IsActive = false;
+        WorkspaceContent.Visibility = Visibility.Visible;
         _camouflageVisible = false;
+        if (wasVisible) Controls.BrowserTabControl.SetPrivacyCoverActive(false);
+        if (wasVisible && !_isLocked && !_shutdownStarted &&
+            _focusBeforeCamouflage?.TryGetTarget(out var previous) == true && previous.XamlRoot == RootGrid.XamlRoot)
+            previous.Focus(FocusState.Programmatic);
+        _focusBeforeCamouflage = null;
+        if (wasVisible && _restoreAppAudioAfterCover)
+        {
+            _restoreAppAudioAfterCover = false;
+            PrivacyMediaGuard.SetAppAudioMuted(false);
+        }
 
         if (wasVisible && _bossKeyMuted && !BossKeyService.Instance.IsWindowMinimized)
         {
@@ -725,12 +827,12 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private static string GetCamouflageTitle(int index) => index switch
+    internal static string GetCamouflageTitle(int index) => index switch
     {
         1 => "Windows 性能与系统诊断工具",
         2 => "Markdown 知识库与本地笔记",
         3 => "Terminal Developer Console",
-        _ => "StealthWorkspace 隐私控制台"
+        _ => "Stealth"
     };
 
     #endregion
@@ -754,6 +856,7 @@ public sealed partial class MainWindow : Window
 
             // Every explicit lock must revoke pending verification/setup, including
             // another lock request while the lock page is already visible.
+            PrepareWorkspaceForPrivacy();
             VaultService.Instance.Lock();
 
             if (firstLock)
@@ -778,11 +881,13 @@ public sealed partial class MainWindow : Window
 
             NavView.IsPaneOpen = false;
             NavView.IsPaneVisible = false;
+            AppTitleBar.IsPaneToggleButtonVisible = false;
             StatusBadge.Visibility = Visibility.Collapsed;
 
             if (NavFrame.CurrentSourcePageType != typeof(LockPage))
             {
-                NavFrame.Navigate(typeof(LockPage));
+                if (NavFrame.Content is Page leavingPage) SetPageNavigationBlocked(leavingPage, false);
+                NavFrame.Navigate(typeof(LockPage), null, new SuppressNavigationTransitionInfo());
             }
         }
         catch (Exception ex)
@@ -806,7 +911,9 @@ public sealed partial class MainWindow : Window
         if (!VaultService.Instance.IsUnlocked) return;
         _isLocked = false;
         NavView.IsPaneVisible = true;
+        AppTitleBar.IsPaneToggleButtonVisible = true;
         StatusBadge.Visibility = Visibility.Visible;
+        RefreshStatusBadge();
 
         string startPage = SettingsService.Instance.Data.DefaultStartPage;
         switch (startPage)
@@ -829,6 +936,15 @@ public sealed partial class MainWindow : Window
     #endregion
 
     #region Navigation
+
+    internal void SetPageNavigationBlocked(Page owner, bool blocked)
+    {
+        if (!ReferenceEquals(owner, NavFrame.Content) || _pageNavigationBlocked == blocked) return;
+        _pageNavigationBlocked = blocked;
+        foreach (var item in NavView.MenuItems.OfType<NavigationViewItem>()) item.IsEnabled = !blocked;
+        if (NavView.SettingsItem is NavigationViewItem settings) settings.IsEnabled = !blocked;
+        RefreshStatusBadge();
+    }
 
     private void SelectMenuItem(string tag)
     {
@@ -855,6 +971,8 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        if (_pageNavigationBlocked) return;
+
         try
         {
             if (tag != null) SelectMenuItem(tag);
@@ -862,9 +980,18 @@ public sealed partial class MainWindow : Window
             bool samePage = NavFrame.CurrentSourcePageType == pageType;
             if (!force && samePage && parameter == null) return;
 
+            // Only the incoming content moves. A frame-level outgoing transition
+            // can keep an old page (including a WebView or media surface) on screen.
+            _navigationCue = parameter is MediaOpenRequest ? MotionCue.FromRight
+                : pageType == typeof(VaultPage) && NavFrame.CurrentSourcePageType == typeof(PlayerPage) ? MotionCue.FromLeft
+                : MotionCue.Page;
             NavFrame.Navigate(pageType, parameter, new SuppressNavigationTransitionInfo());
 
-            if (pageType == typeof(CleanerPage)) _pendingResidueCount = 0;
+            if (pageType == typeof(CleanerPage))
+            {
+                _pendingResidueCount = 0;
+                RefreshStatusBadge();
+            }
         }
         catch (Exception ex)
         {
@@ -877,10 +1004,10 @@ public sealed partial class MainWindow : Window
         if (item == null) return;
         var gallery = NavFrame.Content as VaultPage;
         gallery?.FlushPendingSearch();
-        var images = (gallery?.DisplayedItems ?? VaultService.Instance.VisibleItems)
-            .Where(media => media.MediaType == "Image").DistinctBy(media => media.Id).ToList();
-        if (item.MediaType == "Image" && images.All(media => media.Id != item.Id)) images.Add(item);
-        NavigateToPage(typeof(PlayerPage), new MediaOpenRequest(item, images, gallery?.CaptureViewState()), "player", force: true);
+        var items = (gallery?.DisplayedItems ?? VaultService.Instance.VisibleItems)
+            .Where(media => media.MediaType == item.MediaType).DistinctBy(media => media.Id).ToList();
+        if (items.All(media => media.Id != item.Id)) items.Add(item);
+        NavigateToPage(typeof(PlayerPage), new MediaOpenRequest(item, items, gallery?.CaptureViewState()), "player", force: true);
     }
 
     public void NavigateToVault()
@@ -927,13 +1054,23 @@ public sealed partial class MainWindow : Window
         // Do not retain old media queues and plaintext names in the frame journal.
         NavFrame.BackStack.Clear();
         NavFrame.ForwardStack.Clear();
-        // WebView is a native surface; animate its chrome when selected instead.
-        // Locking always replaces private content immediately.
-        if (e.Content is FrameworkElement page && page is not BrowserPage && page is not LockPage)
+        if (e.Content is FrameworkElement page && page is not LockPage)
         {
-            void Animate(object _, RoutedEventArgs __) { page.Loaded -= Animate; UiMotion.Enter(page); }
-            if (page.IsLoaded) UiMotion.Enter(page);
-            else page.Loaded += Animate;
+            var cue = _navigationCue;
+            void RevealPage()
+            {
+                if (_isLocked || _camouflageVisible || !ReferenceEquals(page, NavFrame.Content)) return;
+                UIElement target = page switch
+                {
+                    BrowserPage browser => browser.NavigationChrome,
+                    PlayerPage player => player.NavigationChrome,
+                    _ => page
+                };
+                UiMotion.Reveal(target, cue);
+            }
+            void OnLoaded(object _, RoutedEventArgs __) { page.Loaded -= OnLoaded; RevealPage(); }
+            if (page.IsLoaded) RevealPage();
+            else page.Loaded += OnLoaded;
         }
         bool isBrowser = e.SourcePageType == typeof(BrowserPage);
         if (isBrowser != _browserNavigationLayout)
@@ -966,7 +1103,7 @@ public sealed partial class MainWindow : Window
 
     private void TitleBar_PaneToggleRequested(TitleBar sender, object args)
     {
-        NavView.IsPaneOpen = !NavView.IsPaneOpen;
+        if (!_isLocked) NavView.IsPaneOpen = !NavView.IsPaneOpen;
     }
 
     private void TitleBar_BackRequested(TitleBar sender, object args)
@@ -991,6 +1128,7 @@ public sealed partial class MainWindow : Window
         if (AppTitleBar != null)
         {
             AppTitleBar.Title = newTitle;
+            if (VaultWork.IsBusy) RefreshStatusBadge();
         }
     }
 
@@ -1004,7 +1142,7 @@ public sealed partial class MainWindow : Window
                 _paneVisibleBeforeFullScreen = NavView.IsPaneVisible;
                 AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
                 TitleBarRow.Height = new GridLength(0);
-                if (AppTitleBar != null) AppTitleBar.Visibility = Visibility.Collapsed;
+                TitleBarHost.Visibility = Visibility.Collapsed;
                 NavView.IsPaneVisible = false;
             }
             else
@@ -1012,7 +1150,7 @@ public sealed partial class MainWindow : Window
                 if (AppWindow.Presenter.Kind != AppWindowPresenterKind.FullScreen) return;
                 AppWindow.SetPresenter(AppWindowPresenterKind.Default);
                 TitleBarRow.Height = new GridLength(44);
-                if (AppTitleBar != null) AppTitleBar.Visibility = Visibility.Visible;
+                TitleBarHost.Visibility = Visibility.Visible;
                 NavView.IsPaneVisible = !_isLocked && _paneVisibleBeforeFullScreen;
             }
         }
@@ -1062,17 +1200,21 @@ public sealed partial class MainWindow : Window
         try
         {
             try { _idleTimer.Stop(); } catch { }
-            try { HideCamouflage(); } catch { }
+            PrepareWorkspaceForPrivacy();
             try { BossKeyService.Instance.Uninitialize(); } catch { }
             // Revoke keys immediately, before the first asynchronous browser operation.
             try { VaultService.Instance.Lock(); } catch { }
             SmokeTest.Report("closing: vault locked=" + !VaultService.Instance.IsUnlocked);
+            Task? finishingVaultWork = VaultWork.Current?.Completion;
+            await CleanerService.Instance.WaitForCleaningToFinishAsync();
             try
             {
                 await Controls.BrowserTabControl.ShutdownAllAsync().WaitAsync(TimeSpan.FromSeconds(6));
                 SmokeTest.Report("closing: browser controls released");
             }
             catch (Exception ex) { AppLog.Warn("关闭浏览器标签超时/失败: " + ex.GetType().Name); }
+            // A browser import may itself be waiting for the WebView that was just closed.
+            if (finishingVaultWork != null) await finishingVaultWork;
             try
             {
                 bool cleaned = await BrowserProfileManager.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8));
@@ -1101,6 +1243,7 @@ public sealed partial class MainWindow : Window
         // Direct Window.Close bypasses AppWindow.Closing. Keep the UI dispatcher alive
         // so pending WebView initialization/disposal can finish instead of blocking it.
         _windowClosed = true;
+        VaultWork.Changed -= RefreshStatusBadge;
         SmokeTest.Report("Window Closed 事件已触发");
         RootGrid.ActualThemeChanged -= RootGrid_ActualThemeChanged;
         try { await ShutdownWorkspaceAsync(); }

@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -12,7 +14,7 @@ public class BookmarkItem
 {
     public override string ToString() => string.IsNullOrWhiteSpace(Title) ? Url : Title;
     public string Title { get; set; } = string.Empty;
-    public string Url { get; set; } = string.Empty;
+    public string Url { get; init; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.Now;
 }
 
@@ -48,7 +50,7 @@ public class AppSettingsData
     public bool AutoBurnOnExit { get; set; } = true;
 
     // Bookmarks (encrypted at rest via DPAPI)
-    public List<BookmarkItem> Bookmarks { get; set; } = new();
+    public ImmutableList<BookmarkItem> Bookmarks { get; set; } = [];
 
     // Cleaner Preferences
     public bool AutoCheckThumbcacheOnStartup { get; set; } = true;
@@ -72,6 +74,7 @@ public class SettingsService
     private readonly string _settingsFilePath;
     private readonly string _settingsBackupPath;
     private readonly object _saveGate = new();
+    private readonly ConditionalWeakTable<ImmutableList<BookmarkItem>, HashSet<BrowserAddress.PageKey>> _bookmarkIndexes = new();
 
     public AppSettingsData Data { get; private set; }
 
@@ -280,12 +283,12 @@ public class SettingsService
     public void Normalize()
     {
         var d = Data;
-        d.Bookmarks ??= new List<BookmarkItem>();
-        d.Bookmarks = d.Bookmarks.Where(b => b != null && !string.IsNullOrWhiteSpace(b.Url)).ToList();
+        d.Bookmarks ??= [];
+        if (d.Bookmarks.Any(b => b == null || string.IsNullOrWhiteSpace(b.Url)))
+            d.Bookmarks = d.Bookmarks.RemoveAll(b => b == null || string.IsNullOrWhiteSpace(b.Url));
         foreach (var b in d.Bookmarks)
         {
             b.Title ??= string.Empty;
-            b.Url ??= string.Empty;
         }
 
         d.AppTheme = d.AppTheme switch
@@ -326,6 +329,10 @@ public class SettingsService
     public bool IsBookmarked(string url)
     {
         if (string.IsNullOrWhiteSpace(url)) return false;
+        var bookmarks = Data.Bookmarks;
+        if (bookmarks.Count >= 32)
+            return _bookmarkIndexes.GetValue(bookmarks, static items => items.Select(item => BrowserAddress.PageKey.From(item.Url)).ToHashSet())
+                .Contains(BrowserAddress.PageKey.From(url));
         if (!Uri.TryCreate(url, UriKind.Absolute, out var current))
             return Data.Bookmarks.Any(b => string.Equals(b.Url, url, StringComparison.Ordinal));
         return Data.Bookmarks.Any(b => BrowserAddress.SamePage(current, b.Url));
@@ -336,8 +343,7 @@ public class SettingsService
         if (!Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return false;
         if (IsBookmarked(uri.AbsoluteUri)) return true;
         string name = string.IsNullOrWhiteSpace(title) ? uri.Host : title.Trim();
-        var updated = Data.Bookmarks.ToList();
-        updated.Insert(0, new BookmarkItem
+        var updated = Data.Bookmarks.Insert(0, new BookmarkItem
         {
             Title = name.Length > 200 ? name[..200] : name,
             Url = uri.AbsoluteUri,
@@ -349,7 +355,7 @@ public class SettingsService
     public bool RemoveBookmark(string url)
     {
         if (string.IsNullOrWhiteSpace(url)) return false;
-        var updated = Data.Bookmarks.Where(b => !BrowserAddress.SamePage(b.Url, url)).ToList();
+        var updated = Data.Bookmarks.RemoveAll(b => BrowserAddress.SamePage(b.Url, url));
         return updated.Count == Data.Bookmarks.Count || SaveBookmarks(updated);
     }
 
@@ -359,13 +365,11 @@ public class SettingsService
         title = title.Trim();
         if (bookmark == null || title.Length == 0) return false;
         if (bookmark.Title == title) return true;
-        var updated = Data.Bookmarks.Select(item => ReferenceEquals(item, bookmark)
-            ? new BookmarkItem { Title = title.Length > 200 ? title[..200] : title, Url = item.Url, CreatedAt = item.CreatedAt }
-            : item).ToList();
+        var updated = Data.Bookmarks.Replace(bookmark, new BookmarkItem { Title = title.Length > 200 ? title[..200] : title, Url = bookmark.Url, CreatedAt = bookmark.CreatedAt });
         return SaveBookmarks(updated);
     }
 
-    private bool SaveBookmarks(List<BookmarkItem> updated)
+    private bool SaveBookmarks(ImmutableList<BookmarkItem> updated)
     {
         lock (_saveGate)
         {

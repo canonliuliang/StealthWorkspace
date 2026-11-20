@@ -66,7 +66,10 @@ public partial class VaultService
         {
             var existing = ReadRemovalJournal();
             // Clear-decoy retries may now have fewer items after a partial success.
-            if (existing.Operation != operation || operation != "clear-decoy" && !existing.Files.SequenceEqual(files))
+            if (existing.Operation != operation || operation != "clear-decoy" &&
+                !existing.Files.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(files) &&
+                !existing.Files.Where(name => !IsDefinitelyMissing(Path.Combine(_mediaFolder, name)))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(files))
                 throw new InvalidOperationException("请先重试尚未完成的删除操作，再进行其他删除。");
             ValidateRemovalJournal(existing);
             return existing;
@@ -84,11 +87,13 @@ public partial class VaultService
     {
         lock (_sync)
         {
-            if (_corrupted || _loadedFromBackup || _config == null || journal.Operation == "reset"
+            if (_corrupted || _config == null || journal.Operation == "reset"
                 || !IsHexHash(journal.RealHashHex) || journal.RealHashHex != _config.RealHashHex)
                 throw new InvalidDataException("删除记录与当前保险箱状态不一致，原文件已保留。");
             bool decoy = journal.Operation != "real-item";
             var references = new HashSet<string>((decoy ? _config.DecoyItems : _config.Items).Select(item => item.StoredFileName), StringComparer.OrdinalIgnoreCase);
+            if ((decoy ? _config.Items : _config.DecoyItems).Any(item => journal.Files.Contains(item.StoredFileName, StringComparer.OrdinalIgnoreCase)))
+                throw new InvalidDataException("删除记录与另一个保险箱空间的媒体冲突。");
             bool allGone = journal.Files.All(name => IsDefinitelyMissing(Path.Combine(_mediaFolder, name)));
             if (decoy && journal.DecoyHashHex != _config.DecoyHashHex
                 && !(journal.Operation == "clear-decoy" && allGone && _config.DecoyItems.Count == 0 && _config.DecoyHashHex.Length == 0))
@@ -100,17 +105,18 @@ public partial class VaultService
         }
     }
 
-    private async Task ExecuteRemovalAsync(RemovalJournal journal)
+    private async Task ExecuteRemovalAsync(RemovalJournal journal, IProgress<double>? progress = null)
     {
         ValidateRemovalJournal(journal);
         await Task.Run(() =>
         {
-            foreach (string name in journal.Files)
+            for (int i = 0; i < journal.Files.Count; i++)
             {
-                string path = Path.Combine(_mediaFolder, name);
-                if (IsDefinitelyMissing(path)) continue;
+                string path = Path.Combine(_mediaFolder, journal.Files[i]);
                 // Failure is retained in the index, even if another item succeeded.
-                if (!CryptoService.ShredFile(path, 1)) AppLog.Warn("保险箱删除未完成，已保留索引和重试记录");
+                if (!IsDefinitelyMissing(path) && !CryptoService.ShredFile(path, 1))
+                    AppLog.Warn("保险箱删除未完成，已保留索引和重试记录");
+                progress?.Report((i + 1.0) / journal.Files.Count);
             }
         });
         bool complete;
@@ -159,6 +165,9 @@ public partial class VaultService
             if (IsDefinitelyMissing(RemovalJournalPath)) return;
             var journal = ReadRemovalJournal();
             if (journal.Operation == "reset") { MarkResetIncomplete(); return; }
+            if (_primaryReadDeferred || !IsDefinitelyMissing(_rotationJournalPath)) return;
+            lock (_sync)
+                if (_loadedFromBackup && !_corrupted) ValidateBackupMedia(Array.Empty<string>(), journal.Files);
             // Recovery only reconciles confirmed missing files. It never starts a new wipe.
             FinalizeRemovalIndex(journal);
         }
@@ -228,7 +237,7 @@ public partial class VaultService
             lock (_sync)
             {
                 _config = new VaultConfig();
-                _corrupted = _loadedFromBackup = false;
+                _corrupted = _loadedFromBackup = _primaryReadDeferred = false;
                 _loadError = "";
             }
         }

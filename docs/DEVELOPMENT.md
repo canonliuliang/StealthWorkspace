@@ -21,8 +21,8 @@ ARM64 构建使用 `-r win-arm64 -p:Platform=ARM64`，x64 使用 `-r win-x64 -p:
 `tools/Test-Core.ps1` 启动发布目录里的无界面自检，设超时，检查进程退出码以及报告中的失败计数。它覆盖加密、流式读取、密码轮换、备份恢复、地址解析、下载命名、站点数据边界和诊断日志。它不代表 XAML、网站兼容性或桌面启动已通过。
 
 ```powershell
-./tools/Build-Release.ps1 -Runtime win-arm64 -Version 2026.11.14-r15-preview
-./tools/Test-Core.ps1 -PublishDirectory artifacts/releases/2026.11.14-r15-preview/win-arm64/app
+./tools/Build-Release.ps1 -Runtime win-arm64 -Version 2026.11.20-r16-preview
+./tools/Test-Core.ps1 -PublishDirectory artifacts/releases/2026.11.20-r16-preview/win-arm64/app
 ```
 
 交互烟测必须使用新建的独立测试数据目录；不要把真实保险箱传给 `--data-root`，不要在真实数据上运行诊断 fixture。普通 UI 验证可使用 WinApp CLI 的 inspect / invoke / set-value / screenshot。锁定、导入、下载、切图、休眠、崩溃恢复和关闭会话需要实际交互复核。系统安全提示不应被自动绕过。
@@ -32,16 +32,26 @@ ARM64 构建使用 `-r win-arm64 -p:Platform=ARM64`，x64 使用 `-r win-x64 -p:
 `Test-UI.ps1` 总是创建独立数据目录，要求先关闭现有应用，并检查最终结果标记及进程退出码。支持 `Smoke`、`Render`、`Browser`、`Experience`、`Soak`；例如：
 
 ```powershell
-./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.14-r15-accepted/win-arm64/app -Mode Smoke
-./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.14-r15-accepted/win-arm64/app -Mode Render
-./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.14-r15-accepted/win-arm64/app -Mode Soak -SoakMinutes 3
-./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.14-r15-accepted/win-arm64/app -Theme Light -Width 640
-./tools/Test-BrowserPerformance.ps1 -BaselineRoot ../StealthWorkspace-Backups/pre-overhaul-20261114/project
-./tools/Measure-VaultContention.ps1 -AppDirectory artifacts/releases/2026.11.14-r15-accepted/win-arm64/app -OutputPath artifacts/contention-new.json
-./tools/Test-DiagnosticIsolation.ps1 -AppDirectory artifacts/releases/2026.11.14-r15-accepted/win-arm64/app -OutputDirectory artifacts/isolation-new
+./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.20-r16-preview/win-arm64/app -Mode Smoke
+./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.20-r16-preview/win-arm64/app -Mode Render
+./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.20-r16-preview/win-arm64/app -Mode Soak -SoakMinutes 3
+./tools/Test-UI.ps1 -AppDirectory artifacts/releases/2026.11.20-r16-preview/win-arm64/app -Theme Light -Width 640
+# 地址栏与收藏基准使用公开 r15 源码，准备基线的方法见 R16-PERFORMANCE.md。
+./tools/Measure-VaultContention.ps1 -AppDirectory artifacts/releases/2026.11.20-r16-preview/win-arm64/app -OutputPath artifacts/contention-new.json
+./tools/Test-DiagnosticIsolation.ps1 -AppDirectory artifacts/releases/2026.11.20-r16-preview/win-arm64/app -OutputDirectory artifacts/isolation-new
 ```
 
 渲染检查需要应用保持前台，使用本地合成网页。建议、锁争用及列表通知的测量不能等同于任意网页的帧率。`--ui-smoke` 还支持 `--ui-width`、`--ui-height` 和 `--ui-theme`；这些选项不会修改真实用户设置。
+
+## 原生动效
+
+按钮、列表项、菜单、弹窗、滚动和分类选择沿用 WinUI 控件模板处理指针、键盘和触摸。自定义内容通过 `Services/UiMotion.cs` 在合成线程上改变透明度和布局后的位移。退场为 83 毫秒，局部入场为 167 毫秒，顶层页面入场为 250 毫秒。[微软 Fluent 时长与缓动指引](https://learn.microsoft.com/en-us/windows/apps/design/motion/timing-and-easing)
+
+- `SetVisible` 适合空态、进度和行内反馈。同一个可见状态的重复更新会跳过动画。
+- `SetOverlayVisible` 适合用户主动关闭的浮层。再次打开会取消待完成的退场。导航、锁定和销毁使用立即隐藏。
+- `Reveal` 用于实际换入的新内容。浏览器和播放器的页面入场只作用于工具栏，内容切换后立即释放旧的私密画面。需要用户确认的操作通过 `WorkspaceDialogs.ShowAsync` 等待原生对话框。
+
+`Test-UI.ps1 -Mode Experience -ReducedMotion` 可以使用独立数据检查关闭自定义动效后的结果。生产运行读取 Windows 的动画设置。体验测试还覆盖快速切图、通知重新打开以及加载指示条显隐前后的浏览器视口尺寸。
 
 ## 目录
 

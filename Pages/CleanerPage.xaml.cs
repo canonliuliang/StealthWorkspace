@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -13,6 +14,7 @@ public sealed partial class CleanerPage : Page
 {
     private bool _isBusy;
     private bool _isPageLoaded;
+    private CancellationTokenSource? _operation;
 
     public ObservableCollection<CleanerItem> Items { get; } = new();
 
@@ -49,7 +51,10 @@ public sealed partial class CleanerPage : Page
     private void CleanerPage_Unloaded(object sender, RoutedEventArgs e)
     {
         _isPageLoaded = false;
+        CancelOperation();
     }
+
+    internal void CancelOperation() => _operation?.Cancel();
 
     private CleanerOptions BuildOptions()
     {
@@ -100,22 +105,10 @@ public sealed partial class CleanerPage : Page
 
     private void ApplySelection(Func<CleanerItem, bool> predicate)
     {
-        var updated = Items.Select(item => new CleanerItem
+        foreach (CleanerItem item in Items)
         {
-            Category = item.Category,
-            GroupName = item.GroupName,
-            IconGlyph = item.IconGlyph,
-            Name = item.Name,
-            Description = item.Description,
-            IsSelected = predicate(item),
-            Status = item.Status,
-            DetectedCount = item.DetectedCount,
-            DetectedSizeBytes = item.DetectedSizeBytes,
-            IsSizeKnown = item.IsSizeKnown,
-            PreviewEntries = item.PreviewEntries
-        }).ToList();
-
-        ReplaceItems(updated);
+            item.IsSelected = predicate(item);
+        }
     }
 
     private async void DetailsBtn_Click(object sender, RoutedEventArgs e)
@@ -123,7 +116,7 @@ public sealed partial class CleanerPage : Page
         if (!_isPageLoaded || this.XamlRoot is null) return;
         if ((sender as FrameworkElement)?.Tag is not CleanerItem item || item.PreviewEntries.Count == 0) return;
 
-        var panel = new StackPanel { Spacing = 10, MinWidth = 460 };
+        var panel = new StackPanel { Spacing = 10 };
         panel.Children.Add(new TextBlock
         {
             Text = $"{item.Name} — 共检测到 {item.DetectedCount} 项（以下展示前 {item.PreviewEntries.Count} 条样本）：",
@@ -155,7 +148,7 @@ public sealed partial class CleanerPage : Page
 
         try
         {
-            await dialog.ShowAsync();
+            await WorkspaceDialogs.ShowAsync(dialog);
         }
         catch (Exception ex)
         {
@@ -165,7 +158,7 @@ public sealed partial class CleanerPage : Page
 
     private async void CleanBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (_isBusy || !_isPageLoaded) return;
+        if (_isBusy || !_isPageLoaded || !VaultService.Instance.IsUnlocked) return;
 
         List<CleanerItem> snapshot = Items.ToList();
         List<CleanerItem> selected = snapshot.Where(item => item.IsSelected).ToList();
@@ -177,13 +170,16 @@ public sealed partial class CleanerPage : Page
             return;
         }
 
-        SetBusy(true);
+        using var operation = new CancellationTokenSource();
+        _operation = operation;
+        SetBusy(true, showProgress: false);
+        MainWindow.Current?.SetPageNavigationBlocked(this, true);
         HideInfoBar();
 
         try
         {
             bool confirmed = await ShowCleanConfirmationAsync(selected, options);
-            if (!confirmed)
+            if (!confirmed || operation.IsCancellationRequested)
             {
                 if (_isPageLoaded)
                 {
@@ -192,12 +188,21 @@ public sealed partial class CleanerPage : Page
                 return;
             }
 
-            if (!_isPageLoaded) return;
+            if (!_isPageLoaded || !VaultService.Instance.IsUnlocked) return;
 
-            var progress = new Progress<string>(ShowProgressMessage);
+            // Cleaning the isolated folder can remove the source of an in-flight import.
+            bool touchesDownloads = selected.Any(item => item.Category == CleanerCategory.IsolatedDownloads);
+            using var downloadWork = touchesDownloads ? VaultWork.TryBegin("清理下载文件") : null;
+            if (touchesDownloads && downloadWork == null)
+            {
+                ShowOperationWarning("保险箱任务进行中", "请在当前任务结束后再清理下载文件。");
+                return;
+            }
+            OpProgressRing.IsActive = true;
+            var progress = CreateProgress(operation.Token);
             SummaryText.Text = "正在执行清理…";
 
-            List<CleanerItem> cleanResults = await CleanerService.Instance.CleanAsync(selected, options, progress);
+            List<CleanerItem> cleanResults = await CleanerService.Instance.CleanAsync(selected, options, progress, operation.Token);
             string cleanSummary = BuildCleanSummary(cleanResults);
 
             if (!_isPageLoaded) return;
@@ -206,12 +211,16 @@ public sealed partial class CleanerPage : Page
             try
             {
                 // Merge selection state from snapshot into refreshed list
-                List<CleanerItem> refreshed = await CleanerService.Instance.ScanAsync(snapshot, progress, options);
+                List<CleanerItem> refreshed = await CleanerService.Instance.ScanAsync(snapshot, progress, options, operation.Token);
                 if (!_isPageLoaded) return;
 
-                ReplaceItems(refreshed);
+                ApplyResults(refreshed);
                 UpdateStatsBadge(refreshed);
                 SummaryText.Text = cleanSummary + "（列表已重新扫描）";
+            }
+            catch (OperationCanceledException) when (operation.IsCancellationRequested)
+            {
+                if (_isPageLoaded) SummaryText.Text = cleanSummary + "（重新扫描已停止）";
             }
             catch (Exception ex)
             {
@@ -220,6 +229,10 @@ public sealed partial class CleanerPage : Page
                 ShowInfoBar(InfoBarSeverity.Warning, "清理已完成，但列表刷新失败", "可手动点击“重新扫描”重试。");
             }
         }
+        catch (OperationCanceledException) when (operation.IsCancellationRequested)
+        {
+            if (_isPageLoaded) SummaryText.Text = "清理已停止。已完成的清理仍然生效，可重新扫描查看剩余项目。";
+        }
         catch (Exception ex)
         {
             AppLog.Error("执行清理失败", ex);
@@ -227,6 +240,8 @@ public sealed partial class CleanerPage : Page
         }
         finally
         {
+            _operation = null;
+            MainWindow.Current?.SetPageNavigationBlocked(this, false);
             SetBusy(false);
         }
     }
@@ -235,6 +250,8 @@ public sealed partial class CleanerPage : Page
     {
         if (_isBusy || !_isPageLoaded) return;
 
+        using var operation = new CancellationTokenSource();
+        _operation = operation;
         SetBusy(true);
         HideInfoBar();
         SummaryText.Text = "正在全面扫描系统隐私痕迹…";
@@ -242,13 +259,17 @@ public sealed partial class CleanerPage : Page
         try
         {
             CleanerOptions options = BuildOptions();
-            var progress = new Progress<string>(ShowProgressMessage);
-            List<CleanerItem> results = await CleanerService.Instance.ScanAsync(Items.ToList(), progress, options);
+            var progress = CreateProgress(operation.Token);
+            List<CleanerItem> results = await CleanerService.Instance.ScanAsync(Items.ToList(), progress, options, operation.Token);
             if (!_isPageLoaded) return;
 
-            ReplaceItems(results);
+            ApplyResults(results);
             UpdateStatsBadge(results);
             SummaryText.Text = BuildScanSummary(results);
+        }
+        catch (OperationCanceledException) when (operation.IsCancellationRequested)
+        {
+            if (_isPageLoaded) SummaryText.Text = "扫描已停止，可重新扫描。";
         }
         catch (Exception ex)
         {
@@ -257,6 +278,7 @@ public sealed partial class CleanerPage : Page
         }
         finally
         {
+            _operation = null;
             SetBusy(false);
         }
     }
@@ -342,7 +364,7 @@ public sealed partial class CleanerPage : Page
 
         try
         {
-            ContentDialogResult result = await dialog.ShowAsync();
+            ContentDialogResult result = await WorkspaceDialogs.ShowAsync(dialog);
             return result == ContentDialogResult.Primary;
         }
         catch (Exception ex)
@@ -353,13 +375,13 @@ public sealed partial class CleanerPage : Page
         }
     }
 
-    private void ShowProgressMessage(string message)
+    private IProgress<string> CreateProgress(CancellationToken token) => new Progress<string>(message =>
     {
-        if (!_isPageLoaded) return;
+        if (_operation?.Token != token || token.IsCancellationRequested || !_isPageLoaded || !OpProgressRing.IsActive) return;
         SummaryText.Text = message;
-    }
+    });
 
-    private void SetBusy(bool busy)
+    private void SetBusy(bool busy, bool showProgress = true)
     {
         _isBusy = busy;
         ScanBtn.IsEnabled = !busy;
@@ -371,18 +393,16 @@ public sealed partial class CleanerPage : Page
         DeepTempCheck.IsEnabled = !busy;
         SecureShredCheck.IsEnabled = !busy;
         CleanerListView.IsEnabled = !busy;
-        OpProgressRing.IsActive = busy;
+        OpProgressRing.IsActive = busy && showProgress;
     }
 
-    private void ReplaceItems(IReadOnlyList<CleanerItem> items)
+    private void ApplyResults(IReadOnlyList<CleanerItem> results)
     {
-        CleanerListView.ItemsSource = null;
-        Items.Clear();
-        foreach (CleanerItem item in items)
+        // ScanAsync produces one result for each input, in the original order.
+        for (int i = 0; i < results.Count; i++)
         {
-            Items.Add(item);
+            Items[i].ApplyScanResult(results[i]);
         }
-        CleanerListView.ItemsSource = Items;
     }
 
     private void UpdateStatsBadge(IReadOnlyList<CleanerItem> results)
@@ -390,18 +410,11 @@ public sealed partial class CleanerPage : Page
         int totalCount = results.Sum(r => r.DetectedCount);
         long totalBytes = results.Where(r => r.IsSizeKnown).Sum(r => r.DetectedSizeBytes);
 
-        if (totalCount == 0 && totalBytes == 0)
-        {
-            StatsBadgeText.Text = "系统干净";
-        }
-        else if (totalBytes > 0)
-        {
-            StatsBadgeText.Text = $"发现 {totalCount} 项 · {CleanerService.FormatSize(totalBytes)}";
-        }
-        else
-        {
-            StatsBadgeText.Text = $"发现 {totalCount} 条痕迹记录";
-        }
+        string label = totalBytes > 0 ? $"发现 {totalCount} 项 · {CleanerService.FormatSize(totalBytes)}"
+            : totalCount > 0 ? $"发现 {totalCount} 条痕迹记录" : "系统干净";
+        if (StatsBadgeText.Text == label) return;
+        StatsBadgeText.Text = label;
+        UiMotion.Reveal(StatsBadgeText, MotionCue.Fade);
     }
 
     private void HideInfoBar() => StatusInfoBar.IsOpen = false;

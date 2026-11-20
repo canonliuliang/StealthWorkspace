@@ -5,7 +5,8 @@ param(
     [ValidateSet('Dark','Light')][string]$Theme = 'Dark',
     [ValidateRange(480,2000)][int]$Width = 1100,
     [ValidateRange(480,1600)][int]$Height = 740,
-    [ValidateRange(1,120)][int]$SoakMinutes = 3
+    [ValidateRange(1,120)][int]$SoakMinutes = 3,
+    [switch]$ReducedMotion
 )
 $ErrorActionPreference = 'Stop'
 $appRoot = (Resolve-Path -LiteralPath $AppDirectory).Path
@@ -22,6 +23,7 @@ $info.UseShellExecute = $false
 $info.WorkingDirectory = $appRoot
 foreach ($argument in @('--ui-smoke',$report,'--data-root',(Join-Path $output 'data'),'--ui-theme',$Theme,'--ui-width',"$Width",'--ui-height',"$Height")) { $info.ArgumentList.Add($argument) }
 $marker = 'SMOKE RESULT: OK'
+if ($ReducedMotion) { $info.ArgumentList.Add('--ui-reduced-motion') }
 switch ($Mode) {
     'Render' { $info.ArgumentList.Add('--browser-render-audit'); $marker = 'RENDER AUDIT: OK' }
     'Browser' { $info.ArgumentList.Add('--browser-audit'); $marker = 'AUDIT RESULT: OK' }

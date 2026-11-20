@@ -38,17 +38,23 @@ public partial class VaultService
             }
 
             var entries = new List<BackupEntry>();
+            double totalBytes = catalog.LongLength + pinned.Sum(file => (double)file.Stream.Length);
+            long copied = 0;
+            void ReportBytes(int written)
+            {
+                copied += written;
+                progress?.Report(copied / totalBytes);
+            }
             using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             using (var archive = new ZipArchive(output, ZipArchiveMode.Create))
             {
                 using var catalogStream = new MemoryStream(catalog, writable: false);
-                entries.Add(await WriteBackupEntryAsync(archive, "system_catalog.dat", catalogStream, cancellationToken));
+                entries.Add(await WriteBackupEntryAsync(archive, "system_catalog.dat", catalogStream, cancellationToken, ReportBytes));
                 for (int i = 0; i < pinned.Count; i++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     if (!IsUnlocked) throw new OperationCanceledException("保险箱已锁定，备份已取消。");
-                    entries.Add(await WriteBackupEntryAsync(archive, pinned[i].Name, pinned[i].Stream, cancellationToken));
-                    progress?.Report((i + 1.0) / Math.Max(1, pinned.Count));
+                    entries.Add(await WriteBackupEntryAsync(archive, pinned[i].Name, pinned[i].Stream, cancellationToken, ReportBytes));
                 }
                 using Stream manifest = archive.CreateEntry("manifest.json", CompressionLevel.NoCompression).Open();
                 await JsonSerializer.SerializeAsync(manifest, new BackupManifest(1, DateTime.UtcNow, entries), cancellationToken: cancellationToken);
@@ -65,15 +71,15 @@ public partial class VaultService
         }
     }, cancellationToken);
 
-    private static async Task<BackupEntry> WriteBackupEntryAsync(ZipArchive archive, string name, Stream source, CancellationToken token)
+    private static async Task<BackupEntry> WriteBackupEntryAsync(ZipArchive archive, string name, Stream source, CancellationToken token, Action<int> reportBytes)
     {
         using Stream destination = archive.CreateEntry(name, CompressionLevel.NoCompression).Open();
-        var (length, hash) = await CopyAndHashAsync(source, destination, source.Length, token);
+        var (length, hash) = await CopyAndHashAsync(source, destination, source.Length, token, reportBytes);
         return new BackupEntry(name, length, hash);
     }
 
-    public Task<int> VerifyBackupAsync(string source, CancellationToken token = default) =>
-        ReadBackupAsync(source, null, token);
+    public Task<int> VerifyBackupAsync(string source, CancellationToken token = default, IProgress<double>? progress = null) =>
+        ReadBackupAsync(source, null, token, progress);
 
     // Restore only into an empty vault: an existing vault is never silently replaced.
     public async Task<int> RestoreBackupAsync(string source, CancellationToken token = default)
@@ -125,7 +131,7 @@ public partial class VaultService
         }
     }
 
-    private static Task<int> ReadBackupAsync(string path, string? staging, CancellationToken token) => Task.Run(async () =>
+    private static Task<int> ReadBackupAsync(string path, string? staging, CancellationToken token, IProgress<double>? progress = null) => Task.Run(async () =>
     {
         using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         using var archive = new ZipArchive(input, ZipArchiveMode.Read);
@@ -151,6 +157,13 @@ public partial class VaultService
             throw new InvalidDataException("备份文件与清单不一致。");
 
         VaultConfig? config = null;
+        double totalBytes = Math.Max(1, manifest.Files.Sum(file => (double)file.Length));
+        long verifiedBytes = 0;
+        void ReportBytes(int read)
+        {
+            verifiedBytes += read;
+            progress?.Report(verifiedBytes / totalBytes);
+        }
         foreach (BackupEntry entry in manifest.Files)
         {
             token.ThrowIfCancellationRequested();
@@ -163,7 +176,7 @@ public partial class VaultService
             using Stream source = zipEntry.Open();
             using Stream destination = isCatalog ? new MemoryStream() : target == null ? Stream.Null :
                 new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128 * 1024, true);
-            var (length, hash) = await CopyAndHashAsync(source, destination, entry.Length, token);
+            var (length, hash) = await CopyAndHashAsync(source, destination, entry.Length, token, ReportBytes);
             if (length != entry.Length || !string.Equals(hash, entry.Sha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("备份完整性校验失败，文件可能损坏。");
             if (isCatalog)
@@ -187,7 +200,7 @@ public partial class VaultService
         return items.Length;
     }, token);
 
-    private static async Task<(long Length, string Hash)> CopyAndHashAsync(Stream source, Stream destination, long expected, CancellationToken token)
+    private static async Task<(long Length, string Hash)> CopyAndHashAsync(Stream source, Stream destination, long expected, CancellationToken token, Action<int> reportBytes)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         byte[] buffer = new byte[128 * 1024];
@@ -199,6 +212,7 @@ public partial class VaultService
             if (total > expected) throw new InvalidDataException("备份文件超出声明长度。");
             hash.AppendData(buffer, 0, count);
             await destination.WriteAsync(buffer.AsMemory(0, count), token);
+            reportBytes(count);
         }
         return (total, Convert.ToHexString(hash.GetHashAndReset()));
     }

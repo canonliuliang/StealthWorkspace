@@ -209,6 +209,46 @@ internal static class AuditSelfTest
                 return Task.CompletedTask;
             });
         }
+        foreach (bool committed in new[] { false, true })
+        {
+            await Check("Audit: fallback rotation " + (committed ? "recovers the confirmed generation" : "retains both ambiguous generations"), async () =>
+            {
+                string primary = Path.Combine(vaultRoot, "system_catalog.dat");
+                byte[] saved = File.ReadAllBytes(primary);
+                File.WriteAllBytes(primary + ".bak", saved);
+                var catalog = JsonSerializer.Deserialize<VaultConfig>(ProtectedData.Unprotect(saved, null, DataProtectionScope.CurrentUser))!;
+                string current = catalog.Items.Single().StoredFileName;
+                string alternate = Guid.NewGuid().ToString("N") + ".svault";
+                string alternatePath = Path.Combine(vaultRoot, "MediaVault", alternate);
+                File.Copy(Path.Combine(vaultRoot, "MediaVault", current), alternatePath);
+                var data = new { IsDecoy = false, NewSaltHex = catalog.RealSaltHex, NewIterations = catalog.Iterations,
+                    NewHashHex = committed ? catalog.RealHashHex : Convert.ToHexString(RandomNumberGenerator.GetBytes(32)),
+                    Files = new[] { new { OldName = committed ? alternate : current, NewName = committed ? current : alternate } } };
+                string path = Path.Combine(vaultRoot, "rotate.dat");
+                File.WriteAllBytes(path, ProtectedData.Protect(JsonSerializer.SerializeToUtf8Bytes(data), null, DataProtectionScope.CurrentUser));
+                File.WriteAllBytes(primary, [1, 2, 3]);
+                try
+                {
+                    var recovered = new VaultService(vaultRoot);
+                    Require(recovered.ApplyUnlock(recovered.VerifyPassword("Main-3#123")));
+                    VerifyContents(recovered);
+                    Require(File.Exists(path) == !committed && File.Exists(alternatePath) == !committed);
+                    if (committed) await recovered.DeleteItemAsync(recovered.VisibleItems.Single());
+                    else
+                    {
+                        string target = Path.Combine(root, "ambiguous-export.bin");
+                        await recovered.ExportItemAsync(recovered.VisibleItems.Single(), target);
+                        Require(File.ReadAllBytes(target).AsSpan().SequenceEqual(original));
+                    }
+                }
+                finally
+                {
+                    File.Delete(path);
+                    File.Delete(alternatePath);
+                    if (!committed) File.WriteAllBytes(primary, saved);
+                }
+            });
+        }
         await Check("Audit: first decoy creation also rejects the main password", async () =>
         {
             var empty = new VaultService(Path.Combine(root, "audit-no-decoy"));

@@ -28,5 +28,28 @@ public sealed partial class BrowserTabControl
             if (!ok) throw new InvalidOperationException("Hard reload did not preserve the browsing session");
         }
         finally { core.NavigationCompleted -= Completed; }
+
+        await EvaluateAuditAsync("""
+            window.offlineFixtureReady = false;
+            localStorage.setItem('r16-draft','keep');
+            caches.open('r16-offline').then(cache => cache.put('/offline-note', new Response('offline-text')))
+                .then(() => window.offlineFixtureReady = true);
+            """);
+        for (int i = 0; i < 50 && await EvaluateAuditAsync("window.offlineFixtureReady") != "true"; i++) await Task.Delay(50);
+        if (await EvaluateAuditAsync("window.offlineFixtureReady") != "true") throw new InvalidOperationException("Offline fixture was not stored");
+        await BrowserSiteData.ClearHttpCacheAsync(core);
+        int before = fixture.CountRequests("/cached-script");
+        await NavigateAuditAsync(fixture.Address + "/page");
+        await NavigateAuditAsync(fixture.Address + "/cache-page");
+        await EvaluateAuditAsync("""
+            window.offlineFixturePreserved = false;
+            caches.match('/offline-note').then(response => response?.text())
+                .then(text => window.offlineFixturePreserved = text === 'offline-text'
+                    && localStorage.getItem('r16-draft') === 'keep' && document.cookie.includes('reload-fixture=keep'));
+            """);
+        for (int i = 0; i < 50 && await EvaluateAuditAsync("window.offlineFixturePreserved") != "true"; i++) await Task.Delay(50);
+        if (fixture.CountRequests("/cached-script") <= before || await EvaluateAuditAsync("window.offlineFixturePreserved") != "true")
+            throw new InvalidOperationException("HTTP cache clearing must fetch a fresh script and preserve offline data, drafts and cookies");
+        SmokeTest.Report("audit: HTTP cache clear refetches script, preserves CacheStorage response, local draft and login cookie=True");
     }
 }

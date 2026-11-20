@@ -1,32 +1,25 @@
-**Stealth r15：视觉、响应与数据保护的重大更新。**
+Stealth r16 更新了日常浏览中几个容易误操作的地方。现在可以只为当前网页调整权限、在本次会话中找回特定标签，也可以清理缓存并保留网页应用的离线内容。
 
-这一版重新设计了品牌与主要页面，集中降低日常交互的开销，并补齐锁定、迁移、重置和文件操作中的边界保护。多标签浏览、跨标签下载、网页与本地图片阅读、加密媒体库继续作为产品核心。
+### 权限与清理
 
-- **全新视觉。** 几何 Logo、石墨与青玉配色、统一的深浅主题；重新梳理锁屏、新标签、媒体库、播放器、设置和清理页面，补齐空状态、窄窗布局和可访问名称。
-- **减少等待与重复工作。** 收藏和更多菜单按需创建并复用，减少标签切换动画、收藏重绑定和 favicon 重复抓取；地址建议先筛选再解析，大媒体库搜索合并连续输入并批量更新列表。
-- **锁定优先于迟到的验证。** 密码计算移出共享状态锁，重复锁定、最小化锁定和初始化期间锁定均能撤销在途解锁结果。
-- **菜单与下载衔接更可靠。** 修复新标签迟到聚焦干扰已打开菜单的问题；验证关闭来源标签后，仍可在共享列表暂停、继续下载并完成文件。
-- **文件操作与旧数据保护。** 加强导出目标、导入原件身份和密文长度校验；旧设置迁移失败保留源文件，旧保险箱迁移保留原始副本，重置标记阻止旧目录自动重新导入。存储格式和密码派生强度保持兼容。
-- **可复现的验收工具。** 增加隔离 UI、浏览器、性能对比和诊断隔离检查；诊断启动使用独立数据目录，避免导入程序旁的旧数据。
-- **更新运行基础。** 升级到 .NET 10 LTS，发布包包含 10.0.15 运行时和对应 DPAPI 组件，保留数据格式并重新进行双架构验证。
+- 在站点隐私面板中，可以临时修改当前标签页里当前来源的摄像头、麦克风、位置和通知规则。换到其他来源或关闭标签后，临时例外消失。跨来源内嵌网页继续使用默认规则。选择「所有网站」才会保存新的默认设置。
+- 清理 HTTP 磁盘缓存会保留 Cookie 和网页应用的离线存储。清除所有网站的 Cookie 或本地存储前，应用会说明操作范围并要求确认。
+- 结束会话清理临时浏览目录时，遇到文件占用会留下所有权标记。后续启动可重试清理带标记、超过 24 小时且没有活动所有者的旧目录。完成清理前，临时数据仍可能留在磁盘上。
 
-重构阶段本机同配置 .NET 8 / Debug ARM64 测试中，空标签控件平均构造耗时从 **6.18ms 降至 4.32ms**，托管分配从 **105.1KiB 降至 81.1KiB**。10,000 条收藏的合成无匹配建议查询中位耗时从 **1.2495ms 降至 0.1727ms**。这些分别是控件构造与本地算法的测量，不代表所有网站统一提速；本轮没有证据宣称网页 FPS 提升或总进程内存下降。
+### 标签、收藏与图片
 
-本机两架构发布包各有 **206 项核心自检通过、0 失败、2 项 SUBST 环境限制跳过**，完整界面巡检通过；ARM64 另完成浏览器、图片体验、渲染、诊断隔离与三分钟持续测试。x64 在 ARM64 兼容层运行，不等同于原生 x64 实机验证。远程构建状态请查看对应版本的 Actions 记录。
+- 按 **Ctrl+Shift+A**，按标题或网址查找标签，切换到「最近关闭」可以挑选本次会话最近关闭的 20 个网页地址。恢复会重新打开网址。锁定或结束会话会清空记录，未提交的表单内容不会进入恢复记录。
+- 收藏夹支持按名称或网址在本机筛选，并可重命名、删除条目。筛选打开的标签时复用列表快照，减少输入过程中重复读取内核状态和创建图标的工作。
+- 在网页图片的右键菜单或图片阅读器中，可以把已加载的受支持图片直接加密存入媒体库。此操作省去在下载夹中写入明文副本的步骤。单张上限 32 MiB，普通下载仍保存为普通文件。
 
-**公开发布验收已完成。** [正式版本构建](https://github.com/canonliuliang/StealthWorkspace/actions/runs/43618278910)中 ARM64 207 项通过 / 1 项环境跳过，x64 205 项通过 / 3 项环境跳过，均无失败。公开 ZIP 已完整重新下载，SHA-256 与清单及构建产物一致；两份下载包的隔离界面巡检也通过。跳过条件、验证范围和校验值见[公开验收记录](https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/VALIDATION.md#r15-公开发布与网站验收)。
+### 本地检索实测
 
-提供 Windows x64 / ARM64 两种便携包：
+在一台 Windows 11 ARM64 虚拟机上，50,000 条合成收藏中连续输入 21 个没有匹配的前缀，两次运行的中位耗时从约 9.9 ms 降到 1.0–1.1 ms。命中列表末尾的另一组 14 次输入从约 0.88 ms 增至约 1.82 ms。锁屏启动差异落在样本波动内。[测试方法和完整结果](https://github.com/canonliuliang/StealthWorkspace/blob/v2026.11.20-r16-preview/docs/R16-PERFORMANCE.md)
 
-- Intel / AMD：下载 `Stealth-2026.11.14-r15-preview-win-x64.zip`。
-- Windows on Arm：下载 `Stealth-2026.11.14-r15-preview-win-arm64.zip`。
-- 完整解压后打开 `StealthWorkspace.exe`；包内 `START-HERE.md` 包含快捷方式、更新和校验说明。
-- `SHA256SUMS.txt` 包含两个 ZIP 的完整性校验值。更新前请确认重要数据另有可恢复副本。
+### 下载与升级
 
-**当前未签名**，可能遇到 SmartScreen。请自行判断信任，不要关闭系统防护。SHA-256 校验值用于核对文件完整性，不能替代发布者签名。
+支持目标为 Windows 11。Intel / AMD 电脑选择 `Stealth-2026.11.20-r16-preview-win-x64.zip`，Windows on Arm 选择 `Stealth-2026.11.20-r16-preview-win-arm64.zip`。运行浏览器需要 Microsoft Edge WebView2 Runtime。
 
-临时会话不等于匿名上网，普通下载不自动加密。当前保险箱备份依赖原 Windows 用户，重装或换机后可能无法恢复；不要把它当作跨电脑备份。旧保险箱迁移保留的副本和外部备份不会随当前保险箱重置而一并删除。
+升级前备份重要数据并退出旧版，核对同一 Release 的 `SHA256SUMS.txt`，将新 ZIP 完整解压到新的固定目录，然后打开 `StealthWorkspace.exe`。旧程序旁如有 `WorkspaceData`，按安装指南迁移完整目录并保留原件。发布包未签名，Windows 可能显示 SmartScreen。备份依赖原 Windows 用户；换机前请另外保存重要原始文件。[官网下载](https://canonliuliang.github.io/StealthWorkspace/#download) · [安装与升级指南](https://github.com/canonliuliang/StealthWorkspace/blob/v2026.11.20-r16-preview/docs/INSTALL.md)
 
-第三方网站验证、系统编解码器、后台休眠和部分捕获方式仍受运行环境影响。三分钟测试不等于长期稳定性或独立安全审计。
-
-[官网下载](https://canonliuliang.github.io/StealthWorkspace/#download) · [安装指南](https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/INSTALL.md) · [r15 源码](https://github.com/canonliuliang/StealthWorkspace/tree/v2026.11.14-r15-preview) · [构建与自检](https://github.com/canonliuliang/StealthWorkspace/actions/workflows/build.yml) · [完整变化](https://github.com/canonliuliang/StealthWorkspace/blob/main/CHANGELOG.md) · [实测与验收范围](https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/OVERHAUL-2026-11-14.md) · [隐私与数据边界](https://github.com/canonliuliang/StealthWorkspace/blob/main/docs/PRIVACY.md)
+临时会话仍使用本机的网络连接。网站和网络服务可以看到访问流量或 IP 地址，WebView2 和 Windows 也有各自的后台行为。[隐私与数据说明](https://github.com/canonliuliang/StealthWorkspace/blob/v2026.11.20-r16-preview/docs/PRIVACY.md) · [源代码](https://github.com/canonliuliang/StealthWorkspace/tree/v2026.11.20-r16-preview)
