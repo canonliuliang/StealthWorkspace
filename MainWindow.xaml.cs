@@ -396,12 +396,24 @@ public sealed partial class MainWindow : Window
             var search = (TextBox)settingsPage.FindName("SettingsSearch");
             var transfer = (Border)settingsPage.FindName("BookmarkTransferSection");
             var backupCard = (Border)settingsPage.FindName("BackupSection");
-            search.Text = "HTML";
+            async Task EnterSettingQueryAsync(string value)
+            {
+                var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                void OnChanged(object sender, TextChangedEventArgs args) => changed.TrySetResult();
+                search.TextChanged += OnChanged;
+                try
+                {
+                    search.Text = value;
+                    await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                finally { search.TextChanged -= OnChanged; }
+            }
+            await EnterSettingQueryAsync("HTML");
             if (transfer.Visibility != Visibility.Visible || backupCard.Visibility != Visibility.Collapsed)
-                throw new InvalidOperationException("Settings search failed to isolate matching controls");
-            search.Text = "nonexistent synthetic preference";
+                throw new InvalidOperationException($"Settings search failed to isolate matching controls: transfer={transfer.Visibility}, backup={backupCard.Visibility}");
+            await EnterSettingQueryAsync("nonexistent synthetic preference");
             if (transfer.Visibility != Visibility.Collapsed) throw new InvalidOperationException("Settings search retained a non-match");
-            search.Text = "";
+            await EnterSettingQueryAsync("");
             if (transfer.Visibility != Visibility.Visible || backupCard.Visibility != Visibility.Visible)
                 throw new InvalidOperationException("Clearing settings search did not restore controls");
             SmokeTest.Report("settings: bookmark transfer search, empty results and clearing the filter passed");
