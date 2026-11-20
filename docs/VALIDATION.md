@@ -2,9 +2,40 @@
 
 ## r16.1 发行验证
 
+GitHub 于 **2026-11-20 17:59:04 UTC（UTC+8 为 11 月 21 日 01:59:04）**发布 Windows x64 / ARM64 未签名便携预览版。[公开下载与清单](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview) · [标签原生构建、校验和发布](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44787842133) · [官网生产部署](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44788449507)
+
+| 公开资源 | 字节 | SHA-256 |
+| --- | ---: | --- |
+| Windows ARM64 ZIP | 96,175,587 | `37e56a19427ac671d0ee95d232cfbc1dafbcba0bc8a872b33718aefe2674d356` |
+| Windows x64 ZIP | 98,553,233 | `24f6190c86f828b317e9f89cc241e75086e6cdd3e5106c4b92a34f19e4063d5e` |
+| SHA256SUMS.txt | 224 | `57c5e0b4af3e654eea8420caad431caacc2dde135b744ca1110c50d952fd8d5a` |
+
 在 Windows 11 ARM64 上使用隔离测试目录，实测 HTML 收藏导入（2 条新增、1 条重复、1 条本地路径跳过），再用系统「另存为」导出并读回原网址与日期。向实际 WinUI 窗口发送 Windows 会话锁定通知后，已打开的原生保存窗口及嵌套覆盖确认在 59 ms 内被收回。直接关闭时两层窗口在 57 ms 内消失，进程在 114 ms 内退出，既有目标文件内容均保留。此项没有锁定整个测试设备。
 
 [浏览、下载与原生对话框](R161-BROWSING.md) · [旧版数据迁移与恢复](R161-DATA.md) · [性能方法和原始区间](R161-PERFORMANCE.md) · [审查范围与用户研究](R161-REVIEW.md)
+
+[PR #7](https://github.com/canonliuliang/StealthWorkspace/pull/7) 合入提交 [ddf36e7](https://github.com/canonliuliang/StealthWorkspace/commit/ddf36e7b870f609888526f7c934f38a5efd44ddd)，标签为 `v2026.11.21-r16.1-preview`。本机最终候选的 x64 和 ARM64 便携包均为 281 项核心检查通过、0 失败、2 项 SUBST 环境跳过。ARM64 原生、x64 在 Windows on Arm 兼容层实际启动，两份 Smoke 均完成 40 次打开、加载和关闭标签，设置查找、锁定撤销与退出清理均通过。第一轮设置检索脚本过早读取 XAML；改为等待真实 TextChanged 事件后，两架构重新全程通过。[PR 的双架构原生构建](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44787188899)
+
+候选包的 Browser、Render 和启用减少动画的 Experience 各有完整通过记录。在合成站点可以保留登录 Cookie 并删除当前来源的离线存储，保留相邻端口和另一个顶层站的嵌入分区。两个并行同名下载中，来源标签关闭后取消一项，另一份 4 MiB 文件正常完成并逐字节核对。向两个网页进程的故障恢复路径注入诊断故障后，重新导航和退出清理正常。
+
+| 公网兼容性抽查 | HTTP | DOM 状态 | 本次加载记录的资源数 |
+| --- | ---: | --- | ---: |
+| GitHub 项目页 | 200 | complete | 122 |
+| MDN 首页 | 200 | complete | 81 |
+| 个人站项目详情页（站点更新前） | 200 | complete | 9 |
+
+使用 WinUI 应用本身导航，各页面标题和来源已核对。未登录，未测试在线支付或特定账户。性能表和测试环境见[性能报告](R161-PERFORMANCE.md)。
+
+
+公开 ZIP 和校验清单均从无认证下载入口重新获取。两个 ZIP 的字节数和 SHA-256 与 GitHub 资产详情、公开清单和标签 Actions 的原件一致。核对两包内 EXE 与 DLL 的 PE 架构和程序集的完整发布提交。标签原生 ARM64 自检为 282 通过、0 失败、1 项环境跳过；原生 x64 为 280 通过、0 失败、3 项环境跳过。重新下载的两包在本机各 281 通过、0 失败、2 项环境跳过。差异来自测试卷是否提供独立的 8.3 短名称，以及是否有可用的 SUBST 映射。
+
+重新下载的两个公开包分别解压至新的隔离目录，运行完整 WinUI Smoke，每包各 40 次新建、加载和关闭标签。两次诊断垃圾回收后遗留的已关闭控件数均为零。两次进程均正常退出，报告确认保险箱已锁定、控件释放、会话目录清除。ARM64 公开包另跑 Browser 全套，复核权限、剪贴板选项、来源隔离、下载与真实进程恢复，最终通过。
+
+最终候选另跑 3.01 分钟、12 次临时标签循环，保留页面状态读回与退出清理均通过。使用重新下载的 r16.1 ARM64 程序集恢复公开 r16 实际生成的备份，原密码可以分别解锁主空间和诱饵空间，完整解密后的 1,300,007 字节和 925,031 字节文件均与原始 SHA-256 一致。该验证使用同一 Windows 用户的 DPAPI。
+
+官网裸地址返回 HTTP 200。首页、404 页、脚本、样式及图片共 12 个文件逐一与正式标签的 Git blob 比对一致，两个 ZIP 按钮分别返回正确架构的归档。真实 Edge 检查 1440 像素桌面以及 390、320 像素移动仿真视口，菜单、FAQ 与下载按钮均可操作。[官网](https://canonliuliang.github.io/StealthWorkspace/) · [生产部署](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44788449507)
+
+个人网站生产提交为 [e91a130](https://github.com/canonliuliang/liu-digital-space/commit/e91a130f07c8794661159c1385afbf4585401ce3)。首页、作品列表、下载页、公告、RSS、新截图均可匿名访问。四份 HTML 经换行归一后完整匹配，RSS 和图片逐字节匹配。新闻与 RSS 采用 GitHub 的实际发布时间，手机 390 像素和桌面 1440 像素页面均通过视觉检查。发布沿用已有 Windows 手动升级渠道。[个人首页](https://liu-digital-space.pages.dev/) · [软件下载](https://liu-digital-space.pages.dev/work/stealthworkspace/) · [更新公告](https://liu-digital-space.pages.dev/updates/#stealth-r16-1-preview) · [RSS](https://liu-digital-space.pages.dev/feed.xml) · [生产部署](https://github.com/canonliuliang/liu-digital-space/actions/runs/44788667797)
 
 ## r16 公开发行
 
