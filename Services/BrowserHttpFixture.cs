@@ -80,6 +80,8 @@ internal sealed class BrowserHttpFixture : IAsyncDisposable
                 string html = path switch
                 {
                     "/cache-page" => "<!doctype html><title>Cache fixture</title><script src='/cached-script'></script><h1>Cache reload fixture</h1>",
+                    "/partition-host" => $"<!doctype html><title>Partition fixture</title><script>onmessage = e => {{if (e.origin === '{Address}') window.embeddedValue = e.data;}}</script><iframe id='child'></iframe><script>child.src = '{Address}/partition-child' + location.search;</script>",
+                    "/partition-child" => "<!doctype html><script>if (location.search === '?seed') localStorage.setItem('r161-partition','embedded'); parent.postMessage(localStorage.getItem('r161-partition'), new URL(document.referrer).origin);</script>",
                     "/cached-script" => "window.fixtureVersion=" + CountRequests(path) + ";",
                     "/pending-page" => "<!doctype html><title>Pending resource fixture</title><input id=check value='unsaved value'><img src=/stalled-image><script>window.ticks=0;setInterval(()=>window.ticks++,20)</script>",
                     "/gallery-lazy" => "<!doctype html><meta charset=utf-8><title>Lazy image fixture</title><img src=/image-placeholder data-src=/image-lazy-one alt='延迟长图一' width=200 height=800><img src=/image-placeholder data-original=/image-lazy-two alt='延迟长图二' width=200 height=800>",

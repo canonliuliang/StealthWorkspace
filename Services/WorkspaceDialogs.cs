@@ -42,6 +42,7 @@ internal static class WorkspaceDialogs
 
     internal static void DismissForPrivacy()
     {
+        WorkspaceNativeDialogs.DismissForPrivacy(MainWindow.CurrentHandle);
         foreach (var presentation in Active.ToArray())
         {
             presentation.Dismissed = true;

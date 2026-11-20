@@ -315,14 +315,14 @@ public sealed partial class VaultPage : Page
                 }
 
                 picker.FileTypeFilter.Add("*");
-                var files = await picker.PickMultipleFilesAsync();
+                var files = await WorkspaceNativeDialogs.PickAsync(picker.PickMultipleFilesAsync);
                 if (files == null || files.Count == 0) return;
                 selectedPaths = files.Select(f => f.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
             }
             catch (Exception pickerEx)
             {
                 AppLog.Warn($"WinRT 文件选择器失败，改用 Win32（0x{pickerEx.HResult:X8}）");
-                selectedPaths = Services.NativeMethods.PickMultipleFilesWin32(MainWindow.CurrentHandle);
+                selectedPaths = WorkspaceNativeDialogs.PickWin32(() => Services.NativeMethods.PickMultipleFilesWin32(MainWindow.CurrentHandle)) ?? new();
             }
 
             if (selectedPaths.Count == 0 || !_loaded || !VaultService.Instance.IsUnlocked) return;
@@ -703,7 +703,7 @@ public sealed partial class VaultPage : Page
                 var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.Downloads };
                 WinRT.Interop.InitializeWithWindow.Initialize(picker, MainWindow.CurrentHandle);
                 picker.FileTypeFilter.Add("*");
-                destination = (await picker.PickSingleFolderAsync())?.Path;
+                destination = (await WorkspaceNativeDialogs.PickAsync(picker.PickSingleFolderAsync))?.Path;
             }
             else
             {
@@ -711,7 +711,7 @@ public sealed partial class VaultPage : Page
                 var picker = new FileSavePicker { SuggestedStartLocation = PickerLocationId.Downloads, SuggestedFileName = item.OriginalFileName };
                 WinRT.Interop.InitializeWithWindow.Initialize(picker, MainWindow.CurrentHandle);
                 picker.FileTypeChoices.Add("原媒体格式", new[] { string.IsNullOrEmpty(item.FileExtension) ? ".bin" : item.FileExtension });
-                destination = (await picker.PickSaveFileAsync())?.Path;
+                destination = (await WorkspaceNativeDialogs.PickAsync(picker.PickSaveFileAsync))?.Path;
             }
             if (string.IsNullOrEmpty(destination) || !_loaded) return;
             using var work = VaultWork.TryBegin("正在解密导出");

@@ -90,7 +90,7 @@ public sealed partial class BrowserPage
                 string title = item.Header?.ToString() ?? "新标签页";
                 string address = tab.CurrentUrl;
                 _tabSearchRows.Add(new BrowserTabSearchItem(item, title,
-                    string.IsNullOrEmpty(address) || address == "about:blank" ? "尚未打开网页" : address, item.IconSource));
+                    string.IsNullOrEmpty(address) || address == "about:blank" ? "尚未打开网页" : BrowserTabControl.DisplayAddress(address), item.IconSource));
             }
         }
         FilterTabList();

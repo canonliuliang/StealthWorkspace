@@ -28,7 +28,7 @@ public sealed partial class BrowserTabControl
         if (_isDisposed || args.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return;
         // No request leaves the computer while typing. Enter alone commits a
         // search/navigation; arrows select only local bookmarks/session history.
-        var bookmarks = SettingsService.Instance.Data.Bookmarks;
+        var bookmarks = SettingsService.Instance.CurrentBookmarks;
         if (bookmarks.Count >= 256) _addressEdit ??= new();
         sender.ItemsSource = BrowserAddressSuggestions.Get(sender.Text, bookmarks,
             BrowserSessionHistory.Items, SettingsService.Instance.GetSearchUrl, _addressEdit);

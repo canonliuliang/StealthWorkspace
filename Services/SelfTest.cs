@@ -95,6 +95,8 @@ public static class SelfTest
         try
         {
             CollectionSelfTest.Run(Report);
+            await BookmarkHtmlSelfTest.RunAsync(testRoot, Report);
+            BrowserAddressSelfTest.Run(Report, testRoot);
             await VaultIntegritySelfTest.RunAsync(testRoot, Report, Skip);
             await LegacyVaultMigrationSelfTest.RunAsync(testRoot, Report);
             SettingsMigrationSelfTest.Run(testRoot, Report);
@@ -145,7 +147,7 @@ public static class SelfTest
             using (var afterExisting = BrowserDownloadPath.Reserve(testRoot, "same-name.bin"))
                 Report(Path.GetFileName(afterExisting.FilePath) != "same-name.bin" && File.ReadAllText(Path.Combine(testRoot, "same-name.bin")) == "keep existing bytes",
                     "Download reservation preserves an existing file");
-            foreach (string unsafeName in new[] { "CON.txt", "..", "NUL", "x/y\\z.bin", new string('a', 180) + ".jpg" })
+            foreach (string unsafeName in new[] { "CON.txt", "COM¹.txt", "lpt².tar.gz", "CONOUT$.txt", "..", "NUL", "x/y\\z.bin", new string('a', 180) + ".jpg" })
             {
                 using var reserved = BrowserDownloadPath.Reserve(testRoot, unsafeName);
                 try { File.WriteAllText(reserved.FilePath, "fixture"); Report(File.Exists(reserved.FilePath), "Download name accepted by Windows: " + unsafeName); }
@@ -588,7 +590,7 @@ public static class SelfTest
     }
 
     /// <summary>Writes a file using the legacy (V1) format so compatibility can be verified.</summary>
-    private static void WriteLegacyV1File(string path, byte[] plaintext, byte[] key)
+    internal static void WriteLegacyV1File(string path, byte[] plaintext, byte[] key)
     {
         byte[] magic = Encoding.ASCII.GetBytes("SVAULT01");
         byte[] salt = CryptoService.GenerateRandomBytes(CryptoService.SaltSize);

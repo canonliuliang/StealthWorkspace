@@ -76,6 +76,55 @@ internal static class SettingsMigrationSelfTest
             Require(migrated.IsBookmarked("https://current.fixture.invalid/") && !migrated.IsBookmarked(legacyUrl));
             Require(!File.Exists(fixture.Legacy));
         });
+        Check("a sharing violation preserves the latest primary and refuses stale writes", () =>
+        {
+            string data = Path.Combine(root, "busy-primary");
+            var initial = new SettingsService(data, null);
+            Require(initial.AddBookmark("First", "https://first.fixture.invalid/"));
+            Require(initial.AddBookmark("Latest", "https://latest.fixture.invalid/"));
+            string primary = Path.Combine(data, "settings.dat");
+            byte[] latest = File.ReadAllBytes(primary);
+            SettingsService busy;
+            bool changed;
+            using (File.Open(primary, FileMode.Open, FileAccess.Read, FileShare.Delete))
+            {
+                busy = new SettingsService(data, null);
+                changed = busy.AddBookmark("Attempt", "https://unsaved.fixture.invalid/");
+            }
+            Require(!changed && !busy.SaveSettings());
+            Require(File.ReadAllBytes(primary).AsSpan().SequenceEqual(latest));
+            Require(!Directory.EnumerateFiles(data, "settings.corrupt-*.dat").Any());
+            var reopened = new SettingsService(data, null);
+            Require(reopened.IsBookmarked("https://latest.fixture.invalid/") && !reopened.IsBookmarked("https://unsaved.fixture.invalid/"));
+        });
+        Check("temporarily busy backup cannot be replaced by first-run defaults", () =>
+        {
+            string data = Path.Combine(root, "busy-backup");
+            var initial = new SettingsService(data, null);
+            Require(initial.AddBookmark("Only copy", "https://backup.fixture.invalid/"));
+            string primary = Path.Combine(data, "settings.dat");
+            string backup = primary + ".bak";
+            File.Move(primary, backup, overwrite: true);
+            using (File.Open(backup, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                var blocked = new SettingsService(data, null);
+                Require(blocked.LoadFailed && !blocked.SaveSettings() && !File.Exists(primary));
+            }
+            Require(new SettingsService(data, null).IsBookmarked("https://backup.fixture.invalid/"));
+        });
+        Check("a surviving encrypted backup takes priority over older legacy settings", () =>
+        {
+            var fixture = Fixture("current-backup", valid);
+            var initial = new SettingsService(fixture.Data, null);
+            Require(initial.AddBookmark("Newer", "https://newer.fixture.invalid/"));
+            string primary = Path.Combine(fixture.Data, "settings.dat");
+            File.Move(primary, primary + ".bak", overwrite: true);
+            var recovered = new SettingsService(fixture.Data, fixture.Legacy);
+            Require(recovered.IsBookmarked("https://newer.fixture.invalid/") && !recovered.IsBookmarked(legacyUrl));
+            Require(File.Exists(fixture.Legacy) && recovered.SaveSettings());
+            var reopened = new SettingsService(fixture.Data, fixture.Legacy);
+            Require(reopened.IsBookmarked("https://newer.fixture.invalid/") && !File.Exists(fixture.Legacy));
+        });
         Check("blocked source cleanup leaves a usable encrypted copy and retries safely", () =>
         {
             var fixture = Fixture("blocked-cleanup", valid);

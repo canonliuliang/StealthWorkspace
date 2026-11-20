@@ -10,7 +10,7 @@ Stealth 是 Windows 桌面应用，当前提供预览版本。建议使用 Windo
 
 从仓库 Releases 下载 ZIP，完整解压到固定且可写的目录，然后打开 `StealthWorkspace.exe`。不要只复制 EXE，也不要直接在 ZIP 中运行。发布包包含 .NET 和 Windows App SDK；网页需要 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。
 
-当前版本为 `2026.11.20-r16-preview`。便携包使用手动更新；WebView2 Evergreen 运行时由 Microsoft 独立维护。[下载 r16 和 SHA-256 清单](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.20-r16-preview)
+当前版本为 `2026.11.21-r16.1-preview`。便携包使用手动更新；WebView2 Evergreen 运行时由 Microsoft 独立维护。[下载 r16.1 和 SHA-256 清单](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview)
 
 当前预览包未使用受信任发布者证书签名，Windows 可能显示 SmartScreen 提示。校验值只能检查下载内容是否一致，不能代替发布者签名。由使用者判断是否信任；不要关闭系统保护。参见 [Microsoft 应用声誉说明](https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation)。
 
@@ -32,6 +32,8 @@ Stealth 是 Windows 桌面应用，当前提供预览版本。建议使用 Windo
 4. 在设置中创建加密备份并检查完整性。当前备份依赖原 Windows 用户的 DPAPI，重装系统或换机后可能无法恢复，不是跨电脑备份。重要原始文件应另行妥善备份。
 
 ## 更新与卸载
+
+从其他浏览器迁入收藏时，先在原浏览器将书签导出为 HTML，再在 Stealth 主空间设置中搜索「收藏」并选择「导入 HTML」。支持最多 32 MiB 的单个文件和 HTTP(S) 网页地址。文件夹内容合并为一份列表，同地址不会重复添加。导出 HTML 可用于转移收藏，不能用于恢复保险箱。
 
 更新前创建并检查加密备份，然后正常退出应用。将新版本解压到另一固定目录；使用本机数据目录的安装通常会沿用原数据。
 

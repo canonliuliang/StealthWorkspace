@@ -37,6 +37,9 @@ public sealed partial class BrowserPage
         await CheckPendingResourceSleepAsync();
         var reloadItem = CreateNewTab()!;
         await ((BrowserTabControl)reloadItem.Content).CheckHardReloadAuditAsync();
+        await ((BrowserTabControl)reloadItem.Content).CheckSiteStorageAndAddressAuditAsync();
+        await ((BrowserTabControl)reloadItem.Content).CheckBookmarkEditWorkflowAsync();
+        await ((BrowserTabControl)reloadItem.Content).CheckNetworkPrivacyBoundaryAsync();
         await CloseTabAsync(reloadItem);
         await CheckFullScreenWorkflowAsync();
         var imageItem = CreateNewTab()!;
@@ -60,7 +63,7 @@ public sealed partial class BrowserPage
         var owner = (BrowserTabControl)ownerItem.Content;
         await owner.NavigateAuditAsync(fixture.Address + "/page");
         var operation = await owner.BeginDownloadAuditAsync(fixture.Address + "/download-slow");
-        var record = BrowserDownloads.Items.Single(item => item.FilePath == operation.ResultFilePath);
+        var record = BrowserDownloads.Items.Single(item => item.IsPending && item.FilePath == operation.ResultFilePath);
         record.TogglePauseResume();
         await WaitAuditAsync(() => record.CanResume);
         await CloseTabAsync(ownerItem);
@@ -237,6 +240,28 @@ public sealed partial class BrowserPage
         AuditRequire(!blank.HasPendingDownloadBadge, "completion clears pending badge across tabs");
         byte[] bytes = await File.ReadAllBytesAsync(path);
         AuditRequire(bytes.Length == 4194304 && bytes.All(b => b == 0x5A), "closed-tab download completes with exact content and releases controller");
+        await blank.NavigateAuditAsync(fixture.Address + "/page");
+        var first = await blank.BeginDownloadAuditAsync(fixture.Address + "/download-slow?first");
+        var survivor = await blank.BeginDownloadAuditAsync(fixture.Address + "/download-slow?second");
+        var cancelled = BrowserDownloads.Items.Single(entry => entry.FilePath == first.ResultFilePath);
+        var remaining = BrowserDownloads.Items.Single(entry => entry.FilePath == survivor.ResultFilePath);
+        AuditRequire(first.ResultFilePath != survivor.ResultFilePath && survivor.ResultFilePath != path && first.ResultFilePath != path,
+            "same-name concurrent downloads reserve separate files and preserve a previous completed file");
+        await WaitAuditAsync(() => first.BytesReceived > 0 && survivor.BytesReceived > 0);
+        cancelled.TogglePauseResume();
+        await WaitAuditAsync(() => cancelled.CanResume);
         await CloseTabAsync(blankItem);
+        cancelled.Cancel();
+        await WaitAuditAsync(() => !cancelled.IsPending);
+        await WaitAuditAsync(() => remaining.IsCompleted && _downloadOwners.Count == 0);
+        var remainingBytes = await File.ReadAllBytesAsync(remaining.FilePath);
+        AuditRequire(!cancelled.IsCompleted && cancelled.Status == "已取消" && !File.Exists(cancelled.FilePath) &&
+            bytes.SequenceEqual(remainingBytes) && BrowserDownloads.PendingCount == 0,
+            "canceling a paused download after closing its tab preserves the other file and releases the controller");
+        var longName = new string('a', 115) + "🌲.zip";
+        AuditRequire(BrowserDownloadPath.SanitizeName("جريدة.txt") == "جريدة.txt" &&
+            BrowserDownloadPath.SanitizeName("研究\u202E表格.csv") == "研究_表格.csv" &&
+            BrowserDownloadPath.SanitizeName(longName) == new string('a', 115) + ".zip",
+            "download names retain ordinary international text and extensions, replace direction overrides and preserve Unicode scalar boundaries");
     }
 }

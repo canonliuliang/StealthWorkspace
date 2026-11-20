@@ -2,14 +2,19 @@ namespace StealthWorkspace.Services;
 
 internal static class BrowserAddress
 {
-    private static readonly string[] UnsupportedPrefixes = ["javascript:", "data:", "file:", "about:", "edge:", "chrome:", "mailto:"];
+    private static readonly HashSet<string> LocalOrExternalSchemes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "javascript", "data", "file", "about", "edge", "chrome", "mailto", "tel", "sms", "smsto",
+        "callto", "facetime", "sip", "sips", "geo", "otpauth", "otpauth-migration", "magnet", "urn", "ssh", "intent", "microsoft-edge"
+    };
 
     internal readonly record struct PageKey(string Scheme, string Host, int Port, string UserInfo, string Resource)
     {
         internal static PageKey From(string address) => Uri.TryCreate(address, UriKind.Absolute, out var uri)
-            ? new(uri.Scheme, uri.IdnHost.ToUpperInvariant(), uri.Port, uri.UserInfo,
-                uri.GetComponents(UriComponents.PathAndQuery | UriComponents.Fragment, UriFormat.UriEscaped))
-            : new("", "", -1, "", address);
+            ? From(uri) : new("", "", -1, "", address);
+
+        internal static PageKey From(Uri uri) => new(uri.Scheme, uri.IdnHost.ToUpperInvariant(), uri.Port, uri.UserInfo,
+            uri.GetComponents(UriComponents.PathAndQuery | UriComponents.Fragment, UriFormat.UriEscaped));
     }
 
     internal static bool SamePage(string left, string right)
@@ -45,12 +50,22 @@ internal static class BrowserAddress
         // Reject explicit unsupported schemes before trying the implicit-host path.
         if (text.Contains("://", StringComparison.Ordinal) || text.StartsWith(@"\\", StringComparison.Ordinal) ||
             (text.Length >= 3 && char.IsAsciiLetter(text[0]) && text[1] == ':' && text[2] is '/' or '\\')) return null;
-        foreach (var prefix in UnsupportedPrefixes)
-            if (text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+        int schemeEnd = text.IndexOf(':');
+        if (schemeEnd > 0)
+        {
+            string scheme = text[..schemeEnd];
+            if (LocalOrExternalSchemes.Contains(scheme) ||
+                (scheme.StartsWith("ms-", StringComparison.OrdinalIgnoreCase) && Uri.CheckSchemeName(scheme))) return null;
+            // A mistyped host or port does not make a pasted password safe to search.
+            int at = text.IndexOf('@', schemeEnd + 1);
+            if (at > schemeEnd && !text.AsSpan(0, at).ContainsAny('/', '?', '#') && !text.Any(char.IsWhiteSpace))
+                return null;
+        }
 
         // Uri accepts shorthand/octal/hex IPv4 ("9" becomes 0.0.0.9). In an
         // omnibox, numbers and decimal/version strings are usually search terms.
-        if (!text.Any(char.IsWhiteSpace) && Uri.TryCreate("http://" + text, UriKind.Absolute, out var address) && !string.IsNullOrEmpty(address.Host) && string.IsNullOrEmpty(address.UserInfo))
+        if (!text.Any(char.IsWhiteSpace) && Uri.TryCreate("http://" + text, UriKind.Absolute, out var address) &&
+            !string.IsNullOrEmpty(address.Host) && string.IsNullOrEmpty(address.UserInfo))
         {
             int end = text.AsSpan().IndexOfAny('/', '?', '#');
             ReadOnlySpan<char> authority = end < 0 ? text.AsSpan() : text.AsSpan(0, end);
@@ -64,7 +79,7 @@ internal static class BrowserAddress
                 !authority[(colon + 1)..].ContainsAnyExceptInRange('0', '9'))
                 return address;
             if (address.HostNameType == UriHostNameType.Dns && address.Host.Contains('.') &&
-                address.Host.TrimEnd('.').Split('.')[^1].Any(char.IsLetter) && string.IsNullOrEmpty(address.UserInfo))
+                address.Host.TrimEnd('.').Split('.')[^1].Any(char.IsLetter))
                 return WebUri("https://" + text);
         }
 

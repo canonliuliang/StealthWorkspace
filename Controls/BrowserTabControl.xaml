@@ -97,7 +97,7 @@
 
                             <!-- Privacy Hub Flyout -->
                             <Button.Flyout>
-                                <Flyout x:Name="PrivacyFlyout" Placement="BottomEdgeAlignedLeft" Opening="PrivacyFlyout_Opening" Closed="PrivacyFlyout_Closed">
+                                <Flyout x:Name="PrivacyFlyout" Placement="BottomEdgeAlignedLeft" Opening="PrivacyFlyout_Opening" Opened="PrivacyFlyout_Opened" Closed="PrivacyFlyout_Closed">
                                     <Flyout.FlyoutPresenterStyle>
                                         <Style TargetType="FlyoutPresenter">
                                             <Setter Property="Padding" Value="0" />
@@ -300,7 +300,17 @@
                                             <!-- Panel 3: Storage & Cache Purge (Truthful wording - Item 8) -->
                                             <ScrollViewer x:Name="PanelStorage" Padding="10,8" Visibility="Collapsed">
                                                 <StackPanel Spacing="6">
-                                                    <!-- Action 1: Clear LocalStorage / IndexedDB / Cache -->
+                                                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="6" Padding="10,8">
+                                                        <Grid ColumnSpacing="8">
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                            <FontIcon Glyph="&#xE774;" FontSize="15" Foreground="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Center" />
+                                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                                <TextBlock Text="本站的离线数据" FontWeight="SemiBold" FontSize="12" />
+                                                                <TextBlock Text="清除本地存储、IndexedDB 和离线缓存，保留 Cookie" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                            <Button x:Name="ClearSiteStorageBtn" Grid.Column="2" Content="清除…" AutomationProperties.Name="清除本站的离线数据" Click="ClearSiteStorage_Click" CornerRadius="4" Padding="8,4" FontSize="12" />
+                                                        </Grid>
+                                                    </Border>
                                                     <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="6" Padding="10,8">
                                                         <Grid ColumnSpacing="8">
                                                             <Grid.ColumnDefinitions>
@@ -356,11 +366,13 @@
                                             <!-- Panel 4: Volatile Session History -->
                                             <Grid x:Name="PanelHistory" Padding="10,8" RowSpacing="6" Visibility="Collapsed">
                                                 <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="*" />
                                                     <RowDefinition Height="Auto" />
                                                 </Grid.RowDefinitions>
 
-                                                <Grid Grid.Row="0">
+                                                <TextBox x:Name="HistorySearchBox" PlaceholderText="搜索本次会话的标题或网址" AutomationProperties.Name="搜索本次会话历史" TextChanged="HistorySearchBox_TextChanged" KeyDown="HistorySearchBox_KeyDown" />
+                                                <Grid Grid.Row="1">
                                                     <ListView x:Name="HistoryListView"
                                                               SelectionMode="None"
                                                               Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
@@ -397,11 +409,11 @@
 
                                                     <StackPanel x:Name="HistoryEmptyNotice" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4" Visibility="Collapsed">
                                                         <FontIcon Glyph="&#xE81C;" FontSize="20" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center" />
-                                                        <TextBlock Text="暂无内存会话历史" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center" />
+                                                        <TextBlock x:Name="HistoryEmptyText" Text="暂无内存会话历史" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center" />
                                                     </StackPanel>
                                                 </Grid>
 
-                                                <Button Grid.Row="1" Content="清空当前临时历史" HorizontalAlignment="Stretch" Click="ClearSessionHistory_Click" CornerRadius="4" Padding="4,4" FontSize="12" />
+                                                <Button Grid.Row="2" Content="清空当前临时历史" HorizontalAlignment="Stretch" Click="ClearSessionHistory_Click" CornerRadius="4" Padding="4,4" FontSize="12" />
                                             </Grid>
                                         </Grid>
 
@@ -519,7 +531,7 @@
                                 <Button Content="页内查找    Ctrl+F" Click="FindInPageBtn_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
                                 <Button x:Name="PageImagesBtn" Content="查看网页图片" Click="PageImages_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
                                 <Button AutomationProperties.Name="重新获取此页资源，保留当前登录与其他标签页" Content="忽略缓存并刷新    Ctrl+Shift+R" Click="HardReload_Click" ToolTipService.ToolTip="重新获取此页资源，保留当前登录与其他标签页" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
-                                <Button Content="本次会话历史" Click="ShowHistory_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
+                                <Button Content="本次会话历史 (Ctrl+H)" Click="ShowHistory_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
                                 <Button AutomationProperties.Name="转到独立的 Edge InPrivate 窗口；本应用的锁定和结束会话不会关闭它。" x:Name="OpenInEdgeBtn" Content="在 Edge 隐私窗口打开" Click="OpenInEdge_Click" ToolTipService.ToolTip="转到独立的 Edge InPrivate 窗口；本应用的锁定和结束会话不会关闭它。" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
                                 <Button Content="打开下载文件夹" Click="OpenDownloadsFolder_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
                                 <Button x:Name="AudioMuteBtn" Content="静音标签页" Click="AudioMuteBtn_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />

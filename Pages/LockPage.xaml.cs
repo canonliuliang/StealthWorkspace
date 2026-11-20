@@ -311,7 +311,7 @@ public sealed partial class LockPage : Page
             var picker = new Windows.Storage.Pickers.FileOpenPicker();
             WinRT.Interop.InitializeWithWindow.Initialize(picker, MainWindow.CurrentHandle);
             picker.FileTypeFilter.Add(".swbackup");
-            var source = await picker.PickSingleFileAsync();
+            var source = await WorkspaceNativeDialogs.PickAsync(picker.PickSingleFileAsync);
             if (source == null) return;
             BusyText.Text = "正在校验并恢复备份…";
             int count = await VaultService.Instance.RestoreBackupAsync(source.Path);

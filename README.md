@@ -2,21 +2,21 @@
 
 面向 Windows 的原生浏览器与本地加密媒体工作台。基于 WinUI 3、Windows App SDK 和 Microsoft Edge WebView2。
 
-**r16 将站点设置、清理和恢复限定在明确的范围内。** 网页会议需要麦克风时，可以只调整当前标签页的本站规则。排查网页加载问题时，可以清理 HTTP 缓存并保留网页应用的离线文件。提供 Windows 11 x64 和 ARM64 便携包。
+**r16.1 可以迁移浏览器收藏、单独清理一个来源的离线数据，并在 Windows 锁屏时一起锁定工作台。** 提供 Windows 11 x64 和 ARM64 便携包。
 
-[官网](https://canonliuliang.github.io/StealthWorkspace/) · [r16 下载与 SHA-256](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.20-r16-preview) · [安装和升级](docs/INSTALL.md) · [问题反馈](https://github.com/canonliuliang/StealthWorkspace/issues)
+[官网](https://canonliuliang.github.io/StealthWorkspace/) · [r16.1 下载与 SHA-256](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview) · [安装和升级](docs/INSTALL.md) · [问题反馈](https://github.com/canonliuliang/StealthWorkspace/issues)
 
 > 当前渠道提供未签名预览版。WebView2 会话可能写入磁盘，普通下载按明文保存。保险箱备份依赖原 Windows 用户的 DPAPI。项目尚未接受独立安全审计。
 
-![在隔离的 Stealth r16 窗口中搜索、恢复当前会话的网页](website/assets/r16-tab-search.png)
+![Stealth r16.1 导入 HTML 收藏并显示去重结果](website/assets/r161-bookmarks.png)
 
-## r16 的变化
+## r16.1 的变化
 
-- **临时调整本站权限。** 摄像头、麦克风、位置和通知的例外在离开来源或关闭标签时失效。允许本站自动弹窗的规则只适用于同源发起者。
-- **找回刚关闭的网页。** 按 Ctrl+Shift+A，切换到「最近关闭」并输入标题或网址。只在当前会话内保留最近 20 个地址。
-- **保留离线资料。** 清理 HTTP 磁盘缓存保留应用的离线内容。清除本次会话所有网站的数据前会提示哪些资料可能丢失。
-- **更快筛选大量收藏。** 逐步缩小收藏筛选时会复用上一轮结果。地址栏会复用当前编辑过程中已确认的无匹配前缀。[计时、分配与退化场景](docs/R16-PERFORMANCE.md)
-- **直接保存网页图片。** 在支持的图片上使用右键菜单，可直接将已加载的内容加密存入媒体库。普通下载另有显式入库操作。
+- **迁移收藏。** 在设置中按 Ctrl+F 搜索「收藏」，可导入其他浏览器导出的 HTML，自动去重。主空间能导出明文 HTML。诱饵空间有独立的临时收藏，锁定后清空。
+- **修复一个网站。** 清理本站离线存储时保留登录 Cookie、其他来源和其他顶层站点的存储分区。Ctrl+H 可在本次会话内按标题或网址查历史。
+- **保护工作区。** 可以开启「跟随 Windows 锁定工作台」。锁屏、断开会话或睡眠会撤销解锁并结束网页会话。新安装默认保留系统 DNS 缓存。
+- **保护已有数据。** 设置被占用时保留原件。备份校验完成后才替换目标文件，恢复时会检查已有密文是否与待恢复文件一致。[数据完整性验收](docs/R161-DATA.md)
+- **改善地址栏输入。** 粘贴含用户名和密码的裸地址时会阻止误发给搜索引擎。大量收藏的增量筛选和编辑索引也已调整。[实测结果](docs/R161-PERFORMANCE.md)
 
 ## 日常使用
 
@@ -43,12 +43,12 @@
 dotnet build
 dotnet run
 # 打包并执行核心自检
-./tools/Build-Release.ps1 -Runtime win-arm64 -Version 2026.11.20-r16-preview
+./tools/Build-Release.ps1 -Runtime win-arm64 -Version 2026.11.21-r16.1-preview
 # 官网本地预览
 node tools/site.mjs serve
 ```
 
-两个架构分别在原生 Windows runner 上构建、自检。两个公开 ZIP 均经下载校验、解压和实际启动验证。[开发说明](docs/DEVELOPMENT.md) · [r16 研究与架构](docs/R16-REVIEW.md) · [公开包与发布渠道验收](docs/VALIDATION.md) · [构建记录](https://github.com/canonliuliang/StealthWorkspace/actions/workflows/build.yml)
+两个架构分别在原生 Windows runner 上构建、自检。两个公开 ZIP 均经下载校验、解压和实际启动验证。[开发说明](docs/DEVELOPMENT.md) · [r16.1 研究与架构](docs/R161-REVIEW.md) · [公开包与发布渠道验收](docs/VALIDATION.md) · [构建记录](https://github.com/canonliuliang/StealthWorkspace/actions/workflows/build.yml)
 
 ## 使用前应了解
 

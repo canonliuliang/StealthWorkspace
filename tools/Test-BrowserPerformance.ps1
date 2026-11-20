@@ -24,6 +24,8 @@ if ($settingsText -notmatch 'public\s+(ImmutableList|List)<BookmarkItem>\s+Bookm
     throw 'Unknown baseline bookmark collection. Verify its production type before measuring.'
 }
 $baselineStorage = $Matches[1]
+$hasEdit = [IO.File]::ReadAllText((Join-Path $baseline 'Services\BrowserAddressSuggestions.cs')).Contains('class EditSession')
+$hasFilter = Test-Path -LiteralPath (Join-Path $baseline 'Services\BookmarkFilter.cs')
 New-Item -ItemType Directory -Path $output | Out-Null
 $sourceHashes = foreach ($source in @('Services\BrowserAddress.cs', 'Services\BrowserAddressSuggestions.cs')) {
     [PSCustomObject]@{
@@ -44,13 +46,19 @@ foreach ($name in @('BrowserAddress', 'BrowserAddressSuggestions')) {
     $source = "using StealthWorkspace.Services;`n" + $source.Replace('namespace StealthWorkspace.Services;', 'namespace Baseline.Services;')
     [IO.File]::WriteAllText((Join-Path $output "Baseline.$name.cs"), $source, $utf8)
 }
+if ($hasFilter) {
+    $source = [IO.File]::ReadAllText((Join-Path $baseline 'Services\BookmarkFilter.cs'))
+    $source = "using StealthWorkspace.Services;`n" + $source.Replace('namespace StealthWorkspace.Services;', 'namespace Baseline.Services;')
+    [IO.File]::WriteAllText((Join-Path $output 'Baseline.BookmarkFilter.cs'), $source, $utf8)
+}
+$defines = (@(if ($hasFilter) { 'BASELINE_FILTER' }; if ($hasEdit) { 'BASELINE_EDIT' }) -join ';')
 $addressSource = [Security.SecurityElement]::Escape((Join-Path $repoRoot 'Services\BrowserAddress.cs'))
 $suggestionSource = [Security.SecurityElement]::Escape((Join-Path $repoRoot 'Services\BrowserAddressSuggestions.cs'))
 $modelSource = [Security.SecurityElement]::Escape((Join-Path $repoRoot 'Models\BrowserAddressSuggestion.cs'))
 $filterSource = [Security.SecurityElement]::Escape((Join-Path $repoRoot 'Services\BookmarkFilter.cs'))
 $project = @"
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><DefineConstants>$defines</DefineConstants></PropertyGroup>
   <ItemGroup>
     <Compile Include="$addressSource" Link="Current.BrowserAddress.cs" />
     <Compile Include="$suggestionSource" Link="Current.BrowserAddressSuggestions.cs" />
@@ -139,7 +147,12 @@ internal static class Program
                 {
                     var filter = baseline ? null : new BookmarkFilter();
                     IReadOnlyList<BookmarkItem> rows = [];
+#if BASELINE_FILTER
+                    var oldFilter = baseline ? new Baseline.Services.BookmarkFilter() : null;
+                    foreach (var key in keys) rows = baseline ? oldFilter!.Filter(snapshot, key) : filter!.Filter(snapshot, key);
+#else
                     foreach (var key in keys) rows = baseline ? OriginalFilter(key) : filter!.Filter(snapshot, key);
+#endif
                     return rows;
                 }
                 var check = new BookmarkFilter();
@@ -149,16 +162,34 @@ internal static class Program
                 flyout.Add(new { bookmarks = count, scenario, result });
                 Console.WriteLine($"Flyout {scenario} / {count} bookmarks: {result}");
             }
-            foreach (string phrase in new[] { "technical report 2026", "bookmark " + (count - 1) })
+#if BASELINE_FILTER
+            IReadOnlyList<BookmarkItem> FirstFilter(bool baseline)
+            {
+                var fresh = snapshot.SetItem(0, new BookmarkItem { Title = snapshot[0].Title, Url = snapshot[0].Url });
+                return baseline ? new Baseline.Services.BookmarkFilter().Filter(fresh, "no-such-entry") :
+                    new BookmarkFilter().Filter(fresh, "no-such-entry");
+            }
+            var cold = Measure(() => FirstFilter(true), () => FirstFilter(false));
+            flyout.Add(new { bookmarks = count, scenario = "first filter on fresh snapshot", result = cold });
+            Console.WriteLine($"First filter (includes fresh view) / {count}: {cold}");
+#endif
+            foreach (string phrase in new[] { "technical report 2026", "bookmark " + (count - 1), "collection/" + (count - 1) + "?item=image" })
             {
                 string[] prefixes = Enumerable.Range(1, phrase.Length).Select(n => phrase[..n]).ToArray();
                 IReadOnlyList<BrowserAddressSuggestion> Sequence(bool baseline)
                 {
                     var edit = !baseline && count >= 256 ? new BrowserAddressSuggestions.EditSession() : null;
                     IReadOnlyList<BrowserAddressSuggestion> rows = [];
+#if BASELINE_EDIT
+                    var legacyEdit = baseline && count >= 256 ? new Baseline.Services.BrowserAddressSuggestions.EditSession() : null;
+                    foreach (var prefix in prefixes)
+                        rows = baseline ? Baseline.Services.BrowserAddressSuggestions.Get(prefix, original, history, Search, legacyEdit) :
+                            BrowserAddressSuggestions.Get(prefix, snapshot, history, Search, edit);
+#else
                     foreach (var prefix in prefixes)
                         rows = baseline ? Baseline.Services.BrowserAddressSuggestions.Get(prefix, original, history, Search) :
                             BrowserAddressSuggestions.Get(prefix, snapshot, history, Search, edit);
+#endif
                     return rows;
                 }
 
