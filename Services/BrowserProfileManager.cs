@@ -91,30 +91,18 @@ public static class BrowserProfileManager
 
             // Keep normal rendering capabilities: disabling canvas readback breaks
             // legitimate image tools and can prevent site verification from working.
-            // Try the full privacy options first, then a minimal set. Some older /
-            // enterprise-managed WebView2 runtimes reject individual options.
-            var fullOptions = new CoreWebView2EnvironmentOptions
+            // Use these two privacy options on every directory attempt. A
+            // fallback with default options could share the browser process or
+            // send a crash dump to Microsoft under the Windows consent setting.
+            var options = new CoreWebView2EnvironmentOptions
             {
-                AdditionalBrowserArguments =
+                AdditionalBrowserArguments = SmokeTest.ReferenceBrowserProbe ? "" :
                     "--disable-features=Translate,OptimizationHints,MediaRouter --no-first-run",
-                IsCustomCrashReportingEnabled = false,
+                IsCustomCrashReportingEnabled = true,
                 ExclusiveUserDataFolderAccess = true,
             };
 
-            var minimalOptions = new CoreWebView2EnvironmentOptions
-            {
-                AdditionalBrowserArguments =
-                    "--disable-features=Translate,OptimizationHints,MediaRouter --no-first-run",
-            };
-
             Exception? lastError = null;
-            // Explicit isolated diagnostic: compare a stock WebView with the app's
-            // host, not a collection of speculative Chromium flags.
-            if (SmokeTest.ReferenceBrowserProbe)
-            {
-                fullOptions.AdditionalBrowserArguments = "";
-                minimalOptions.AdditionalBrowserArguments = "";
-            }
             int candidateIndex = 0;
             foreach (string directory in EnumerateProfileDirectoryCandidates())
             {
@@ -140,26 +128,20 @@ public static class BrowserProfileManager
                 // A directory can be writable by the host but inaccessible to the
                 // browser process. Only select it after the environment starts;
                 // otherwise try the remaining locations with a fresh profile.
-                foreach (CoreWebView2EnvironmentOptions options in new[] { fullOptions, minimalOptions })
+                try
                 {
-                    try
-                    {
-                        CoreWebView2Environment created = await CoreWebView2Environment.CreateWithOptionsAsync(
-                            string.Empty,
-                            directory,
-                            options);
-                        _sharedEnvironment = created;
-                        _sharedUserDataDirectory = directory;
-                        _profileOwnerLease = ownerLease;
-                        ownerLease = null;
-                        AppLog.Info("BrowserProfileManager: 已创建本进程唯一的 WebView2 易失性用户数据目录");
-                        return created;
-                    }
-                    catch (Exception ex)
-                    {
-                        lastError = ex;
-                        AppLog.Warn($"BrowserProfileManager: WebView2 环境创建尝试失败（{DescribeErrorCode(ex)}）");
-                    }
+                    CoreWebView2Environment created = await CoreWebView2Environment.CreateWithOptionsAsync(
+                        string.Empty, directory, options);
+                    _sharedEnvironment = created;
+                    _sharedUserDataDirectory = directory;
+                    _profileOwnerLease = ownerLease;
+                    AppLog.Info("BrowserProfileManager: 已创建本进程唯一的 WebView2 易失性用户数据目录");
+                    return created;
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                    AppLog.Warn($"BrowserProfileManager: WebView2 环境创建尝试失败（{DescribeErrorCode(ex)}）");
                 }
 
                 ownerLease?.Dispose();
@@ -409,19 +391,58 @@ public static class BrowserProfileManager
         var directory = new DirectoryInfo(candidate);
         if (directory.Attributes.HasFlag(FileAttributes.ReparsePoint) || DateTime.UtcNow - directory.LastWriteTimeUtc < StaleProfileAge)
             return false;
-        string marker = Path.Combine(candidate, OwnerMarkerName);
-        if (!File.Exists(marker)) return false;
         try
         {
-            // Exclusive open fails while another process still owns the profile.
-            // Keep the ownership lock until deletion finishes. Delete sharing lets
-            // Windows remove this marker but still rejects any new reader/writer.
-            using var ownership = new FileStream(marker, FileMode.Open, FileAccess.ReadWrite, FileShare.Delete);
-            Directory.Delete(candidate, true);
+            DeleteOwnedProfile(candidate);
             return true;
         }
         catch (IOException) { return false; }
         catch (UnauthorizedAccessException) { return false; }
+    }
+
+    private static void DeleteOwnedProfile(string directory)
+    {
+        var profile = new DirectoryInfo(directory);
+        FileAttributes attributes;
+        try { attributes = File.GetAttributes(profile.FullName); }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return; }
+        if (!profile.Name.StartsWith(ProfileDirectoryPrefix, StringComparison.Ordinal) ||
+            !Guid.TryParseExact(profile.Name[ProfileDirectoryPrefix.Length..], "N", out _) ||
+            attributes.HasFlag(FileAttributes.ReparsePoint))
+            throw new IOException("Invalid browser profile directory.");
+
+        string marker = Path.Combine(profile.FullName, OwnerMarkerName);
+        if ((File.GetAttributes(marker) & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
+            throw new IOException("Invalid browser profile marker.");
+
+        // A live owner denies this open. Preserve the marker if a child still
+        // has a browser/AV handle, so a later startup can reclaim the profile.
+        using (new FileStream(marker, FileMode.Open, FileAccess.Read, FileShare.Delete))
+        {
+            foreach (var entry in profile.EnumerateFileSystemInfos())
+            {
+                if (entry.Name.Equals(OwnerMarkerName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (entry is DirectoryInfo child && !entry.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                    child.Delete(recursive: true);
+                else entry.Delete();
+            }
+            // Recursive Windows deletes may return before a child disappears.
+            if (profile.EnumerateFileSystemInfos().Any(entry => !entry.Name.Equals(OwnerMarkerName, StringComparison.OrdinalIgnoreCase)))
+                throw new IOException("Browser profile still contains pending items.");
+            File.Delete(marker);
+        }
+
+        try { profile.Delete(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A final directory lock or a late file creation can still prevent
+            // removal. Keep a safe retry possible after the host exits.
+            if (profile.Exists && !File.GetAttributes(profile.FullName).HasFlag(FileAttributes.ReparsePoint))
+            {
+                using var restored = new FileStream(marker, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            }
+            throw;
+        }
     }
 
     private static IEnumerable<(string Root, string[] Candidates)> EnumerateProfileSweepRoots()
@@ -527,7 +548,7 @@ public static class BrowserProfileManager
                 {
                     AppLog.Info($"ShutdownAsync: 已销毁 {removed} 个 WebView2 易失性用户数据目录");
                 }
-                else
+                else if (pending.Length == 0)
                 {
                     AppLog.Info("ShutdownAsync: 没有需要销毁的 WebView2 用户数据目录");
                 }
@@ -574,11 +595,7 @@ public static class BrowserProfileManager
         {
             try
             {
-                Directory.Delete(directory, true);
-                return true;
-            }
-            catch (DirectoryNotFoundException)
-            {
+                DeleteOwnedProfile(directory);
                 return true;
             }
             catch (Exception ex)

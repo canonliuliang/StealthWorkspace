@@ -7,6 +7,7 @@ public sealed partial class BrowserTabControl
         _retainedForDownloads = true;
         SetTabSelected(false);
         TitleChanged = null;
+        DocumentAddressChanged = null;
         AudioPlayingChanged = null;
         NavigationVisualChanged = null;
         NewTabRequested = null;

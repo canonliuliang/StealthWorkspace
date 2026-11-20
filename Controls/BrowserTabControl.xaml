@@ -21,8 +21,18 @@
     </UserControl.Resources>
 
     <Grid Background="{ThemeResource LayerFillColorDefaultBrush}">
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="BookmarkStates">
+                <VisualState x:Name="NotBookmarked" />
+                <VisualState x:Name="Bookmarked">
+                    <VisualState.Setters>
+                        <Setter Target="BookmarkStarIcon.Glyph" Value="&#xE735;" />
+                        <Setter Target="BookmarkStarIcon.Foreground" Value="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -87,7 +97,7 @@
 
                             <!-- Privacy Hub Flyout -->
                             <Button.Flyout>
-                                <Flyout x:Name="PrivacyFlyout" Placement="BottomEdgeAlignedLeft" Opening="PrivacyFlyout_Opening">
+                                <Flyout x:Name="PrivacyFlyout" Placement="BottomEdgeAlignedLeft" Opening="PrivacyFlyout_Opening" Closed="PrivacyFlyout_Closed">
                                     <Flyout.FlyoutPresenterStyle>
                                         <Style TargetType="FlyoutPresenter">
                                             <Setter Property="Padding" Value="0" />
@@ -133,46 +143,26 @@
 
                                         <!-- Segmented Tabs Row -->
                                         <Border Grid.Row="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="6,4" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
-                                            <Grid ColumnSpacing="3">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="*" />
-                                                </Grid.ColumnDefinitions>
-
-                                                <Button x:Name="TabFirewallBtn" AutomationProperties.Name="网页权限" Grid.Column="0" Click="TabFirewall_Click"
-                                                        HorizontalAlignment="Stretch" Height="32" Padding="4,0" CornerRadius="4"
-                                                        Style="{ThemeResource AccentButtonStyle}">
-                                                    <TextBlock Text="权限" FontSize="12" FontWeight="SemiBold" />
-                                                </Button>
-
-                                                <Button x:Name="TabCookieBtn" AutomationProperties.Name="Cookie" Grid.Column="1" Click="TabCookie_Click"
-                                                        HorizontalAlignment="Stretch" Height="32" Padding="4,0" CornerRadius="4"
-                                                        Style="{ThemeResource SubtleButtonStyle}">
-                                                    <TextBlock Text="Cookie" FontSize="12" />
-                                                </Button>
-
-                                                <Button x:Name="TabStorageBtn" AutomationProperties.Name="网站存储" Grid.Column="2" Click="TabStorage_Click"
-                                                        HorizontalAlignment="Stretch" Height="32" Padding="4,0" CornerRadius="4"
-                                                        Style="{ThemeResource SubtleButtonStyle}">
-                                                    <TextBlock Text="存储" FontSize="12" />
-                                                </Button>
-
-                                                <Button x:Name="TabHistoryBtn" AutomationProperties.Name="会话历史" Grid.Column="3" Click="TabHistory_Click"
-                                                        HorizontalAlignment="Stretch" Height="32" Padding="4,0" CornerRadius="4"
-                                                        Style="{ThemeResource SubtleButtonStyle}">
-                                                    <TextBlock Text="历史" FontSize="12" />
-                                                </Button>
-                                            </Grid>
+                                            <SelectorBar x:Name="PrivacySections" AutomationProperties.Name="站点隐私分类" HorizontalAlignment="Center">
+                                                <SelectorBarItem x:Name="PermissionsSection" Text="权限" AutomationProperties.Name="网页权限" />
+                                                <SelectorBarItem x:Name="CookiesSection" Text="Cookie" />
+                                                <SelectorBarItem x:Name="StorageSection" Text="存储" AutomationProperties.Name="网站存储" />
+                                                <SelectorBarItem x:Name="HistorySection" Text="历史" AutomationProperties.Name="会话历史" />
+                                            </SelectorBar>
                                         </Border>
 
                                         <!-- Panel Contents (Opaque Layer Fill) -->
-                                        <Grid Grid.Row="2" MinHeight="300" MaxHeight="340" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+                                        <Grid x:Name="PrivacyPanels" Grid.Row="2" MinHeight="300" MaxHeight="340" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
                                             <!-- Panel 1: Hardware & Sensor Firewall -->
                                             <ScrollViewer x:Name="PanelFirewall" Padding="16,10" Visibility="Visible" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                                                 <StackPanel>
-                                                    <TextBlock Text="开启开关即可阻止相应权限" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="0,0,0,8" />                                                    <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="0,10">
+                                                    <ComboBox x:Name="PermissionScope" AutomationProperties.Name="权限适用范围" HorizontalAlignment="Stretch"
+                                                              SelectionChanged="PermissionScope_SelectionChanged">
+                                                        <ComboBoxItem x:Name="CurrentSiteScope" Content="本站 · 离开本站或关闭标签页后还原" />
+                                                        <ComboBoxItem Content="所有网站 · 保存为默认设置" />
+                                                    </ComboBox>
+                                                    <TextBlock Text="开启以阻止新请求，关闭后由浏览器处理。" TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="0,6,0,2" />
+                                                    <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="0,10">
                                                         <Grid ColumnSpacing="12" MinHeight="36">
                                                             <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
                                                             <FontIcon Glyph="&#xE722;" FontSize="18" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -180,7 +170,7 @@
                                                                 <TextBlock Text="摄像头" FontSize="14" />
                                                                 <TextBlock Text="阻止网页使用摄像头" FontSize="12" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                             </StackPanel>
-                                                            <ToggleSwitch x:Name="CameraBlockToggle" Grid.Column="2" Toggled="PermissionToggle_Toggled" IsOn="True" OnContent="" OffContent="" MinWidth="0" Width="48" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="阻止网页使用摄像头" ToolTipService.ToolTip="开启：阻止；关闭：允许" />
+                                                            <ToggleSwitch x:Name="CameraBlockToggle" Grid.Column="2" Toggled="PermissionToggle_Toggled" IsOn="True" OnContent="" OffContent="" MinWidth="0" Width="48" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="阻止网页使用摄像头" ToolTipService.ToolTip="阻止此类新请求" />
                                                         </Grid>
                                                     </Border>
                                                     <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="0,10">
@@ -191,7 +181,7 @@
                                                                 <TextBlock Text="麦克风" FontSize="14" />
                                                                 <TextBlock Text="阻止网页使用麦克风" FontSize="12" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                             </StackPanel>
-                                                            <ToggleSwitch x:Name="MicBlockToggle" Grid.Column="2" Toggled="PermissionToggle_Toggled" IsOn="True" OnContent="" OffContent="" MinWidth="0" Width="48" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="阻止网页使用麦克风" ToolTipService.ToolTip="开启：阻止；关闭：允许" />
+                                                            <ToggleSwitch x:Name="MicBlockToggle" Grid.Column="2" Toggled="PermissionToggle_Toggled" IsOn="True" OnContent="" OffContent="" MinWidth="0" Width="48" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="阻止网页使用麦克风" ToolTipService.ToolTip="阻止此类新请求" />
                                                         </Grid>
                                                     </Border>
                                                     <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="0,10">
@@ -202,7 +192,7 @@
                                                                 <TextBlock Text="位置信息" FontSize="14" />
                                                                 <TextBlock Text="阻止网页请求精确位置" FontSize="12" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                             </StackPanel>
-                                                            <ToggleSwitch x:Name="GeoBlockToggle" Grid.Column="2" Toggled="PermissionToggle_Toggled" IsOn="True" OnContent="" OffContent="" MinWidth="0" Width="48" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="阻止网页请求精确位置" ToolTipService.ToolTip="开启：阻止；关闭：允许" />
+                                                            <ToggleSwitch x:Name="GeoBlockToggle" Grid.Column="2" Toggled="PermissionToggle_Toggled" IsOn="True" OnContent="" OffContent="" MinWidth="0" Width="48" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="阻止网页请求精确位置" ToolTipService.ToolTip="阻止此类新请求" />
                                                         </Grid>
                                                     </Border>
                                                     <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="0,10">
@@ -213,7 +203,7 @@
                                                                 <TextBlock Text="通知" FontSize="14" />
                                                                 <TextBlock Text="阻止网页发送系统通知" FontSize="12" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                             </StackPanel>
-                                                            <ToggleSwitch x:Name="NotifyBlockToggle" Grid.Column="2" Toggled="PermissionToggle_Toggled" IsOn="True" OnContent="" OffContent="" MinWidth="0" Width="48" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="阻止网页发送系统通知" ToolTipService.ToolTip="开启：阻止；关闭：允许" />
+                                                            <ToggleSwitch x:Name="NotifyBlockToggle" Grid.Column="2" Toggled="PermissionToggle_Toggled" IsOn="True" OnContent="" OffContent="" MinWidth="0" Width="48" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="阻止网页发送系统通知" ToolTipService.ToolTip="阻止此类新请求" />
                                                         </Grid>
                                                     </Border>
                                                     <Grid ColumnSpacing="12" Padding="0,10" MinHeight="56">
@@ -292,7 +282,7 @@
 
                                                     <StackPanel x:Name="CookieEmptyNotice" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4" Visibility="Collapsed">
                                                         <FontIcon Glyph="&#xE765;" FontSize="20" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center" />
-                                                        <TextBlock Text="暂无隔离 Cookie" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center" />
+                                                        <TextBlock Text="当前页面没有匹配的 Cookie" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center" />
                                                     </StackPanel>
                                                 </Grid>
 
@@ -320,10 +310,10 @@
                                                             </Grid.ColumnDefinitions>
                                                             <FontIcon Glyph="&#xE8D7;" FontSize="15" Foreground="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Center" />
                                                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                                <TextBlock Text="清空本地存储与脚本缓存" FontWeight="SemiBold" FontSize="12" />
-                                                                <TextBlock Text="清除 LocalStorage / IndexedDB / CacheStorage（不含 Cookie）" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Text="所有网站的本地存储" FontWeight="SemiBold" FontSize="12" />
+                                                                <TextBlock Text="包括离线文件、网站数据库和草稿" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                                                             </StackPanel>
-                                                            <Button Grid.Column="2" Content="立即清空" Click="ClearAllStorage_Click" CornerRadius="4" Padding="8,4" FontSize="12" />
+                                                            <Button Grid.Column="2" Content="清除…" AutomationProperties.Name="清除所有网站的本地存储" Click="ClearAllStorage_Click" CornerRadius="4" Padding="8,4" FontSize="12" />
                                                         </Grid>
                                                     </Border>
 
@@ -337,10 +327,10 @@
                                                             </Grid.ColumnDefinitions>
                                                             <FontIcon Glyph="&#xE74D;" FontSize="15" Foreground="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Center" />
                                                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                                <TextBlock Text="清空临时网络与脚本缓存" FontWeight="SemiBold" FontSize="12" />
-                                                                <TextBlock Text="释放磁盘与内存中暂存的静态资源" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Text="HTTP 磁盘缓存" FontWeight="SemiBold" FontSize="12" />
+                                                                <TextBlock Text="保留登录状态和网页应用的离线内容" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                                                             </StackPanel>
-                                                            <Button Grid.Column="2" Content="清空" Click="ClearHttpCache_Click" CornerRadius="4" Padding="8,4" FontSize="12" />
+                                                            <Button Grid.Column="2" Content="清除" AutomationProperties.Name="清除 HTTP 磁盘缓存" Click="ClearHttpCache_Click" CornerRadius="4" Padding="8,4" FontSize="12" />
                                                         </Grid>
                                                     </Border>
 
@@ -431,6 +421,7 @@
                                  AutomationProperties.Name="地址栏"
                                  KeyDown="UrlTextBox_KeyDown"
                                  GotFocus="UrlTextBox_GotFocus"
+                                 LostFocus="AddressLostFocus"
                                  TextChanged="AddressTextChanged"
                                  QuerySubmitted="AddressQuerySubmitted"
                                  SuggestionChosen="AddressSuggestionChosen"
@@ -509,8 +500,13 @@
                         </Flyout>
                     </Button.Flyout>
                 </Button>
-                <Button x:Name="DownloadsBtn" Click="ShowDownloads_Click" Style="{ThemeResource SubtleButtonStyle}" AutomationProperties.Name="下载" ToolTipService.ToolTip="下载 (Ctrl+J)" Width="32" Height="32" Padding="0">
-                    <FontIcon Glyph="&#xE896;" FontSize="16" />
+                <Button x:Name="DownloadsBtn" Click="ShowDownloads_Click" Style="{ThemeResource SubtleButtonStyle}" AutomationProperties.Name="下载" ToolTipService.ToolTip="下载 (Ctrl+J)" MinWidth="32" Height="32" Padding="5,0">
+                    <StackPanel Orientation="Horizontal" Spacing="3">
+                        <FontIcon Glyph="&#xE896;" FontSize="16" />
+                        <Border x:Name="DownloadCountBadge" Visibility="Collapsed" Background="{ThemeResource AccentFillColorDefaultBrush}" CornerRadius="8" Padding="4,0">
+                            <TextBlock x:Name="DownloadCountText" FontSize="11" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" VerticalAlignment="Center" />
+                        </Border>
+                    </StackPanel>
                 </Button>
                 <Button x:Name="BrowserMenuBtn" VerticalAlignment="Center"
                         Style="{ThemeResource SubtleButtonStyle}"
@@ -593,17 +589,11 @@
             </InfoBar.ActionButton>
         </InfoBar>
 
-        <ProgressBar x:Name="BrowserProgressBar"
-                     Grid.Row="3"
-                     VerticalAlignment="Top"
-                     IsIndeterminate="True"
-                     Visibility="Collapsed"
-                     Height="2"
-                     Canvas.ZIndex="10" />
-
         <!-- WebView2 Browser Control: Maximized Viewport Area -->
-        <Grid Grid.Row="4">
+        <Grid Grid.Row="3">
             <Grid x:Name="BrowserHost" />
+            <ProgressBar x:Name="BrowserProgressBar" VerticalAlignment="Top" Height="2" Canvas.ZIndex="10"
+                         IsHitTestVisible="False" IsIndeterminate="True" Visibility="Collapsed" AutomationProperties.Name="正在加载网页" />
 
             <Border x:Name="ZoomPanel" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Top"
                     Margin="12" Padding="6" CornerRadius="8" Canvas.ZIndex="30"
@@ -619,7 +609,7 @@
             <Border x:Name="StartSurface" Background="{ThemeResource StealthCanvasBrush}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
                 <Grid>
-                <StackPanel Spacing="28" MaxWidth="680" Margin="32,40" VerticalAlignment="Center" HorizontalAlignment="Stretch">
+                <StackPanel x:Name="StartContent" Spacing="28" MaxWidth="680" Margin="32,40" VerticalAlignment="Center" HorizontalAlignment="Stretch">
                     <StackPanel Spacing="16" HorizontalAlignment="Center">
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="16">
                             <Image Source="ms-appx:///Assets/AppIcon.png" Width="52" Height="52" AutomationProperties.Name="Stealth" />
@@ -675,10 +665,14 @@
                     Visibility="Collapsed"
                     Canvas.ZIndex="20">
                 <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                    <FontIcon Glyph="&#xE896;" FontSize="14" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
+                    <FontIcon x:Name="DownloadToastIcon" Glyph="&#xE896;" FontSize="14" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
                     <StackPanel Spacing="1">
-                        <TextBlock x:Name="DownloadToastTitle" Text="下载文件" FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis" MaxWidth="360" />
+                        <TextBlock x:Name="DownloadToastTitle" Text="下载文件" FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis" MaxWidth="360" AutomationProperties.LiveSetting="Polite" />
                         <TextBlock x:Name="DownloadToastDesc" Text="文件保存在应用下载文件夹，未自动加密。" FontSize="12" TextWrapping="Wrap" MaxWidth="360" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <StackPanel x:Name="DownloadVaultActions" Visibility="Collapsed" Spacing="4">
+                            <TextBlock Text="{Binding Status}" FontSize="12" TextWrapping="Wrap" MaxWidth="360" />
+                            <Button Content="加密入库并粉碎原件" Click="StoreDownload_Click" IsEnabled="{Binding CanStore}" Visibility="{Binding StoreVisibility}" />
+                        </StackPanel>
                     </StackPanel>
                     <Button Content="查看" Click="ShowDownloads_Click" Style="{ThemeResource SubtleButtonStyle}" />
                     <Button Click="DismissDownloadToast_Click" Style="{ThemeResource SubtleButtonStyle}" Padding="4" AutomationProperties.Name="关闭下载提示">

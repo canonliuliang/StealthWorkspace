@@ -9,7 +9,17 @@ const output = join(root, 'dist');
 const allowed = ['index.html', '404.html', 'styles.css', 'app.js', '.nojekyll', 'assets'];
 async function check() {
   const html = await readFile(join(root, 'index.html'), 'utf8');
-  expectedDownloads(html);
+  const identity = await readFile(join(root, '..', 'Services', 'AppInfo.cs'), 'utf8');
+  const version = /DisplayVersion\s*=\s*"([^"]+)"/.exec(identity)?.[1];
+  if (!version) throw new Error('Cannot find the display version for the download page.');
+  const project = 'https://github.com/canonliuliang/StealthWorkspace/releases';
+  for (const { tag, name } of expectedDownloads(html)) {
+    if (tag !== `v${version}` || !['x64', 'arm64'].some(arch => name === `Stealth-${version}-win-${arch}.zip`))
+      throw new Error('A website ZIP link does not match the application version and package name.');
+  }
+  for (const url of [`${project}/tag/v${version}`, `${project}/download/v${version}/SHA256SUMS.txt`]) {
+    if (!html.includes(`href="${url}"`)) throw new Error(`Missing current release link: ${url}`);
+  }
   const ids = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]));
   for (const [, target] of html.matchAll(/(?:href|src)="([^"]+)"/g)) {
     if (/^https:\/\//.test(target)) continue;

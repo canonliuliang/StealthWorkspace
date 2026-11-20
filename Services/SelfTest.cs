@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -167,10 +168,44 @@ public static class SelfTest
             Report(matchedHistory.Any(s => s.Target == "https://example.test/gallery"), "Matching history survives a non-matching bookmark with the same URL");
             var allSuggestions = BrowserAddressSuggestions.Get("", suggestionBookmarks, suggestionHistory, Search);
             Report(allSuggestions.Count == 1 && allSuggestions[0].Target == "https://example.test/gallery", "Omnibox deduplicates local results and rejects script URLs");
+            int searchUrlsBuilt = 0;
+            string CountedSearch(string value) { searchUrlsBuilt++; return Search(value); }
+            BrowserAddressSuggestions.Get("https://example.test/", suggestionBookmarks, suggestionHistory, CountedSearch);
+            BrowserAddressSuggestions.Get("ordinary words", suggestionBookmarks, suggestionHistory, CountedSearch);
+            Report(searchUrlsBuilt == 1, "Omnibox constructs a search URL only for the search suggestion");
+            var edit = new BrowserAddressSuggestions.EditSession();
+            var editBookmarks = suggestionBookmarks.ToImmutableList();
+            BrowserAddressSuggestions.Get("会议", editBookmarks, suggestionHistory, Search, edit);
+            var arrivingHistory = new[] { new HistorySessionItem { Title = "会议纪要", Url = "https://example.test/meeting" } };
+            Report(BrowserAddressSuggestions.Get("会议纪", editBookmarks, arrivingHistory, Search, edit).Any(s => s.Target == arrivingHistory[0].Url) &&
+                !BrowserAddressSuggestions.Get("会议纪", editBookmarks, [], Search, edit).Any(s => s.Target == arrivingHistory[0].Url),
+                "An extended bookmark miss still follows added and cleared session history");
+            var updatedBookmarks = editBookmarks.Add(new BookmarkItem { Title = "会议纪要", Url = "https://example.test/notes" });
+            Report(BrowserAddressSuggestions.Get("会议纪", updatedBookmarks, [], Search, edit).Any(s => s.Target.EndsWith("/notes")) &&
+                BrowserAddressSuggestions.Get("图", editBookmarks, [], Search, edit).Any(s => s.Target.EndsWith("/gallery")),
+                "New bookmark snapshots and replaced input invalidate an earlier miss");
             Report(BrowserAddress.SamePage("HTTPS://EXAMPLE.TEST:443/Comic?id=ABC", "https://example.test/Comic?id=ABC"), "Bookmark canonical host and default port are equivalent");
             Report(!BrowserAddress.SamePage("https://example.test/Comic", "https://example.test/comic"), "Bookmarks preserve case-sensitive paths");
             Report(!BrowserAddress.SamePage("https://example.test/?id=ABC", "https://example.test/?id=abc"), "Bookmarks preserve case-sensitive query values");
             var bookmarkSettings = new SettingsService();
+            var originalBookmarks = bookmarkSettings.Data.Bookmarks;
+            bookmarkSettings.Data.Bookmarks = [.. Enumerable.Range(0, 10000).Select(index => new BookmarkItem { Url = $"https://example.test/page/{index}" }),
+                new BookmarkItem { Url = "https://bücher.test/Comic?id=A#B" }];
+            const string lookup = "https://xn--bcher-kva.test/Comic?id=A#B";
+            var parsedLookup = new Uri(lookup);
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            bool found = true;
+            for (int iteration = 0; iteration < 40; iteration++)
+                found &= bookmarkSettings.Data.Bookmarks.Any(item => BrowserAddress.SamePage(parsedLookup, item.Url));
+            double scanMs = timer.Elapsed.TotalMilliseconds;
+            timer.Restart();
+            for (int iteration = 0; iteration < 40; iteration++) found &= bookmarkSettings.IsBookmarked(lookup);
+            double indexedMs = timer.Elapsed.TotalMilliseconds;
+            Report(found && !bookmarkSettings.IsBookmarked(lookup.ToLowerInvariant()),
+                $"Bookmark lookup, 10001 entries x 40 (including index build): scan {scanMs:F2} ms; index {indexedMs:F2} ms");
+            bookmarkSettings.Data.Bookmarks = bookmarkSettings.Data.Bookmarks.RemoveAt(10000);
+            Report(!bookmarkSettings.IsBookmarked(lookup), "Bookmark index follows a replaced snapshot");
+            bookmarkSettings.Data.Bookmarks = originalBookmarks;
             bookmarkSettings.AddBookmark("Upper", "https://example.test/Comic");
             bookmarkSettings.AddBookmark("Lower", "https://example.test/comic");
             bookmarkSettings.RenameBookmark("https://EXAMPLE.TEST/Comic", "Renamed upper");
@@ -198,9 +233,22 @@ public static class SelfTest
             BrowserSessionHistory.UpdateTitle("Ready", "https://example.test/A");
             Report(BrowserSessionHistory.Items[1].Title == "Ready" && BrowserSessionHistory.Items[1].VisitedAt == historyTime,
                 "Late document title does not reorder session history");
-            BrowserSessionHistory.Items.Clear();
+            BrowserSessionHistory.RememberClosed("First", "https://example.test/A", 1);
+            BrowserSessionHistory.RememberClosed("Second", "https://example.test/A", 0);
+            BrowserSessionHistory.RememberClosed("Lowercase path", "https://example.test/a", 3);
+            BrowserSessionHistory.Forget(BrowserSessionHistory.Items[1]);
+            Report(BrowserSessionHistory.RecentlyClosed.Count == 1 && BrowserSessionHistory.RecentlyClosed[0].Position == 3 &&
+                BrowserSessionHistory.RecentlyClosed[0].Url == "https://example.test/a",
+                "Forgetting one visit removes all matching closed tabs and preserves distinct case-sensitive paths");
+            for (int i = 0; i < 25; i++)
+                BrowserSessionHistory.RememberClosed("Synthetic", "https://example.test/" + i, i);
+            BrowserSessionHistory.RememberClosed("Internal", "about:blank", 0);
+            Report(BrowserSessionHistory.RecentlyClosed.Count == 20 && BrowserSessionHistory.RecentlyClosed[0].Position == 24 &&
+                BrowserSessionHistory.RecentlyClosed[^1].Position == 5, "Closed tabs retain only the newest twenty web addresses");
+            BrowserSessionHistory.Clear();
             BrowserSessionHistory.UpdateTitle("Too late", "https://example.test/A");
-            Report(BrowserSessionHistory.Items.Count == 0, "Late title does not resurrect cleared history");
+            Report(BrowserSessionHistory.Items.Count == 0 && BrowserSessionHistory.RecentlyClosed.Count == 0,
+                "Clearing session history erases tab recovery and ignores late title changes");
             foreach (var (input, expected) in new (string, string?)[] {
                 ("localhost:8768/path?q=1", "http://localhost:8768/path?q=1"),
                 ("127.0.0.1:8080/", "http://127.0.0.1:8080/"),
@@ -326,6 +374,10 @@ public static class SelfTest
                 int read = stream.Read(buffer, 0, buffer.Length);
                 Report(read == buffer.Length && buffer.AsSpan(0, read).SequenceEqual(data.AsSpan(1024 * 1024 + 55, read)),
                     "V1 random-access decrypt stream");
+                stream.Position = 0;
+                byte[] full = new byte[data.Length];
+                stream.ReadExactly(full);
+                Report(full.AsSpan().SequenceEqual(data), "V1 stream reads through a short interior record");
             }
             catch (Exception ex)
             {
@@ -552,7 +604,7 @@ public static class SelfTest
         int offset = 0;
         while (offset < plaintext.Length)
         {
-            int length = Math.Min(chunkSize, plaintext.Length - offset);
+            int length = Math.Min(offset == 0 ? chunkSize / 2 : chunkSize, plaintext.Length - offset);
             byte[] nonce = CryptoService.GenerateRandomBytes(CryptoService.NonceSize);
             byte[] tag = new byte[CryptoService.TagSize];
             byte[] cipher = new byte[length];
@@ -584,6 +636,7 @@ public static class SmokeTest
     public static string? OutputPath { get; private set; }
     public static bool Interactive { get; private set; }
     public static bool InteractiveFixture { get; private set; }
+    public static bool ReduceMotion { get; private set; }
     public static int UiWidth { get; private set; } = 1100;
     public static int UiHeight { get; private set; } = 740;
     public static string? UiTheme { get; private set; }
@@ -606,6 +659,7 @@ public static class SmokeTest
         UiSmoke = SelfTest.IsUiSmokeRequested(args);
         Interactive = args.Contains("--ui-interactive");
         InteractiveFixture = UiSmoke && Interactive && args.Contains("--ui-fixture");
+        ReduceMotion = UiSmoke && args.Contains("--ui-reduced-motion");
         if (UiSmoke)
         {
             if (int.TryParse(args.SkipWhile(a => a != "--ui-width").Skip(1).FirstOrDefault(), out int width)) UiWidth = Math.Clamp(width, 480, 2000);

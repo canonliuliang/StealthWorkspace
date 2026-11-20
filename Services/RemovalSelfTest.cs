@@ -9,6 +9,10 @@ namespace StealthWorkspace.Services;
 internal static class RemovalSelfTest
 {
     private sealed class FixtureUnavailableException(string message) : Exception(message);
+    private sealed class InlineProgress(Action<string> report) : IProgress<string>
+    {
+        public void Report(string value) => report(value);
+    }
 
     internal static async Task RunAsync(string testRoot, Action<bool, string, string> report, Action<string, string> skip)
     {
@@ -47,6 +51,54 @@ internal static class RemovalSelfTest
         }
         string MediaPath(string name, string file) => Path.Combine(root, name, "MediaVault", file);
 
+        await Check("Cleaner: thumbnail shredding retains linked files and leaves icon caches alone", () =>
+        {
+            string directory = Directory.CreateDirectory(Path.Combine(root, "thumbnail-cache")).FullName;
+            string link = Path.Combine(directory, "thumbcache_link.db");
+            string cache = Path.Combine(directory, "thumbcache_32.db");
+            string icon = Path.Combine(directory, "iconcache_32.db");
+            File.WriteAllBytes(cache, bytes);
+            File.WriteAllBytes(icon, bytes);
+            Require(CreateHardLinkW(link, source, IntPtr.Zero));
+            var item = new CleanerItem { Category = CleanerCategory.ThumbnailCache };
+            var options = new CleanerOptions { SecureShredFiles = true };
+            CleanerItem result = CleanerService.CleanThumbnails(item, directory, options, CancellationToken.None);
+            Require(result.DetectedCount == 1 && File.Exists(link) && !File.Exists(cache));
+            options.SecureShredFiles = false;
+            result = CleanerService.CleanThumbnails(item, directory, options, CancellationToken.None);
+            Require(result.DetectedCount == 0 && !File.Exists(link));
+            Require(File.ReadAllBytes(source).AsSpan().SequenceEqual(bytes) && File.ReadAllBytes(icon).AsSpan().SequenceEqual(bytes));
+            return Task.CompletedTask;
+        });
+        await Check("Cleaner: shutdown waits for active work and cancellation skips queued work", async () =>
+        {
+            var cleaner = CleanerService.Instance;
+            var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var release = new ManualResetEventSlim();
+            using var cancellation = new CancellationTokenSource();
+            // An unknown category can exercise dispatch without touching any real system settings or files.
+            CleanerItem[] items = [new() { Category = (CleanerCategory)(-1) }];
+            var options = new CleanerOptions();
+            var progress = new InlineProgress(_ => { started.TrySetResult(); release.Wait(TimeSpan.FromSeconds(5)); });
+            Task active = cleaner.CleanAsync(items, options, progress, cancellation.Token);
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            int queuedReports = 0;
+            Task queued = cleaner.CleanAsync(items, options, new InlineProgress(_ => Interlocked.Increment(ref queuedReports)), cancellation.Token);
+            Task shutdown = cleaner.WaitForCleaningToFinishAsync();
+            try
+            {
+                Require(!shutdown.IsCompleted);
+                cancellation.Cancel();
+            }
+            finally { release.Set(); }
+            foreach (Task operation in new[] { active, queued })
+            {
+                try { await operation; throw new InvalidOperationException("Cleanup ignored cancellation"); }
+                catch (OperationCanceledException) when (operation.IsCanceled) { }
+            }
+            await shutdown.WaitAsync(TimeSpan.FromSeconds(5));
+            Require(queuedReports == 0);
+        });
         await Check("Removal: read-only source can be imported and shredded", async () =>
         {
             var vault = await NewVault("readonly-import");
@@ -129,6 +181,38 @@ internal static class RemovalSelfTest
             Require(vault.VisibleItems.Count == 0 && !File.Exists(path) && !File.Exists(Path.Combine(root, "busy-item", "remove.dat")));
             File.WriteAllBytes(Path.Combine(root, "busy-item", "system_catalog.dat"), [1, 2, 3]);
             var fallback = new VaultService(Path.Combine(root, "busy-item")); Unlock(fallback); Require(fallback.VisibleItems.Count == 0); fallback.Lock();
+        });
+        await Check("Library: rename preserves ciphertext, batch exports preserve existing names and partial deletion retries", async () =>
+        {
+            var vault = await NewVault("library-management");
+            var first = await vault.ImportFileAsync(source, false);
+            var second = await vault.ImportFileAsync(source, false);
+            string firstPath = MediaPath("library-management", first.StoredFileName);
+            string secondPath = MediaPath("library-management", second.StoredFileName);
+            byte[] ciphertext = File.ReadAllBytes(firstPath);
+            await vault.RenameItemAsync(first, "新名称.bin");
+            Require(File.ReadAllBytes(firstPath).AsSpan().SequenceEqual(ciphertext));
+            vault.Lock();
+            vault = new VaultService(Path.Combine(root, "library-management"));
+            Unlock(vault);
+            first = vault.VisibleItems.Single(item => item.OriginalFileName == "新名称.bin");
+            second = vault.VisibleItems.Single(item => item.Id == second.Id);
+            string folder = Directory.CreateDirectory(Path.Combine(root, "library-exports")).FullName;
+            string target = Path.Combine(folder, "同名.bin");
+            File.WriteAllText(target, "existing");
+            await vault.ExportItemAsync(first, target, useUniqueName: true);
+            await vault.ExportItemAsync(second, target, useUniqueName: true);
+            Require(File.ReadAllText(target) == "existing" &&
+                File.ReadAllBytes(Path.Combine(folder, "同名 (2).bin")).AsSpan().SequenceEqual(bytes) &&
+                File.ReadAllBytes(Path.Combine(folder, "同名 (3).bin")).AsSpan().SequenceEqual(bytes));
+            using (var held = new FileStream(secondPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                await ExpectFailure(() => vault.DeleteItemsAsync([first, second]));
+                Require(!File.Exists(firstPath) && vault.VisibleItems.Single().Id == second.Id);
+            }
+            await vault.DeleteItemsAsync([second]);
+            Require(vault.VisibleItems.Count == 0 && !File.Exists(secondPath));
+            vault.Lock();
         });
         await Check("Removal: partial decoy clear preserves failed item and supports retry", async () =>
         {

@@ -6,15 +6,21 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     KeyDown="Page_KeyDown"
+    PreviewKeyDown="Page_PreviewKeyDown"
     RequestedTheme="Dark"
     mc:Ignorable="d">
 
     <Page.KeyboardAccelerators>
         <KeyboardAccelerator Key="Escape" Invoked="EscapeAccelerator_Invoked" />
-        <KeyboardAccelerator Key="Left" Invoked="ImageNavigation_Invoked" />
-        <KeyboardAccelerator Key="Right" Invoked="ImageNavigation_Invoked" />
-        <KeyboardAccelerator Key="Home" Invoked="ImageNavigation_Invoked" />
-        <KeyboardAccelerator Key="End" Invoked="ImageNavigation_Invoked" />
+        <KeyboardAccelerator Key="Left" Invoked="Navigation_Invoked" />
+        <KeyboardAccelerator Key="Right" Invoked="Navigation_Invoked" />
+        <KeyboardAccelerator Key="Up" Invoked="Navigation_Invoked" />
+        <KeyboardAccelerator Key="Down" Invoked="Navigation_Invoked" />
+        <KeyboardAccelerator Key="Home" Invoked="Navigation_Invoked" />
+        <KeyboardAccelerator Key="End" Invoked="Navigation_Invoked" />
+        <KeyboardAccelerator Key="PageUp" Invoked="Navigation_Invoked" />
+        <KeyboardAccelerator Key="PageDown" Invoked="Navigation_Invoked" />
+        <KeyboardAccelerator Key="F" Invoked="Navigation_Invoked" />
         <KeyboardAccelerator Key="W" Invoked="ImageLayout_Invoked" />
         <KeyboardAccelerator Key="Number0" Invoked="ImageLayout_Invoked" />
     </Page.KeyboardAccelerators>
@@ -27,7 +33,7 @@
         </Grid.RowDefinitions>
 
         <!-- Floating Top Overlay Bar -->
-        <Border Grid.Row="0" Background="{ThemeResource StealthSurfaceBrush}" Padding="16,10" Canvas.ZIndex="10">
+        <Border x:Name="PlayerTopBar" Grid.Row="0" Background="{ThemeResource StealthSurfaceBrush}" Padding="16,10" Canvas.ZIndex="10">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
@@ -52,24 +58,33 @@
 
                 <!-- Action Controls (Speed, Stretch, Boss Key) -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                    <DropDownButton x:Name="SpeedButton" Content="1.0x" AutomationProperties.Name="播放速度" Style="{ThemeResource SubtleButtonStyle}">
+                    <DropDownButton x:Name="SpeedButton" IsEnabled="False" Content="1.0x" AutomationProperties.Name="播放速度" Style="{ThemeResource SubtleButtonStyle}">
                         <DropDownButton.Flyout>
                             <MenuFlyout>
-                                <MenuFlyoutItem Text="0.75x" Click="Speed_Click" Tag="0.75" />
-                                <MenuFlyoutItem Text="1.0x" Click="Speed_Click" Tag="1.0" />
-                                <MenuFlyoutItem Text="1.25x" Click="Speed_Click" Tag="1.25" />
-                                <MenuFlyoutItem Text="1.5x" Click="Speed_Click" Tag="1.5" />
-                                <MenuFlyoutItem Text="2.0x" Click="Speed_Click" Tag="2.0" />
+                                <RadioMenuFlyoutItem Text="0.75x" Click="Speed_Click" Tag="0.75" GroupName="PlaybackSpeed" />
+                                <RadioMenuFlyoutItem Text="1.0x" Click="Speed_Click" Tag="1.0" GroupName="PlaybackSpeed" IsChecked="True" />
+                                <RadioMenuFlyoutItem Text="1.25x" Click="Speed_Click" Tag="1.25" GroupName="PlaybackSpeed" />
+                                <RadioMenuFlyoutItem Text="1.5x" Click="Speed_Click" Tag="1.5" GroupName="PlaybackSpeed" />
+                                <RadioMenuFlyoutItem Text="2.0x" Click="Speed_Click" Tag="2.0" GroupName="PlaybackSpeed" />
                             </MenuFlyout>
                         </DropDownButton.Flyout>
                     </DropDownButton>
 
-                    <Button AutomationProperties.Name="画面比例切换" x:Name="StretchButton" Click="StretchToggle_Click" Style="{ThemeResource SubtleButtonStyle}" ToolTipService.ToolTip="画面比例切换">
-                        <FontIcon Glyph="&#xE799;" FontSize="13" Foreground="White" />
-                    </Button>
+                    <ToggleButton AutomationProperties.Name="裁切并填满画面" x:Name="StretchButton" Click="StretchToggle_Click" ToolTipService.ToolTip="裁切并填满画面">
+                        <FontIcon Glyph="&#xE799;" FontSize="13" />
+                    </ToggleButton>
 
                     <Button AutomationProperties.Name="按窗口宽度阅读长图 (W)" x:Name="ImageFitButton" Content="适应宽度" Visibility="Collapsed" Click="ImageWidthFit_Click" Foreground="White" ToolTipService.ToolTip="按窗口宽度阅读长图 (W)" Style="{ThemeResource SubtleButtonStyle}" />
 
+                    <Button x:Name="RotateButton" Visibility="Collapsed" IsEnabled="False" Click="RotateImage_Click" AutomationProperties.Name="顺时针旋转图片 90°" ToolTipService.ToolTip="顺时针旋转 90°" Style="{ThemeResource SubtleButtonStyle}">
+                        <FontIcon Glyph="&#xE7AD;" FontSize="15" />
+                    </Button>
+                    <Button x:Name="FullScreenButton" Visibility="Collapsed" Click="FullScreen_Click" AutomationProperties.Name="全屏播放" ToolTipService.ToolTip="全屏播放（F）" Style="{ThemeResource SubtleButtonStyle}">
+                        <FontIcon Glyph="&#xE740;" FontSize="15" />
+                    </Button>
+                    <Button x:Name="DeleteButton" Visibility="Collapsed" Click="DeleteCurrent_Click" AutomationProperties.Name="删除当前项" ToolTipService.ToolTip="删除当前项" Style="{ThemeResource SubtleButtonStyle}">
+                        <FontIcon Glyph="&#xE74D;" FontSize="15" />
+                    </Button>
                     <!-- Instant Boss Key -->
                     <Button AutomationProperties.Name="快速最小化 (Ctrl + Alt + B)" Click="PlayerBossKey_Click" Style="{ThemeResource SubtleButtonStyle}" Padding="8,4" ToolTipService.ToolTip="快速最小化 (Ctrl + Alt + B)">
                         <FontIcon Glyph="&#xE7BA;" FontSize="13" Foreground="White" />
@@ -87,6 +102,10 @@
                                 Stretch="Uniform"
                                 HorizontalAlignment="Stretch"
                                 VerticalAlignment="Stretch" />
+            <Button x:Name="ExitFullScreenButton" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="12"
+                    Click="FullScreen_Click" AutomationProperties.Name="退出全屏" ToolTipService.ToolTip="退出全屏（Esc）">
+                <FontIcon Glyph="&#xE73F;" FontSize="15" />
+            </Button>
 
             <Grid x:Name="PlayerEmptyNotice" Background="{ThemeResource StealthCanvasBrush}">
                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="380" Margin="24" Spacing="16">
@@ -108,16 +127,25 @@
                           SizeChanged="ImageContainer_SizeChanged" IsTabStop="True" AutomationProperties.Name="图片阅读区域"
                           Visibility="Collapsed">
                 <Grid x:Name="ImageStage" Padding="12">
-                    <Image x:Name="ImageViewer" Stretch="Uniform" DoubleTapped="ImageViewer_DoubleTapped"
-                           PointerPressed="ImageViewer_PointerPressed" PointerMoved="ImageViewer_PointerMoved"
-                           PointerReleased="ImageViewer_PointerReleased" PointerCanceled="ImageViewer_PointerReleased"
-                           PointerCaptureLost="ImageViewer_PointerCaptureLost" />
+                    <Canvas x:Name="ImageBounds" HorizontalAlignment="Center">
+                        <Image x:Name="ImageViewer" Stretch="Uniform" DoubleTapped="ImageViewer_DoubleTapped"
+                               RenderTransformOrigin="0.5,0.5"
+                               PointerPressed="ImageViewer_PointerPressed" PointerMoved="ImageViewer_PointerMoved"
+                               PointerReleased="ImageViewer_PointerReleased" PointerCanceled="ImageViewer_PointerReleased"
+                               PointerCaptureLost="ImageViewer_PointerCaptureLost">
+                            <Image.RenderTransform><RotateTransform x:Name="ImageRotation" /></Image.RenderTransform>
+                        </Image>
+                    </Canvas>
                 </Grid>
             </ScrollViewer>
 
             <!-- Loading Spinner -->
-            <ProgressRing x:Name="LoadingRing" IsActive="False" Width="52" Height="52"
-                          HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
+            <StackPanel x:Name="LoadingFeedback" Visibility="Collapsed" Spacing="8" IsHitTestVisible="False"
+                        HorizontalAlignment="Center" VerticalAlignment="Center">
+                <ProgressRing x:Name="LoadingRing" IsActive="False" Width="32" Height="32"
+                              HorizontalAlignment="Center" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
+                <TextBlock Text="正在打开媒体…" AutomationProperties.LiveSetting="Polite" />
+            </StackPanel>
 
             <!-- Playback error / codec hint -->
             <InfoBar x:Name="PlaybackInfoBar"
@@ -128,16 +156,16 @@
                      HorizontalAlignment="Stretch"
                      Margin="16,16,16,0" />
         </Grid>
-        <Border x:Name="ImageNavigationBar" Grid.Row="2" Visibility="Collapsed" Background="{ThemeResource StealthSurfaceBrush}" Padding="12,10" RequestedTheme="Dark">
+        <Border x:Name="NavigationBar" Grid.Row="2" Visibility="Collapsed" Background="{ThemeResource StealthSurfaceBrush}" Padding="12,10" RequestedTheme="Dark">
             <Grid ColumnSpacing="16">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                <TextBlock Text="← / → 切换图片" VerticalAlignment="Center" Foreground="#AAAAAA" FontSize="12" TextTrimming="CharacterEllipsis" />
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" MinWidth="140" /></Grid.ColumnDefinitions>
+                <TextBlock x:Name="NavigationHint" VerticalAlignment="Center" Foreground="#AAAAAA" FontSize="12" TextTrimming="CharacterEllipsis" />
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                    <Button x:Name="PreviousImageButton" Click="PreviousImage_Click" AutomationProperties.Name="上一张图片" ToolTipService.ToolTip="上一张（←）" Style="{ThemeResource SubtleButtonStyle}" Width="44" Height="40"><FontIcon Glyph="&#xE76B;" FontSize="16" /></Button>
-                    <TextBlock x:Name="ImagePositionText" Text="1 / 1" MinWidth="72" TextAlignment="Center" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite" />
-                    <Button x:Name="NextImageButton" Click="NextImage_Click" AutomationProperties.Name="下一张图片" ToolTipService.ToolTip="下一张（→）" Style="{ThemeResource SubtleButtonStyle}" Width="44" Height="40"><FontIcon Glyph="&#xE76C;" FontSize="16" /></Button>
+                    <Button x:Name="PreviousButton" Click="Previous_Click" AutomationProperties.Name="上一项" ToolTipService.ToolTip="上一项（Page Up）" Style="{ThemeResource SubtleButtonStyle}" Width="44" Height="40"><FontIcon Glyph="&#xE76B;" FontSize="16" /></Button>
+                    <TextBlock x:Name="PositionText" MinWidth="72" TextAlignment="Center" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite" />
+                    <Button x:Name="NextButton" Click="Next_Click" AutomationProperties.Name="下一项" ToolTipService.ToolTip="下一项（Page Down）" Style="{ThemeResource SubtleButtonStyle}" Width="44" Height="40"><FontIcon Glyph="&#xE76C;" FontSize="16" /></Button>
                 </StackPanel>
-                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <StackPanel x:Name="ImageZoomControls" Grid.Column="2" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <Button Click="ImageZoomOut_Click" AutomationProperties.Name="缩小图片" ToolTipService.ToolTip="缩小" Style="{ThemeResource SubtleButtonStyle}" Width="36"><FontIcon Glyph="&#xE738;" FontSize="14" /></Button>
                     <Button AutomationProperties.Name="显示整张图片 (0)" x:Name="ImageZoomResetButton" Content="适应" Click="ImageFit_Click" ToolTipService.ToolTip="显示整张图片 (0)" Style="{ThemeResource SubtleButtonStyle}" MinWidth="60" />
                     <Button Click="ImageZoomIn_Click" AutomationProperties.Name="放大图片" ToolTipService.ToolTip="放大" Style="{ThemeResource SubtleButtonStyle}" Width="36"><FontIcon Glyph="&#xE710;" FontSize="14" /></Button>

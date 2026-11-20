@@ -38,9 +38,7 @@ public sealed partial class BrowserTabControl
             // Input is now queued atomically. Do not discard subsequent quick
             // clicks just because the percentage label has not refreshed yet.
             _nativeZoomDispatching = false;
-            bool wasOpen = ZoomPanel.Visibility == Visibility.Visible;
-            ZoomPanel.Visibility = Visibility.Visible;
-            if (!wasOpen) UiMotion.Enter(ZoomPanel, 0, -3);
+            UiMotion.SetOverlayVisible(ZoomPanel, true, MotionCue.FromAbove);
             if (_zoomPanelTimer == null)
             {
                 _zoomPanelTimer = DispatcherQueue.CreateTimer();
@@ -81,14 +79,15 @@ public sealed partial class BrowserTabControl
         catch (Exception ex) { if (!_isDisposed) AppLog.Warn("Read browser zoom: " + ex.GetType().Name); }
     }
 
-    private void HideZoomPanel()
+    private void HideZoomPanel(bool animate = false)
     {
         _zoomPanelTimer?.Stop();
-        ZoomPanel.Visibility = Visibility.Collapsed;
+        if (animate) UiMotion.SetOverlayVisible(ZoomPanel, false, MotionCue.FromAbove);
+        else UiMotion.SetVisible(ZoomPanel, false);
     }
 
-    private void CloseZoomPanel_Click(object sender, RoutedEventArgs args) => HideZoomPanel();
-    private void ZoomPanelTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args) => HideZoomPanel();
+    private void CloseZoomPanel_Click(object sender, RoutedEventArgs args) => HideZoomPanel(animate: true);
+    private void ZoomPanelTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args) => HideZoomPanel(animate: true);
 
     private void DetachNativeZoom()
     {

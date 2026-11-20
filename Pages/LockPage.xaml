@@ -31,16 +31,8 @@
 
                 <InfoBar x:Name="MsgInfoBar" IsOpen="False" Severity="Informational" AutomationProperties.LiveSetting="Polite" />
 
-                <!-- Busy indicator while PBKDF2 runs off-thread -->
-                <StackPanel x:Name="BusyPanel" Visibility="Collapsed" Orientation="Horizontal"
-                            HorizontalAlignment="Center" Spacing="10">
-                    <ProgressRing x:Name="BusyRing" IsActive="False" Width="20" Height="20" />
-                    <TextBlock x:Name="BusyText" Text="正在校验…" FontSize="12"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
-                </StackPanel>
-
                 <!-- State A: Everyday Unlock (Zero suspicious text) -->
-                <StackPanel x:Name="UnlockPanel" Spacing="16">
+                <StackPanel x:Name="UnlockPanel" Spacing="16" Visibility="Collapsed">
                     <PasswordBox x:Name="UnlockPasswordBox"
                                  Header="密码"
                                  PlaceholderText="请输入访问密码"
@@ -72,7 +64,7 @@
                     <PasswordBox x:Name="SetupMasterPwd" Header="设置访问密码" PlaceholderText="至少 6 个字符" PasswordRevealMode="Peek" />
                     <PasswordBox x:Name="SetupConfirmPwd" Header="确认密码" PlaceholderText="再次输入密码" PasswordRevealMode="Peek" />
 
-                    <Expander Header="高级：设置诱饵密码（可选）" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                    <Expander x:Name="DecoyExpander" Header="高级：设置诱饵密码（可选）" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                         <StackPanel Spacing="10">
                             <TextBlock Text="遇到胁迫或盘查时，输入诱饵密码会进入一个独立的无害空间；真实资料不会显示。"
                                        FontSize="12" TextWrapping="Wrap"
@@ -98,19 +90,23 @@
                                Text="加密配置无法解密或已损坏。为避免覆盖数据，应用不会自动进入首次设置。"
                                FontSize="12" TextWrapping="Wrap"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <Button Content="重试读取" HorizontalAlignment="Stretch" Click="RetryBtn_Click" />
+                    <Button x:Name="RetryButton" Content="重试读取" HorizontalAlignment="Stretch" Click="RetryBtn_Click" />
                     <Button Content="重置保险箱（销毁全部加密数据）"
                             HorizontalAlignment="Stretch"
                             Style="{ThemeResource AccentButtonStyle}"
                             Click="ResetVaultBtn_Click" />
                 </StackPanel>
 
-                <!-- Build identity: lets the user confirm they are running the latest fix -->
-                <TextBlock x:Name="BuildLabel"
-                           HorizontalAlignment="Center"
-                           FontSize="12"
-                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                           Text="构建信息加载中…" />
+                <Grid MinHeight="20">
+                    <TextBlock x:Name="BuildLabel" HorizontalAlignment="Center" VerticalAlignment="Center"
+                               FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                    <StackPanel x:Name="BusyPanel" Visibility="Collapsed" Orientation="Horizontal"
+                                HorizontalAlignment="Center" Spacing="8">
+                        <ProgressRing x:Name="BusyRing" IsActive="False" Width="18" Height="18" />
+                        <TextBlock x:Name="BusyText" FontSize="12" AutomationProperties.LiveSetting="Polite"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Grid>
             </StackPanel>
         </Border>
     </Grid>

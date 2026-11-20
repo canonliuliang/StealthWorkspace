@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32;
@@ -35,12 +37,13 @@ public sealed class CleanerOptions
 }
 
 /// <summary>
-/// 清理项数据模型。此处刻意不再实现 INotifyPropertyChanged：
-/// 扫描 / 清理全部在后台线程完成并返回全新的实例，由界面线程整体替换列表，
-/// 后台线程因此不会触发任何绑定通知，从根本上消除跨线程 UI 异常。
+/// 扫描线程构建独立结果。界面线程将结果应用到原有行，保留滚动与复选框焦点。
 /// </summary>
-public class CleanerItem
+public class CleanerItem : INotifyPropertyChanged
 {
+    private bool _isSelected = true;
+    public event PropertyChangedEventHandler? PropertyChanged;
+
     public CleanerCategory Category { get; set; }
 
     public string GroupName { get; set; } = string.Empty;
@@ -52,7 +55,16 @@ public class CleanerItem
     public string Description { get; set; } = string.Empty;
 
     /// <summary>是否勾选清理（与 CheckBox 双向绑定）。</summary>
-    public bool IsSelected { get; set; } = true;
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value) return;
+            _isSelected = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+        }
+    }
 
     public string Status { get; set; } = "待扫描";
 
@@ -71,6 +83,19 @@ public class CleanerItem
         : (DetectedCount > 0 ? $"{DetectedCount} 条记录" : "—");
 
     public bool HasDetails => PreviewEntries.Count > 0;
+
+    internal void ApplyScanResult(CleanerItem result)
+    {
+        bool displayChanged = Status != result.Status || DetectedCount != result.DetectedCount ||
+            DetectedSizeBytes != result.DetectedSizeBytes || IsSizeKnown != result.IsSizeKnown ||
+            HasDetails != result.HasDetails;
+        Status = result.Status;
+        DetectedCount = result.DetectedCount;
+        DetectedSizeBytes = result.DetectedSizeBytes;
+        IsSizeKnown = result.IsSizeKnown;
+        PreviewEntries = result.PreviewEntries;
+        if (displayChanged) PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(string.Empty));
+    }
 }
 
 /// <summary>
@@ -86,6 +111,7 @@ public class CleanerService
     private const string WebProfilePrefix = "Stealth_WebProfile_";
 
     private static readonly TimeSpan TempFileMinimumAge = TimeSpan.FromHours(TempFileMinimumAgeHours);
+    private static readonly SemaphoreSlim CleanGate = new(1, 1);
 
     private static readonly string[] ExplorerHistoryKeyPaths =
     {
@@ -107,9 +133,7 @@ public class CleanerService
     private const string TerminalServerDefaultPath = @"Software\Microsoft\Terminal Server Client\Default";
     private const string TerminalServerServersPath = @"Software\Microsoft\Terminal Server Client\Servers";
 
-    private static CleanerService? _instance;
-
-    public static CleanerService Instance => _instance ??= new CleanerService();
+    public static CleanerService Instance { get; } = new();
 
     /// <summary>把字节数格式化为便于阅读的文本。</summary>
     public static string FormatSize(long bytes)
@@ -217,7 +241,8 @@ public class CleanerService
     public Task<List<CleanerItem>> ScanAsync(
         IReadOnlyList<CleanerItem> items,
         IProgress<string>? progress = null,
-        CleanerOptions? options = null)
+        CleanerOptions? options = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(items);
         CleanerOptions effectiveOptions = options ?? new CleanerOptions();
@@ -227,48 +252,62 @@ public class CleanerService
             var results = new List<CleanerItem>(items.Count);
             foreach (CleanerItem item in items)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
                     progress?.Report("正在扫描：" + item.Name);
-                    results.Add(ScanItem(item, effectiveOptions));
+                    results.Add(ScanItem(item, effectiveOptions, cancellationToken));
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     AppLog.Error($"扫描清理类别 {item.Category} 时发生异常", ex);
                     results.Add(CreateResult(item, "扫描发生内部错误，可稍后重试", item.DetectedCount, item.DetectedSizeBytes, item.IsSizeKnown, item.PreviewEntries));
                 }
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             return results;
-        });
+        }, cancellationToken);
     }
 
     public Task<List<CleanerItem>> CleanAsync(
         IReadOnlyList<CleanerItem> items,
         bool restartExplorerForThumbnails,
-        IProgress<string>? progress = null)
+        IProgress<string>? progress = null,
+        CancellationToken cancellationToken = default)
     {
         return CleanAsync(
             items,
             new CleanerOptions { RestartExplorerForThumbnails = restartExplorerForThumbnails },
-            progress);
+            progress, cancellationToken);
     }
 
-    public Task<List<CleanerItem>> CleanAsync(
+    public async Task<List<CleanerItem>> CleanAsync(
         IReadOnlyList<CleanerItem> items,
         CleanerOptions options,
-        IProgress<string>? progress = null)
+        IProgress<string>? progress = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(items);
         ArgumentNullException.ThrowIfNull(options);
 
         SynchronizationContext? uiContext = SynchronizationContext.Current;
+        await CleanGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await Task.Run(CleanSelectedAsync, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            CleanGate.Release();
+        }
 
-        return Task.Run(async () =>
+        async Task<List<CleanerItem>> CleanSelectedAsync()
         {
             var results = new List<CleanerItem>(items.Count);
             foreach (CleanerItem item in items)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!item.IsSelected)
                 {
                     results.Add(CreateResult(item, "未勾选，已跳过", item.DetectedCount, item.DetectedSizeBytes, item.IsSizeKnown, item.PreviewEntries));
@@ -278,58 +317,66 @@ public class CleanerService
                 try
                 {
                     progress?.Report("正在清理：" + item.Name);
+                    cancellationToken.ThrowIfCancellationRequested();
 
                     CleanerItem result = item.Category switch
                     {
-                        CleanerCategory.ThumbnailCache => CleanThumbnails(item, options.RestartExplorerForThumbnails),
-                        CleanerCategory.RecentAndJumpList => CleanRecent(item, options.SecureShredFiles),
-                        CleanerCategory.ExplorerSearchAndRunHistory => CleanExplorerHistory(item),
-                        CleanerCategory.MediaAndRemoteHistory => CleanMediaAndRemoteHistory(item),
-                        CleanerCategory.RecycleBin => CleanRecycleBin(item),
-                        CleanerCategory.TempFiles => CleanTemp(item, options.DeepCleanTemp, options.SecureShredFiles),
-                        CleanerCategory.CrashDumpsAndWer => CleanCrashDumpsAndWer(item, options.SecureShredFiles),
-                        CleanerCategory.Clipboard => await CleanClipboardAsync(item, uiContext).ConfigureAwait(false),
+                        CleanerCategory.ThumbnailCache => CleanThumbnails(item, GetExplorerCacheDirectory(), options, cancellationToken),
+                        CleanerCategory.RecentAndJumpList => CleanRecent(item, options.SecureShredFiles, cancellationToken),
+                        CleanerCategory.ExplorerSearchAndRunHistory => CleanExplorerHistory(item, cancellationToken),
+                        CleanerCategory.MediaAndRemoteHistory => CleanMediaAndRemoteHistory(item, cancellationToken),
+                        CleanerCategory.RecycleBin => CleanRecycleBin(item, cancellationToken),
+                        CleanerCategory.TempFiles => CleanTemp(item, options.DeepCleanTemp, options.SecureShredFiles, cancellationToken),
+                        CleanerCategory.CrashDumpsAndWer => CleanCrashDumpsAndWer(item, options.SecureShredFiles, cancellationToken),
+                        CleanerCategory.Clipboard => await CleanClipboardAsync(item, uiContext, cancellationToken).ConfigureAwait(false),
                         CleanerCategory.DnsCache => CleanDns(item),
-                        CleanerCategory.IsolatedDownloads => CleanIsolatedDownloads(item, options.SecureShredFiles),
+                        CleanerCategory.IsolatedDownloads => CleanIsolatedDownloads(item, options.SecureShredFiles, cancellationToken),
                         _ => CreateResult(item, "未知类别，已跳过", item.DetectedCount, item.DetectedSizeBytes)
                     };
 
                     results.Add(result);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     AppLog.Error($"清理类别 {item.Category} 时发生异常", ex);
                     results.Add(CreateResult(item, "清理发生内部错误，可稍后重试", item.DetectedCount, item.DetectedSizeBytes, item.IsSizeKnown, item.PreviewEntries));
                 }
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             return results;
-        });
+        }
+    }
+
+    internal async Task WaitForCleaningToFinishAsync()
+    {
+        await CleanGate.WaitAsync().ConfigureAwait(false);
+        CleanGate.Release();
     }
 
     // ---------------------------------------------------------------------
     // 扫描
     // ---------------------------------------------------------------------
 
-    private static CleanerItem ScanItem(CleanerItem source, CleanerOptions options)
+    private static CleanerItem ScanItem(CleanerItem source, CleanerOptions options, CancellationToken cancellationToken)
     {
         return source.Category switch
         {
-            CleanerCategory.ThumbnailCache => ScanThumbnails(source),
-            CleanerCategory.RecentAndJumpList => ScanRecent(source),
+            CleanerCategory.ThumbnailCache => ScanThumbnails(source, cancellationToken),
+            CleanerCategory.RecentAndJumpList => ScanRecent(source, cancellationToken),
             CleanerCategory.ExplorerSearchAndRunHistory => ScanExplorerHistory(source),
             CleanerCategory.MediaAndRemoteHistory => ScanMediaAndRemoteHistory(source),
             CleanerCategory.RecycleBin => ScanRecycleBin(source),
-            CleanerCategory.TempFiles => ScanTemp(source, options.DeepCleanTemp),
-            CleanerCategory.CrashDumpsAndWer => ScanCrashDumpsAndWer(source),
+            CleanerCategory.TempFiles => ScanTemp(source, options.DeepCleanTemp, cancellationToken),
+            CleanerCategory.CrashDumpsAndWer => ScanCrashDumpsAndWer(source, cancellationToken),
             CleanerCategory.Clipboard => CreateResult(source, "可直接清空（无法预先统计大小）", 0, 0, false),
             CleanerCategory.DnsCache => CreateResult(source, "可直接刷新（无法预先统计缓存条目）", 0, 0, false),
-            CleanerCategory.IsolatedDownloads => ScanIsolatedDownloads(source),
+            CleanerCategory.IsolatedDownloads => ScanIsolatedDownloads(source, cancellationToken),
             _ => CreateResult(source, "未知类别，已跳过", 0, 0)
         };
     }
 
-    private static CleanerItem ScanThumbnails(CleanerItem source)
+    private static CleanerItem ScanThumbnails(CleanerItem source, CancellationToken cancellationToken)
     {
         string directory = GetExplorerCacheDirectory();
         if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
@@ -337,7 +384,7 @@ public class CleanerService
             return CreateResult(source, "无需清理（系统未提供缩略图缓存目录）", 0, 0);
         }
 
-        string[] files = GetThumbnailCacheFiles(directory, out bool enumerationSucceeded);
+        string[] files = GetThumbnailCacheFiles(directory, out bool enumerationSucceeded, cancellationToken);
         if (!enumerationSucceeded)
         {
             return CreateResult(source, "无法读取缩略图缓存目录（权限不足）", source.DetectedCount, source.DetectedSizeBytes);
@@ -348,13 +395,13 @@ public class CleanerService
             return CreateResult(source, "无需清理（未发现缩略图缓存文件）", 0, 0);
         }
 
-        long size = SumFileSizes(files);
+        long size = SumFileSizes(files, cancellationToken);
         return CreateResult(source, $"已发现 {files.Length} 个缩略图缓存文件", files.Length, size, true, BuildPreviewList(files));
     }
 
-    private static CleanerItem ScanRecent(CleanerItem source)
+    private static CleanerItem ScanRecent(CleanerItem source, CancellationToken cancellationToken)
     {
-        List<string> files = EnumerateRecentFiles(out int enumerationFailures);
+        List<string> files = EnumerateRecentFiles(out int enumerationFailures, cancellationToken);
         if (files.Count == 0)
         {
             string emptyStatus = enumerationFailures > 0
@@ -363,7 +410,7 @@ public class CleanerService
             return CreateResult(source, emptyStatus, 0, 0);
         }
 
-        long size = SumFileSizes(files);
+        long size = SumFileSizes(files, cancellationToken);
         string status = $"已发现 {files.Count} 条最近记录与跳转列表文件";
         if (enumerationFailures > 0) status += "（部分内容无法访问）";
 
@@ -428,9 +475,9 @@ public class CleanerService
         return CreateResult(source, $"已发现 {count} 个回收站项目", count, bytes, true, preview);
     }
 
-    private static CleanerItem ScanTemp(CleanerItem source, bool deepClean)
+    private static CleanerItem ScanTemp(CleanerItem source, bool deepClean, CancellationToken cancellationToken)
     {
-        List<string> files = EnumerateEligibleTempFiles(deepClean, out int enumerationFailures);
+        List<string> files = EnumerateEligibleTempFiles(deepClean, out int enumerationFailures, cancellationToken);
         if (files.Count == 0)
         {
             string emptyStatus = enumerationFailures > 0
@@ -439,7 +486,7 @@ public class CleanerService
             return CreateResult(source, emptyStatus, 0, 0);
         }
 
-        long size = SumFileSizes(files);
+        long size = SumFileSizes(files, cancellationToken);
         string status = deepClean
             ? $"已发现 {files.Count} 个临时文件（含近期与子目录）"
             : $"已发现 {files.Count} 个 24 小时前生成的临时文件";
@@ -448,9 +495,9 @@ public class CleanerService
         return CreateResult(source, status, files.Count, size, true, BuildPreviewList(files));
     }
 
-    private static CleanerItem ScanCrashDumpsAndWer(CleanerItem source)
+    private static CleanerItem ScanCrashDumpsAndWer(CleanerItem source, CancellationToken cancellationToken)
     {
-        List<string> files = EnumerateCrashAndWerFiles(out int failures);
+        List<string> files = EnumerateCrashAndWerFiles(out int failures, cancellationToken);
         if (files.Count == 0)
         {
             string status = failures > 0
@@ -459,13 +506,13 @@ public class CleanerService
             return CreateResult(source, status, 0, 0);
         }
 
-        long size = SumFileSizes(files);
+        long size = SumFileSizes(files, cancellationToken);
         return CreateResult(source, $"已发现 {files.Count} 个转储与错误报告文件", files.Count, size, true, BuildPreviewList(files));
     }
 
-    private static CleanerItem ScanIsolatedDownloads(CleanerItem source)
+    private static CleanerItem ScanIsolatedDownloads(CleanerItem source, CancellationToken cancellationToken)
     {
-        List<string> files = EnumerateIsolatedDownloads(out int failures);
+        List<string> files = EnumerateIsolatedDownloads(out int failures, cancellationToken);
         if (files.Count == 0)
         {
             string status = failures > 0
@@ -474,7 +521,7 @@ public class CleanerService
             return CreateResult(source, status, 0, 0);
         }
 
-        long size = SumFileSizes(files);
+        long size = SumFileSizes(files, cancellationToken);
         return CreateResult(source, $"已发现 {files.Count} 个沙箱隔离下载文件", files.Count, size, true, BuildPreviewList(files));
     }
 
@@ -482,15 +529,15 @@ public class CleanerService
     // 清理
     // ---------------------------------------------------------------------
 
-    private static CleanerItem CleanThumbnails(CleanerItem source, bool restartExplorer)
+    internal static CleanerItem CleanThumbnails(CleanerItem source, string directory, CleanerOptions options, CancellationToken cancellationToken)
     {
-        string directory = GetExplorerCacheDirectory();
+        cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
         {
             return CreateResult(source, "无需清理（系统未提供缩略图缓存目录）", 0, 0);
         }
 
-        string[] files = GetThumbnailCacheFiles(directory, out bool enumerationSucceeded);
+        string[] files = GetThumbnailCacheFiles(directory, out bool enumerationSucceeded, cancellationToken);
         if (!enumerationSucceeded)
         {
             return CreateResult(source, "无法读取缩略图缓存目录，未执行删除", source.DetectedCount, source.DetectedSizeBytes);
@@ -504,6 +551,7 @@ public class CleanerService
         var sizes = new long[files.Length];
         for (int i = 0; i < files.Length; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try { sizes[i] = new FileInfo(files[i]).Length; }
             catch (Exception ex)
             {
@@ -512,55 +560,42 @@ public class CleanerService
             }
         }
 
-        bool explorerStopped = false;
-        if (restartExplorer)
-        {
-            explorerStopped = TryStopExplorer();
-            if (!explorerStopped)
-            {
-                AppLog.Warn("未能完全结束资源管理器进程，被占用的缩略图文件将按跳过处理");
-            }
-        }
-
         var deletedFlags = new bool[files.Length];
         int deleted = 0;
         int locked = 0;
         int failed = 0;
-        bool restartAttempted = false;
+        bool explorerStopped = false;
+        bool killedExplorer = false;
         bool restartSucceeded = true;
 
         try
         {
+            if (options.RestartExplorerForThumbnails)
+            {
+                explorerStopped = TryStopExplorer(cancellationToken, ref killedExplorer);
+            }
             for (int i = 0; i < files.Length; i++)
             {
-                try
+                cancellationToken.ThrowIfCancellationRequested();
+                if (TryDeleteOrShred(files[i], options.SecureShredFiles, out bool isBusy))
                 {
-                    File.Delete(files[i]);
                     deletedFlags[i] = true;
                     deleted++;
                 }
-                catch (IOException ex)
+                else if (isBusy)
                 {
                     locked++;
-                    AppLog.Warn("缩略图缓存文件被占用，已跳过：" + ex.GetType().Name);
                 }
-                catch (UnauthorizedAccessException ex)
+                else
                 {
                     failed++;
-                    AppLog.Error("删除缩略图缓存文件失败（权限不足）", ex);
-                }
-                catch (Exception ex)
-                {
-                    failed++;
-                    AppLog.Error("删除缩略图缓存文件失败", ex);
                 }
             }
         }
         finally
         {
-            if (restartExplorer)
+            if (killedExplorer)
             {
-                restartAttempted = true;
                 restartSucceeded = EnsureExplorerRunning();
                 if (!restartSucceeded)
                 {
@@ -581,10 +616,10 @@ public class CleanerService
         }
 
         var parts = new List<string>();
-        if (deleted > 0) parts.Add($"已删除 {deleted} 个缩略图缓存文件");
+        if (deleted > 0) parts.Add($"已删除 {deleted} 个缩略图缓存文件" + (options.SecureShredFiles ? "（已覆写粉碎）" : string.Empty));
         if (locked > 0)
         {
-            parts.Add(restartExplorer
+            parts.Add(options.RestartExplorerForThumbnails
                 ? $"{locked} 个文件仍被占用未能删除" + (explorerStopped ? string.Empty : "（资源管理器未能完全退出）")
                 : $"{locked} 个文件被资源管理器占用，可勾选“允许短暂重启资源管理器”后重试");
         }
@@ -593,18 +628,17 @@ public class CleanerService
 
         string status = string.Join("；", parts);
         if (remainingCount == 0) status += "；缩略图缓存已全部清除";
-        if (restartAttempted)
+        if (killedExplorer)
         {
-            if (!explorerStopped) status += "；资源管理器未能被结束，未执行重启";
-            else status += restartSucceeded ? "；资源管理器已重启" : "；资源管理器重启失败，请手动重新打开";
+            status += restartSucceeded ? "；资源管理器已恢复运行" : "；资源管理器重启失败，请手动重新打开";
         }
 
         return CreateResult(source, status, remainingCount, remainingSize, true, BuildPreviewList(remainingFiles));
     }
 
-    private static CleanerItem CleanRecent(CleanerItem source, bool shred)
+    private static CleanerItem CleanRecent(CleanerItem source, bool shred, CancellationToken cancellationToken)
     {
-        List<string> files = EnumerateRecentFiles(out int enumerationFailures);
+        List<string> files = EnumerateRecentFiles(out int enumerationFailures, cancellationToken);
         if (files.Count == 0)
         {
             string emptyStatus = enumerationFailures > 0
@@ -613,24 +647,24 @@ public class CleanerService
             return CreateResult(source, emptyStatus, 0, 0);
         }
 
-        DeleteFilesBatch(files, shred, out int deleted, out int skipped, out int failed);
+        DeleteFilesBatch(files, shred, out int deleted, out int skipped, out int failed, cancellationToken);
 
-        List<string> remainingFiles = EnumerateRecentFiles(out int refreshFailures);
+        List<string> remainingFiles = EnumerateRecentFiles(out int refreshFailures, cancellationToken);
         int remainingCount = refreshFailures > 0 ? Math.Max(0, files.Count - deleted) : remainingFiles.Count;
-        long remainingSize = SumFileSizes(remainingFiles);
+        long remainingSize = SumFileSizes(remainingFiles, cancellationToken);
 
         string status = BuildBatchStatus("最近记录 / 跳转列表文件", deleted, skipped, failed, remainingCount, enumerationFailures > 0);
         return CreateResult(source, status, remainingCount, remainingSize, true, BuildPreviewList(remainingFiles));
     }
 
-    private static CleanerItem CleanExplorerHistory(CleanerItem source)
+    private static CleanerItem CleanExplorerHistory(CleanerItem source, CancellationToken cancellationToken)
     {
         int cleared = 0;
         int failed = 0;
 
         foreach (string keyPath in ExplorerHistoryKeyPaths)
         {
-            ClearRegistryValues(keyPath, ref cleared, ref failed);
+            ClearRegistryValues(keyPath, ref cleared, ref failed, cancellationToken);
         }
 
         try
@@ -640,11 +674,11 @@ public class CleanerService
             {
                 foreach (string subName in openSaveKey.GetSubKeyNames())
                 {
-                    ClearRegistryValues($@"{OpenSavePidlMruPath}\{subName}", ref cleared, ref failed);
+                    ClearRegistryValues($@"{OpenSavePidlMruPath}\{subName}", ref cleared, ref failed, cancellationToken);
                 }
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             failed++;
             AppLog.Error("清理 OpenSavePidlMRU 失败", ex);
@@ -660,14 +694,14 @@ public class CleanerService
         return CreateResult(source, status, remaining, 0, false, remainingPreview);
     }
 
-    private static CleanerItem CleanMediaAndRemoteHistory(CleanerItem source)
+    private static CleanerItem CleanMediaAndRemoteHistory(CleanerItem source, CancellationToken cancellationToken)
     {
         int cleared = 0;
         int failed = 0;
 
         foreach (string keyPath in MediaAndOfficeRecentKeyPaths)
         {
-            ClearRegistryValues(keyPath, ref cleared, ref failed);
+            ClearRegistryValues(keyPath, ref cleared, ref failed, cancellationToken);
         }
 
         // Terminal Server Client Default MRU*
@@ -678,6 +712,7 @@ public class CleanerService
             {
                 foreach (string valName in rdpDef.GetValueNames())
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (valName.StartsWith("MRU", StringComparison.OrdinalIgnoreCase))
                     {
                         try
@@ -694,7 +729,7 @@ public class CleanerService
                 }
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             failed++;
             AppLog.Error("清理远程桌面 Default 历史失败", ex);
@@ -708,6 +743,7 @@ public class CleanerService
             {
                 foreach (string sub in rdpServers.GetSubKeyNames())
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     try
                     {
                         rdpServers.DeleteSubKeyTree(sub, throwOnMissingSubKey: false);
@@ -721,7 +757,7 @@ public class CleanerService
                 }
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             failed++;
             AppLog.Error("清理远程桌面 Servers 历史失败", ex);
@@ -737,7 +773,7 @@ public class CleanerService
         return CreateResult(source, status, remaining, 0, false, remainingPreview);
     }
 
-    private static CleanerItem CleanRecycleBin(CleanerItem source)
+    private static CleanerItem CleanRecycleBin(CleanerItem source, CancellationToken cancellationToken)
     {
         CleanerItem preScan = ScanRecycleBin(source);
         if (preScan.DetectedCount == 0 && preScan.DetectedSizeBytes == 0)
@@ -745,6 +781,7 @@ public class CleanerService
             return preScan;
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         try
         {
             uint flags = NativeMethods.SHERB_NOCONFIRMATION | NativeMethods.SHERB_NOPROGRESSUI | NativeMethods.SHERB_NOSOUND;
@@ -770,9 +807,9 @@ public class CleanerService
         return CreateResult(source, status, postScan.DetectedCount, postScan.DetectedSizeBytes, true, postScan.PreviewEntries);
     }
 
-    private static CleanerItem CleanTemp(CleanerItem source, bool deepClean, bool shred)
+    private static CleanerItem CleanTemp(CleanerItem source, bool deepClean, bool shred, CancellationToken cancellationToken)
     {
-        List<string> files = EnumerateEligibleTempFiles(deepClean, out int enumerationFailures);
+        List<string> files = EnumerateEligibleTempFiles(deepClean, out int enumerationFailures, cancellationToken);
         if (files.Count == 0)
         {
             string emptyStatus = enumerationFailures > 0
@@ -789,6 +826,7 @@ public class CleanerService
 
         foreach (string file in files)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 var info = new FileInfo(file);
@@ -825,12 +863,12 @@ public class CleanerService
 
         if (deepClean)
         {
-            TryCleanupEmptyTempSubdirectories();
+            TryCleanupEmptyTempSubdirectories(cancellationToken);
         }
 
-        List<string> remainingFiles = EnumerateEligibleTempFiles(deepClean, out int refreshFailures);
+        List<string> remainingFiles = EnumerateEligibleTempFiles(deepClean, out int refreshFailures, cancellationToken);
         int remainingCount = refreshFailures == 0 ? remainingFiles.Count : Math.Max(0, files.Count - deleted);
-        long remainingSize = refreshFailures == 0 ? SumFileSizes(remainingFiles) : 0;
+        long remainingSize = refreshFailures == 0 ? SumFileSizes(remainingFiles, cancellationToken) : 0;
 
         var parts = new List<string>();
         if (deleted > 0) parts.Add($"已删除 {deleted} 个临时文件" + (shred ? "（已覆写粉碎）" : string.Empty));
@@ -846,43 +884,43 @@ public class CleanerService
         return CreateResult(source, status, remainingCount, remainingSize, true, BuildPreviewList(remainingFiles));
     }
 
-    private static CleanerItem CleanCrashDumpsAndWer(CleanerItem source, bool shred)
+    private static CleanerItem CleanCrashDumpsAndWer(CleanerItem source, bool shred, CancellationToken cancellationToken)
     {
-        List<string> files = EnumerateCrashAndWerFiles(out int enumerationFailures);
+        List<string> files = EnumerateCrashAndWerFiles(out int enumerationFailures, cancellationToken);
         if (files.Count == 0)
         {
             return CreateResult(source, "无需清理（未发现崩溃转储或错误报告）", 0, 0);
         }
 
-        DeleteFilesBatch(files, shred, out int deleted, out int skipped, out int failed);
+        DeleteFilesBatch(files, shred, out int deleted, out int skipped, out int failed, cancellationToken);
 
-        List<string> remainingFiles = EnumerateCrashAndWerFiles(out int refreshFailures);
+        List<string> remainingFiles = EnumerateCrashAndWerFiles(out int refreshFailures, cancellationToken);
         int remainingCount = refreshFailures > 0 ? Math.Max(0, files.Count - deleted) : remainingFiles.Count;
-        long remainingSize = SumFileSizes(remainingFiles);
+        long remainingSize = SumFileSizes(remainingFiles, cancellationToken);
 
         string status = BuildBatchStatus("转储 / 错误报告文件", deleted, skipped, failed, remainingCount, enumerationFailures > 0);
         return CreateResult(source, status, remainingCount, remainingSize, true, BuildPreviewList(remainingFiles));
     }
 
-    private static CleanerItem CleanIsolatedDownloads(CleanerItem source, bool shred)
+    private static CleanerItem CleanIsolatedDownloads(CleanerItem source, bool shred, CancellationToken cancellationToken)
     {
-        List<string> files = EnumerateIsolatedDownloads(out int enumerationFailures);
+        List<string> files = EnumerateIsolatedDownloads(out int enumerationFailures, cancellationToken);
         if (files.Count == 0)
         {
             return CreateResult(source, "无需清理（沙箱隔离下载目录为空）", 0, 0);
         }
 
-        DeleteFilesBatch(files, shred, out int deleted, out int skipped, out int failed);
+        DeleteFilesBatch(files, shred, out int deleted, out int skipped, out int failed, cancellationToken);
 
-        List<string> remainingFiles = EnumerateIsolatedDownloads(out int refreshFailures);
+        List<string> remainingFiles = EnumerateIsolatedDownloads(out int refreshFailures, cancellationToken);
         int remainingCount = refreshFailures > 0 ? Math.Max(0, files.Count - deleted) : remainingFiles.Count;
-        long remainingSize = SumFileSizes(remainingFiles);
+        long remainingSize = SumFileSizes(remainingFiles, cancellationToken);
 
         string status = BuildBatchStatus("沙箱隔离下载文件", deleted, skipped, failed, remainingCount, enumerationFailures > 0);
         return CreateResult(source, status, remainingCount, remainingSize, true, BuildPreviewList(remainingFiles));
     }
 
-    private static async Task<CleanerItem> CleanClipboardAsync(CleanerItem source, SynchronizationContext? uiContext)
+    private static async Task<CleanerItem> CleanClipboardAsync(CleanerItem source, SynchronizationContext? uiContext, CancellationToken cancellationToken)
     {
         bool clipboardCleared = false;
         bool historyCleared = false;
@@ -890,6 +928,7 @@ public class CleanerService
 
         void ClearNow()
         {
+            if (cancellationToken.IsCancellationRequested) return;
             try
             {
                 Windows.ApplicationModel.DataTransfer.Clipboard.Clear();
@@ -900,6 +939,7 @@ public class CleanerService
                 AppLog.Error("清空系统剪贴板失败", ex);
             }
 
+            if (cancellationToken.IsCancellationRequested) return;
             try
             {
                 historyCleared = Windows.ApplicationModel.DataTransfer.Clipboard.ClearHistory();
@@ -915,23 +955,31 @@ public class CleanerService
         if (uiContext is not null)
         {
             var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            int startedOrAbandoned = 0;
             try
             {
                 uiContext.Post(_ =>
                 {
+                    if (Interlocked.Exchange(ref startedOrAbandoned, 1) != 0) return;
                     try { ClearNow(); }
                     finally { completion.TrySetResult(true); }
                 }, null);
 
-                await completion.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+                await completion.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
             }
             catch (TimeoutException)
             {
                 AppLog.Warn("等待界面线程清空剪贴板超时");
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 AppLog.Error("无法把剪贴板清理调度到界面线程", ex);
+            }
+            finally
+            {
+                // A queued callback must not clear the clipboard after the cleanup has ended.
+                if (Interlocked.Exchange(ref startedOrAbandoned, 1) != 0)
+                    await completion.Task.ConfigureAwait(false);
             }
         }
         else
@@ -1006,7 +1054,8 @@ public class CleanerService
         bool shred,
         out int deleted,
         out int skipped,
-        out int failed)
+        out int failed,
+        CancellationToken cancellationToken)
     {
         deleted = 0;
         skipped = 0;
@@ -1014,6 +1063,7 @@ public class CleanerService
 
         foreach (string file in files)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (TryDeleteOrShred(file, shred, out bool isBusy))
             {
                 deleted++;
@@ -1213,8 +1263,9 @@ public class CleanerService
         }
     }
 
-    private static void ClearRegistryValues(string subKeyPath, ref int cleared, ref int failed)
+    private static void ClearRegistryValues(string subKeyPath, ref int cleared, ref int failed, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         try
         {
             using RegistryKey? key = Registry.CurrentUser.OpenSubKey(subKeyPath, writable: true);
@@ -1222,6 +1273,7 @@ public class CleanerService
 
             foreach (string name in key.GetValueNames())
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (string.IsNullOrEmpty(name)) continue;
                 try
                 {
@@ -1235,7 +1287,7 @@ public class CleanerService
                 }
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             failed++;
             AppLog.Warn("打开注册表失败", ex);
@@ -1249,15 +1301,25 @@ public class CleanerService
         return Path.Combine(localAppData, "Microsoft", "Windows", "Explorer");
     }
 
-    private static string[] GetThumbnailCacheFiles(string directory, out bool success)
+    private static string[] GetThumbnailCacheFiles(string directory, out bool success, CancellationToken cancellationToken)
     {
+        if (!SafeFileSystem.IsPlainPath(directory))
+        {
+            success = false;
+            return Array.Empty<string>();
+        }
         try
         {
-            string[] files = Directory.GetFiles(directory, ThumbnailSearchPattern, SearchOption.TopDirectoryOnly);
+            var files = new List<string>();
+            foreach (string path in Directory.EnumerateFiles(directory, ThumbnailSearchPattern, SearchOption.TopDirectoryOnly))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (SafeFileSystem.IsPlainPath(path)) files.Add(path);
+            }
             success = true;
-            return files;
+            return files.ToArray();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             AppLog.Error("枚举缩略图缓存目录失败", ex);
             success = false;
@@ -1275,7 +1337,7 @@ public class CleanerService
         return Path.Combine(profile, "AppData", "Roaming", "Microsoft", "Windows", "Recent");
     }
 
-    private static List<string> EnumerateRecentFiles(out int enumerationFailures)
+    private static List<string> EnumerateRecentFiles(out int enumerationFailures, CancellationToken cancellationToken)
     {
         enumerationFailures = 0;
         var files = new List<string>();
@@ -1287,13 +1349,14 @@ public class CleanerService
 
         try
         {
-            foreach (string file in Directory.GetFiles(root, "*", SearchOption.TopDirectoryOnly))
+            foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (IsShellMetadataFile(file)) continue;
                 files.Add(file);
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             enumerationFailures++;
             AppLog.Error("枚举“最近使用”目录失败", ex);
@@ -1313,18 +1376,20 @@ public class CleanerService
 
         foreach (string subDirectory in subDirectories)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 FileAttributes attributes = File.GetAttributes(subDirectory);
                 if ((attributes & FileAttributes.ReparsePoint) != 0) continue;
 
-                foreach (string file in Directory.GetFiles(subDirectory, "*", SearchOption.TopDirectoryOnly))
+                foreach (string file in Directory.EnumerateFiles(subDirectory, "*", SearchOption.TopDirectoryOnly))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (IsShellMetadataFile(file)) continue;
                     files.Add(file);
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 enumerationFailures++;
                 AppLog.Error("枚举“最近使用”子目录文件失败", ex);
@@ -1339,7 +1404,7 @@ public class CleanerService
         return string.Equals(Path.GetFileName(path), "desktop.ini", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static List<string> EnumerateEligibleTempFiles(bool deepClean, out int enumerationFailures)
+    private static List<string> EnumerateEligibleTempFiles(bool deepClean, out int enumerationFailures, CancellationToken cancellationToken)
     {
         enumerationFailures = 0;
         var eligible = new List<string>();
@@ -1363,9 +1428,10 @@ public class CleanerService
 
         DateTime cutoff = DateTime.UtcNow - TempFileMinimumAge;
         var files = SafeFileSystem.EnumerateFiles(tempDirectory, deepClean, out enumerationFailures,
-            dir => Path.GetFileName(dir).StartsWith(WebProfilePrefix, StringComparison.OrdinalIgnoreCase));
+            dir => Path.GetFileName(dir).StartsWith(WebProfilePrefix, StringComparison.OrdinalIgnoreCase), cancellationToken);
         foreach (string file in files)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 if (deepClean || File.GetLastWriteTimeUtc(file) < cutoff) eligible.Add(file);
@@ -1376,13 +1442,14 @@ public class CleanerService
         return eligible;
     }
 
-    private static void TryCleanupEmptyTempSubdirectories()
+    private static void TryCleanupEmptyTempSubdirectories(CancellationToken cancellationToken)
     {
         try
         {
             string tempDirectory = Path.GetTempPath();
-            foreach (string subDir in Directory.GetDirectories(tempDirectory, "*", SearchOption.TopDirectoryOnly))
+            foreach (string subDir in Directory.EnumerateDirectories(tempDirectory, "*", SearchOption.TopDirectoryOnly))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 string dirName = Path.GetFileName(subDir);
                 if (dirName.StartsWith(WebProfilePrefix, StringComparison.OrdinalIgnoreCase)) continue;
 
@@ -1397,10 +1464,10 @@ public class CleanerService
                 catch { }
             }
         }
-        catch { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
-    private static List<string> EnumerateCrashAndWerFiles(out int enumerationFailures)
+    private static List<string> EnumerateCrashAndWerFiles(out int enumerationFailures, CancellationToken cancellationToken)
     {
         enumerationFailures = 0;
         var files = new List<string>();
@@ -1416,30 +1483,31 @@ public class CleanerService
 
         foreach (string dir in candidateDirs)
         {
-            files.AddRange(SafeFileSystem.EnumerateFiles(dir, true, out int failures));
+            files.AddRange(SafeFileSystem.EnumerateFiles(dir, true, out int failures, cancellationToken: cancellationToken));
             enumerationFailures += failures;
         }
 
         return files;
     }
 
-    private static List<string> EnumerateIsolatedDownloads(out int enumerationFailures)
+    private static List<string> EnumerateIsolatedDownloads(out int enumerationFailures, CancellationToken cancellationToken)
     {
         enumerationFailures = 0;
         var files = new List<string>();
         string dir = AppPaths.IsolatedDownloadsRoot;
         if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return files;
 
-        files.AddRange(SafeFileSystem.EnumerateFiles(dir, false, out enumerationFailures));
+        files.AddRange(SafeFileSystem.EnumerateFiles(dir, false, out enumerationFailures, cancellationToken: cancellationToken));
 
         return files;
     }
 
-    private static long SumFileSizes(IEnumerable<string> files)
+    private static long SumFileSizes(IEnumerable<string> files, CancellationToken cancellationToken)
     {
         long total = 0;
         foreach (string file in files)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 total += new FileInfo(file).Length;
@@ -1490,7 +1558,7 @@ public class CleanerService
         }
     }
 
-    private static bool TryStopExplorer()
+    private static bool TryStopExplorer(CancellationToken cancellationToken, ref bool killedExplorer)
     {
         Process[] processes;
         try
@@ -1503,31 +1571,38 @@ public class CleanerService
             return false;
         }
 
-        foreach (Process process in processes)
+        try
         {
-            using (process)
+            foreach (Process process in processes)
             {
                 try
                 {
                     if (!IsCurrentSession(process) || process.HasExited) continue;
+                    cancellationToken.ThrowIfCancellationRequested();
                     process.Kill();
+                    killedExplorer = true;
                     process.WaitForExit(5000);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     AppLog.Error("结束资源管理器进程失败", ex);
                 }
             }
         }
+        finally
+        {
+            foreach (Process process in processes) process.Dispose();
+        }
 
-        return WaitForExplorerExit(5000);
+        return WaitForExplorerExit(5000, cancellationToken);
     }
 
-    private static bool WaitForExplorerExit(int timeoutMilliseconds)
+    private static bool WaitForExplorerExit(int timeoutMilliseconds, CancellationToken cancellationToken)
     {
         int elapsed = 0;
         while (elapsed < timeoutMilliseconds)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!IsExplorerRunning()) return true;
             Thread.Sleep(200);
             elapsed += 200;
@@ -1538,22 +1613,23 @@ public class CleanerService
 
     private static bool EnsureExplorerRunning()
     {
-        if (IsExplorerRunning()) return true;
+        if (GetShellWindow() != IntPtr.Zero) return true;
 
         try
         {
             // Give Windows a brief moment to settle after Explorer termination before relaunching directly.
             Thread.Sleep(400);
+            if (GetShellWindow() != IntPtr.Zero) return true;
 
             string windowsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-            string executable = string.IsNullOrEmpty(windowsDirectory)
-                ? ExplorerProcessName + ".exe"
-                : Path.Combine(windowsDirectory, ExplorerProcessName + ".exe");
+            if (string.IsNullOrEmpty(windowsDirectory))
+                windowsDirectory = Path.GetDirectoryName(Environment.SystemDirectory) ?? string.Empty;
+            if (!Path.IsPathFullyQualified(windowsDirectory)) return false;
 
-            Process.Start(new ProcessStartInfo
+            using var started = Process.Start(new ProcessStartInfo
             {
-                FileName = executable,
-                WorkingDirectory = string.IsNullOrEmpty(windowsDirectory) ? Environment.SystemDirectory : windowsDirectory,
+                FileName = Path.Combine(windowsDirectory, ExplorerProcessName + ".exe"),
+                WorkingDirectory = windowsDirectory,
                 UseShellExecute = false
             });
         }
@@ -1568,9 +1644,12 @@ public class CleanerService
         {
             Thread.Sleep(200);
             elapsed += 200;
-            if (IsExplorerRunning()) return true;
+            if (GetShellWindow() != IntPtr.Zero) return true;
         }
 
         return false;
     }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetShellWindow();
 }

@@ -91,6 +91,7 @@ internal sealed class BrowserHttpFixture : IAsyncDisposable
                     "/fullscreen" => "<!doctype html><title>Fullscreen fixture</title><button id=fullscreen onclick='document.documentElement.requestFullscreen().catch(e=>window.fullscreenError=e.name+e.message)'>Enter fullscreen</button><input id=draft value='keep my draft'>",
                     "/reading" => "<!doctype html><meta charset=utf-8><title>Reading fixture</title><link rel=icon href=/tile><style>body{font:16px system-ui;background:#f3f4f6}main{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}article{background:white;padding:12px}img{width:128px;height:128px}</style><h1>Image reading workload</h1><main>" +
                         string.Concat(Enumerable.Range(0, 48).Select(i => $"<article><img src='/tile?{i}'><p>Chapter {i}: synthetic reading content</p></article>")) + "</main>",
+                    "/popup-frame" => $"<!doctype html><title>Embedded popup fixture</title><iframe src='{Address.Replace("127.0.0.1", "localhost")}/popup'></iframe>",
                     "/popup" => """
                         <!doctype html><title>Popup fixture</title><h1>Popup and reading workflow</h1>
                         <button id="open" onclick="window.child=window.open('/child','fixture-child')">Open child</button>

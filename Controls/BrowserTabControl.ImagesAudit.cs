@@ -22,7 +22,23 @@ public sealed partial class BrowserTabControl
         foreach (string page in new[] { "/gallery", "/gallery-csp" })
         {
             await NavigateAuditAsync(fixture.Address + page);
-            if (page == "/gallery") await CheckImageContextAuditAsync();
+            if (page == "/gallery")
+            {
+                await CheckImageContextAuditAsync();
+                var vault = VaultService.Instance;
+                var existing = vault.VisibleItems.Select(i => i.Id).ToHashSet();
+                await SavePageImageAsync(fixture.Address + "/image-tall", _hookedCore!.Source, _imageDocumentId, confirm: false);
+                var saved = vault.VisibleItems.Single(i => !existing.Contains(i.Id));
+                try
+                {
+                    using var image = vault.OpenDecryptedStream(saved);
+                    using var reader = new StreamReader(image);
+                    if (saved.FileExtension != ".svg" || !reader.ReadToEnd().Contains("height='3200'"))
+                        throw new InvalidOperationException("Wrong cached image bytes in the vault");
+                    SmokeTest.Report("image reader audit: selected cached image saved directly to vault with original bytes");
+                }
+                finally { await vault.DeleteItemAsync(saved); }
+            }
             await EvaluateAuditAsync("document.documentElement.style.setProperty('overflow-x','auto','important');document.documentElement.style.setProperty('overflow-y','scroll');");
             const string pageState = "JSON.stringify({x:scrollX,y:scrollY,overflow:document.documentElement.style.cssText})";
             string beforeReader = await EvaluateAuditAsync(pageState);
@@ -35,6 +51,9 @@ public sealed partial class BrowserTabControl
             }
             await RequireAsync(shadow + ".querySelector('[aria-live]').textContent==='2 / 3' && " + shadow + ".querySelector('img').naturalHeight===3200",
                 page + " starts at requested image and deduplicates sources");
+            await RequireAsync("!" + shadow + ".querySelector('[aria-label=加密保存到媒体库]').disabled",
+                page + " loaded image can be saved from reader");
+            if (page == "/gallery-csp") await CheckReaderSaveGestureAsync(shadow);
             await RequireAsync(shadow + ".querySelector('[aria-label^=按窗口宽度]').getAttribute('aria-pressed')==='true'",
                 page + " long image opens at readable width automatically");
             await EvaluateAuditAsync(shadow + ".querySelector('[aria-label^=按窗口宽度]').click()");
@@ -71,6 +90,38 @@ public sealed partial class BrowserTabControl
         await EvaluateAuditAsync(root + ".dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
     }
 
+    private async Task CheckReaderSaveGestureAsync(string shadow)
+    {
+        if (_hookedCore is not { } core || !Uri.TryCreate(core.Source, UriKind.Absolute, out var uri) || !uri.IsLoopback)
+            throw new InvalidOperationException("Reader save gesture restricted to fixture");
+        var vault = VaultService.Instance;
+        var existing = vault.VisibleItems.Select(i => i.Id).ToHashSet();
+        // Keyboard activation targets the same button at every OS scale and page zoom.
+        await core.ExecuteScriptAsync(shadow + ".querySelector('[aria-label=加密保存到媒体库]').focus()");
+        foreach (string type in new[] { "keyDown", "keyUp" })
+            await core.CallDevToolsProtocolMethodAsync("Input.dispatchKeyEvent", System.Text.Json.JsonSerializer.Serialize(new
+            {
+                type, key = "Enter", code = "Enter", windowsVirtualKeyCode = 13, nativeVirtualKeyCode = 13,
+                text = type == "keyDown" ? "\r" : ""
+            }));
+        Microsoft.UI.Xaml.Controls.Button? confirm = null;
+        for (int i = 0; i < 100 && confirm == null; i++)
+        {
+            await Task.Delay(50);
+            confirm = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetOpenPopupsForXamlRoot(XamlRoot)
+                .Select(popup => ImageExperienceAcceptance.FindConfirm(popup.Child, "加密保存")).FirstOrDefault(b => b != null);
+        }
+        if (confirm == null || vault.VisibleItems.Count != existing.Count)
+            throw new InvalidOperationException($"Reader save must await native confirmation; pending={_imageSavePending}; ticket={_readerTicket != null}; messaging={core.Settings.IsWebMessageEnabled}");
+        MediaAcceptance.Invoke(confirm);
+        for (int i = 0; i < 100 && (_imageSavePending || vault.VisibleItems.Count == existing.Count); i++) await Task.Delay(50);
+        var item = vault.VisibleItems.Single(i => !existing.Contains(i.Id));
+        using (var reader = new StreamReader(vault.OpenDecryptedStream(item)))
+            if (!reader.ReadToEnd().Contains("height='3200'")) throw new InvalidOperationException("Reader saved a different image");
+        await vault.DeleteItemAsync(item);
+        SmokeTest.Report("image reader audit: trusted reader toolbar click, native confirmation, decrypted original on CSP page");
+    }
+
     private async Task CheckImageContextAuditAsync()
     {
         var core = _hookedCore ?? throw new InvalidOperationException("Image context core missing");
@@ -81,7 +132,8 @@ public sealed partial class BrowserTabControl
         {
             SmokeTest.Report("image native menu labels: " + string.Join(" | ", args.MenuItems.Select(item => item.Label)));
             args.Handled = true;
-            ready.TrySetResult(args.MenuItems.Any(item => item.Label == "在图片阅读器中查看"));
+            ready.TrySetResult(args.MenuItems.Any(item => item.Label == "在图片阅读器中查看") &&
+                args.MenuItems.Any(item => item.Label == "加密保存到媒体库"));
         }
         core.ContextMenuRequested += Requested;
         try

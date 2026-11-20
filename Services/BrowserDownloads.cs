@@ -8,11 +8,22 @@ namespace StealthWorkspace.Services;
 internal static class BrowserDownloads
 {
     internal static ObservableCollection<BrowserDownloadItem> Items { get; } = new();
+    internal static int PendingCount { get; private set; }
+    internal static event Action? PendingCountChanged;
+
+    internal static void RefreshPendingCount()
+    {
+        int count = Items.Count(i => i.IsPending);
+        if (PendingCount == count) return;
+        PendingCount = count;
+        PendingCountChanged?.Invoke();
+    }
 
     internal static BrowserDownloadItem Add(CoreWebView2DownloadOperation operation, string path, Action wakeOwner)
     {
         var item = new BrowserDownloadItem(operation, path, wakeOwner);
         Items.Insert(0, item);
+        RefreshPendingCount();
         while (Items.Count > 200)
         {
             var oldest = Items.LastOrDefault(i => !i.IsPending);

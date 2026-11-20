@@ -23,7 +23,8 @@ internal static class SafeShred
 
     // Inspect metadata first (also works for read-only files), then reopen that same
     // object exclusively for writing. Never clear attributes through an unchecked path.
-    internal static bool OverwriteAndDelete(string path, int passes, FileIdentity? expected = null, byte[]? expectedDigest = null)
+    internal static bool OverwriteAndDelete(string path, int passes, FileIdentity? expected = null, byte[]? expectedDigest = null,
+        Func<bool>? authorize = null)
     {
         passes = Math.Clamp(passes, 1, 7);
         if (!SafeFileSystem.IsPlainPath(path)) return false;
@@ -69,6 +70,8 @@ internal static class SafeShred
             byte[] buffer = new byte[(int)Math.Min(Math.Max(fileLength, 1), 1024 * 1024)];
             try
             {
+                // Hashing a large source may span a lock. Once an overwrite starts it must finish.
+                if (authorize != null && !authorize()) return false;
                 for (int pass = 0; pass < passes; pass++)
                 {
                     if (pass == 0) Array.Clear(buffer);

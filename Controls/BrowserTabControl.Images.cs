@@ -16,6 +16,10 @@ public sealed partial class BrowserTabControl
         return reader.ReadToEnd();
     });
     private CoreWebView2ContextMenuItem? _imageReaderMenuItem;
+    private CoreWebView2ContextMenuItem? _imageSaveMenuItem;
+    private string? _readerTicket;
+    private ulong _imageDocumentId;
+    private bool _imageSavePending;
     private string? _contextImageSource;
     private string? _contextImageDocument;
     private bool _imagesAfterMenuClose;
@@ -38,11 +42,21 @@ public sealed partial class BrowserTabControl
             {
                 _imageReaderMenuItem = sender.Environment.CreateContextMenuItem("在图片阅读器中查看", null, CoreWebView2ContextMenuItemKind.Command);
                 _imageReaderMenuItem.CustomItemSelected += ImageReaderMenuItem_Selected;
+                _imageSaveMenuItem = sender.Environment.CreateContextMenuItem("加密保存到媒体库", null, CoreWebView2ContextMenuItemKind.Command);
+                _imageSaveMenuItem.CustomItemSelected += ImageSaveMenuItem_Selected;
             }
+            args.MenuItems.Insert(0, _imageSaveMenuItem!);
             args.MenuItems.Insert(0, _imageReaderMenuItem);
             if (SmokeTest.Enabled) SmokeTest.Report("image context: inserted reader command; count=" + args.MenuItems.Count);
         }
         catch (Exception ex) { AppLog.Warn("Image context menu: " + ex.GetType().Name); }
+    }
+
+    private void ImageSaveMenuItem_Selected(CoreWebView2ContextMenuItem sender, object args)
+    {
+        string? source = _contextImageSource, document = _contextImageDocument;
+        ulong id = _imageDocumentId;
+        DispatcherQueue.TryEnqueue(async () => await SavePageImageAsync(source, document, id, confirm: false));
     }
 
     private void ImageReaderMenuItem_Selected(CoreWebView2ContextMenuItem sender, object args)
@@ -65,10 +79,13 @@ public sealed partial class BrowserTabControl
         if (_isDisposed || !_isInitialized || _hookedCore is not { } core) return "unavailable";
         try
         {
-            string result = await core.ExecuteScriptAsync(ImageViewerScript.Value + "(" + JsonSerializer.Serialize(startSource) + "," + (UiMotion.AnimationsEnabled ? "true" : "false") + ");");
-            if (_isDisposed || !ReferenceEquals(core, _hookedCore)) return "unavailable";
+            ulong documentId = _imageDocumentId;
+            string ticket = Guid.NewGuid().ToString("N");
+            string result = await core.ExecuteScriptAsync(ImageViewerScript.Value + "(" + JsonSerializer.Serialize(startSource) + "," + (UiMotion.AnimationsEnabled ? "true" : "false") + "," + JsonSerializer.Serialize(ticket) + ");");
+            if (_isDisposed || !ReferenceEquals(core, _hookedCore) || documentId != _imageDocumentId) return "unavailable";
             using var parsed = JsonDocument.Parse(result);
             string status = parsed.RootElement.TryGetProperty("status", out var value) ? value.GetString() ?? "unavailable" : "unavailable";
+            if (status == "opened") _readerTicket = ticket;
             if (status is "opened" or "already-open") _browserControl?.Focus(FocusState.Programmatic);
             else if (status == "empty") ShowBrowserError("没有找到网页图片", "此功能查看当前页面的图片，不包括视频、画布和嵌入页面。");
             else ShowBrowserError("无法打开图片阅读器", "可以使用图片右键菜单，在新标签页中打开图片。");
@@ -84,6 +101,9 @@ public sealed partial class BrowserTabControl
     private void DetachImageReader()
     {
         if (_imageReaderMenuItem != null) _imageReaderMenuItem.CustomItemSelected -= ImageReaderMenuItem_Selected;
+        if (_imageSaveMenuItem != null) _imageSaveMenuItem.CustomItemSelected -= ImageSaveMenuItem_Selected;
+        _imageSaveMenuItem = null;
+        _readerTicket = null;
         _imageReaderMenuItem = null;
         _contextImageSource = _contextImageDocument = null;
         _imagesAfterMenuClose = false;

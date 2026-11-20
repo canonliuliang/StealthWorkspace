@@ -1,5 +1,8 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Automation.Provider;
+using Microsoft.UI.Xaml.Controls;
 using StealthWorkspace.Pages;
 using Windows.Graphics.Imaging;
 using Windows.Media.Editing;
@@ -39,6 +42,7 @@ internal static class MediaAcceptance
                 output.Dispose();
                 File.Move(video + ".part", video);
             }
+            File.Copy(video, Path.Combine(root, "第二段视频.mp4"), overwrite: true);
             var paths = Directory.GetFiles(root).Where(p => Path.GetExtension(p) is ".jpg" or ".png" or ".mp4").ToList();
             if (SmokeTest.SharedFixtureRoot is { } shared)
             {
@@ -52,6 +56,16 @@ internal static class MediaAcceptance
             var result = await page.ImportFilesAsync(paths);
             Require(result.Imported == paths.Count && result.Failed == 0, "JPG/PNG/MP4 import including configured shared source");
             Require(await page.WaitForSmokeThumbnailAsync(), "decoded gallery thumbnail");
+            var displayTimes = page.DisplayedItems.Select(item => item.ImportedAt).ToArray();
+            Require(displayTimes.SequenceEqual(displayTimes.OrderDescending()), "gallery defaults to newest imports first");
+            page.SetSmokeFilter("", 1);
+            var previewVideo = page.DisplayedItems.Single(item => item.OriginalFileName == Path.GetFileName(video));
+            Require(await page.WaitForSmokeThumbnailAsync(previewVideo.Id) && previewVideo.DisplayDuration is "0:08" or "0:07",
+                "decrypted video has a cover and duration");
+            page.SetSmokeFilter("", 0, sort: 2);
+            var sizes = page.DisplayedItems.Select(item => item.FileSizeBytes).ToArray();
+            Require(sizes.SequenceEqual(sizes.OrderDescending()), "gallery sorts by size");
+            page.SetSmokeFilter("", 0, sort: 0);
             int beforeRetry = VaultService.Instance.VisibleItems.Count;
             string suffix = Guid.NewGuid().ToString("N")[..8];
             string valid = Path.Combine(root, "batch-success-" + suffix + ".png");
@@ -81,6 +95,57 @@ internal static class MediaAcceptance
             }
             Require(item.MediaType == "Image" ? player()?.IsImageReady == true : player()?.IsMediaReady == true && player()?.PlaybackSeconds > 0.5,
                 (SmokeTest.ReopenMedia ? "after process restart " : "") + "viewer/playback: " + item.OriginalFileName);
+            if (item.MediaType != "Image")
+            {
+                var element = (Microsoft.UI.Xaml.Controls.MediaPlayerElement)player()!.FindName("PlayerElement");
+                var media = element.MediaPlayer;
+                bool originalMute = media.IsMuted;
+                try
+                {
+                    foreach (bool userMuted in new[] { false, true })
+                    {
+                        media.IsMuted = userMuted;
+                        PrivacyMediaGuard.SetAppAudioMuted(true);
+                        Require(media.IsMuted, "player muted for boss key");
+                        PrivacyMediaGuard.SetAppAudioMuted(false);
+                        Require(media.IsMuted == userMuted, "player restored previous mute=" + userMuted);
+                    }
+                }
+                finally
+                {
+                    PrivacyMediaGuard.SetAppAudioMuted(false);
+                    media.IsMuted = originalMute;
+                }
+                var videoPage = player()!;
+                var session = media.PlaybackSession;
+                media.Pause();
+                session.Position = TimeSpan.Zero;
+                await Task.Delay(200);
+                Require(videoPage.HandlePlaybackKey(Windows.System.VirtualKey.Right), "right arrow handles video seek");
+                for (int i = 0; i < 40 && Math.Abs(session.Position.TotalSeconds - 5) > 0.5; i++) await Task.Delay(50);
+                Require(Math.Abs(session.Position.TotalSeconds - 5) <= 0.5, "right arrow seeks forward five seconds");
+                videoPage.HandlePlaybackKey(Windows.System.VirtualKey.Left);
+                for (int i = 0; i < 40 && session.Position.TotalSeconds > 0.5; i++) await Task.Delay(50);
+                Require(session.Position.TotalSeconds <= 0.5, "left arrow seeks backward five seconds");
+                media.Volume = 0.5;
+                videoPage.HandlePlaybackKey(Windows.System.VirtualKey.Up);
+                Require(Math.Abs(media.Volume - 0.55) < 0.001, "up arrow increases volume");
+                videoPage.HandlePlaybackKey(Windows.System.VirtualKey.Down);
+                Require(Math.Abs(media.Volume - 0.5) < 0.001, "down arrow decreases volume");
+                videoPage.HandlePlaybackKey(Windows.System.VirtualKey.F);
+                Require(MainWindow.Current?.AppWindow.Presenter.Kind == Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen,
+                    "F enters full-screen video");
+                videoPage.HandlePlaybackKey(Windows.System.VirtualKey.Escape);
+                Require(MainWindow.Current?.AppWindow.Presenter.Kind != Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen &&
+                    videoPage.CurrentMediaId == item.Id, "Escape exits full screen and keeps the video open");
+                if (expected.Keys.Count(path => Path.GetExtension(path) == ".mp4") == 2)
+                {
+                    var direction = videoPage.NavigationEnabled.Previous ? "PreviousButton" : "NextButton";
+                    Invoke((Button)videoPage.FindName(direction));
+                    for (int i = 0; i < 100 && (videoPage.CurrentMediaId == item.Id || !videoPage.IsMediaReady); i++) await Task.Delay(50);
+                    Require(videoPage.IsMediaReady && videoPage.CurrentMediaId != item.Id, "video navigation opens another playable video");
+                }
+            }
         }
 
         string backupPath = Path.Combine(root, "acceptance.swbackup");
@@ -96,6 +161,12 @@ internal static class MediaAcceptance
             Require(Convert.ToHexString(SHA256.HashData(stream)) == source.Value, "restored media hash: " + Path.GetFileName(source.Key));
         }
         restored.Lock();
+    }
+
+    internal static void Invoke(Button button)
+    {
+        var peer = new ButtonAutomationPeer(button);
+        ((IInvokeProvider)peer.GetPattern(PatternInterface.Invoke)).Invoke();
     }
 
     private static void Require(bool condition, string message)

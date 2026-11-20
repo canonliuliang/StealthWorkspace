@@ -16,9 +16,14 @@ if ($output.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase) -and
     !$output.StartsWith($artifactPrefix, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'Inside the repository, generated benchmark source must stay under artifacts so it cannot enter the app build.'
 }
-foreach ($source in @('Services\BrowserAddress.cs', 'Services\BrowserAddressSuggestions.cs')) {
+foreach ($source in @('Services\BrowserAddress.cs', 'Services\BrowserAddressSuggestions.cs', 'Services\SettingsService.cs')) {
     if (!(Test-Path -LiteralPath (Join-Path $baseline $source) -PathType Leaf)) { throw "Missing baseline source: $source" }
 }
+$settingsText = [IO.File]::ReadAllText((Join-Path $baseline 'Services\SettingsService.cs'))
+if ($settingsText -notmatch 'public\s+(ImmutableList|List)<BookmarkItem>\s+Bookmarks') {
+    throw 'Unknown baseline bookmark collection. Verify its production type before measuring.'
+}
+$baselineStorage = $Matches[1]
 New-Item -ItemType Directory -Path $output | Out-Null
 $sourceHashes = foreach ($source in @('Services\BrowserAddress.cs', 'Services\BrowserAddressSuggestions.cs')) {
     [PSCustomObject]@{
@@ -42,6 +47,7 @@ foreach ($name in @('BrowserAddress', 'BrowserAddressSuggestions')) {
 $addressSource = [Security.SecurityElement]::Escape((Join-Path $repoRoot 'Services\BrowserAddress.cs'))
 $suggestionSource = [Security.SecurityElement]::Escape((Join-Path $repoRoot 'Services\BrowserAddressSuggestions.cs'))
 $modelSource = [Security.SecurityElement]::Escape((Join-Path $repoRoot 'Models\BrowserAddressSuggestion.cs'))
+$filterSource = [Security.SecurityElement]::Escape((Join-Path $repoRoot 'Services\BookmarkFilter.cs'))
 $project = @"
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
@@ -49,12 +55,14 @@ $project = @"
     <Compile Include="$addressSource" Link="Current.BrowserAddress.cs" />
     <Compile Include="$suggestionSource" Link="Current.BrowserAddressSuggestions.cs" />
     <Compile Include="$modelSource" Link="BrowserAddressSuggestion.cs" />
+    <Compile Include="$filterSource" Link="BookmarkFilter.cs" />
   </ItemGroup>
 </Project>
 "@
 [IO.File]::WriteAllText((Join-Path $output 'Performance.csproj'), $project, $utf8)
 $program = @'
 using System.Diagnostics;
+using System.Collections.Immutable;
 using System.Text.Json;
 using StealthWorkspace.Models;
 using StealthWorkspace.Services;
@@ -62,9 +70,9 @@ using StealthWorkspace.Services;
 internal static class Program
 {
     private static readonly Func<string, string> Search = q => "https://search.invalid/?q=" + Uri.EscapeDataString(q);
-    private static IReadOnlyList<BrowserAddressSuggestion> Legacy(string q, BookmarkItem[] b, HistorySessionItem[] h) =>
+    private static IReadOnlyList<BrowserAddressSuggestion> Legacy(string q, IEnumerable<BookmarkItem> b, HistorySessionItem[] h) =>
         Baseline.Services.BrowserAddressSuggestions.Get(q, b, h, Search);
-    private static IReadOnlyList<BrowserAddressSuggestion> Current(string q, BookmarkItem[] b, HistorySessionItem[] h) =>
+    private static IReadOnlyList<BrowserAddressSuggestion> Current(string q, IEnumerable<BookmarkItem> b, HistorySessionItem[] h) =>
         BrowserAddressSuggestions.Get(q, b, h, Search);
 
     private static void Main(string[] args)
@@ -109,48 +117,110 @@ internal static class Program
         }
 
         var measurements = new List<object>();
+        var typing = new List<object>();
+        var flyout = new List<object>();
         foreach (int count in new[] { 200, 10_000, 50_000 })
         {
             var bookmarks = Enumerable.Range(0, count).Select(i => new BookmarkItem {
                 Title = "Synthetic bookmark " + i, Url = "https://fixture.test/Collection/" + i + "?item=Image#Page"
             }).ToArray();
+            var snapshot = bookmarks.ToImmutableList();
+            IReadOnlyList<BookmarkItem> original = args[1] == "List" ? bookmarks.ToList() : snapshot;
+            // This is the r15 flyout predicate and eager array copied on each TextChanged.
+            BookmarkItem[] OriginalFilter(string query) => original.Where(item => query.Length == 0 ||
+                item.Title.Contains(query, StringComparison.OrdinalIgnoreCase) || item.Url.Contains(query, StringComparison.OrdinalIgnoreCase)).ToArray();
+            foreach (var (scenario, keys) in new[] {
+                ("open", new[] { "" }),
+                ("bookmarks by title", new[] { "", "5", "50", "500", "5000" }),
+                ("edit search", new[] { "", "rare", "rare2", "rare", "image", "IMAGE", "" })
+            })
+            {
+                IReadOnlyList<BookmarkItem> Sequence(bool baseline)
+                {
+                    var filter = baseline ? null : new BookmarkFilter();
+                    IReadOnlyList<BookmarkItem> rows = [];
+                    foreach (var key in keys) rows = baseline ? OriginalFilter(key) : filter!.Filter(snapshot, key);
+                    return rows;
+                }
+                var check = new BookmarkFilter();
+                foreach (var key in keys)
+                    if (!check.Filter(snapshot, key).SequenceEqual(OriginalFilter(key))) throw new InvalidOperationException("Flyout results changed");
+                var result = Measure(() => Sequence(true), () => Sequence(false));
+                flyout.Add(new { bookmarks = count, scenario, result });
+                Console.WriteLine($"Flyout {scenario} / {count} bookmarks: {result}");
+            }
+            foreach (string phrase in new[] { "technical report 2026", "bookmark " + (count - 1) })
+            {
+                string[] prefixes = Enumerable.Range(1, phrase.Length).Select(n => phrase[..n]).ToArray();
+                IReadOnlyList<BrowserAddressSuggestion> Sequence(bool baseline)
+                {
+                    var edit = !baseline && count >= 256 ? new BrowserAddressSuggestions.EditSession() : null;
+                    IReadOnlyList<BrowserAddressSuggestion> rows = [];
+                    foreach (var prefix in prefixes)
+                        rows = baseline ? Baseline.Services.BrowserAddressSuggestions.Get(prefix, original, history, Search) :
+                            BrowserAddressSuggestions.Get(prefix, snapshot, history, Search, edit);
+                    return rows;
+                }
+
+                var edit = new BrowserAddressSuggestions.EditSession();
+                foreach (var prefix in prefixes)
+                {
+                    var expected = Baseline.Services.BrowserAddressSuggestions.Get(prefix, original, history, Search);
+                    var actual = BrowserAddressSuggestions.Get(prefix, snapshot, history, Search, edit);
+                    if (JsonSerializer.Serialize(expected) != JsonSerializer.Serialize(actual))
+                        throw new InvalidOperationException("Typing changed results for synthetic input: " + prefix);
+                    checkedQueries++;
+                }
+                var result = Measure(() => Sequence(true), () => Sequence(false));
+                typing.Add(new { bookmarks = count, phrase, keys = prefixes.Length, result.samples, result.baselineMedianMs,
+                    result.currentMedianMs, result.baselineP95Ms, result.currentP95Ms, result.baselineAllocatedBytes, result.currentAllocatedBytes });
+                Console.WriteLine($"Typing {prefixes.Length} keys / {count} bookmarks / {phrase}: {result}");
+            }
             foreach (string query in new[] { "no-such-local-entry", "bookmark " + (count - 1) })
             {
                 Equivalent(query, bookmarks);
-                Func<IReadOnlyList<BrowserAddressSuggestion>> before = () => Legacy(query, bookmarks, history);
-                Func<IReadOnlyList<BrowserAddressSuggestion>> after = () => Current(query, bookmarks, history);
-                for (int warm = 0; warm < 12; warm++) { before(); after(); }
-                var oldTimes = new List<double>(); var newTimes = new List<double>();
-                long oldBytes = 0, newBytes = 0;
-                for (int sample = 0; sample < 31; sample++)
-                {
-                    // Alternate order so one implementation does not always get
-                    // the first sample after a collection/scheduler interruption.
-                    if (sample % 2 == 0) { Run(before, oldTimes, ref oldBytes); Run(after, newTimes, ref newBytes); }
-                    else { Run(after, newTimes, ref newBytes); Run(before, oldTimes, ref oldBytes); }
-                }
-                oldTimes.Sort(); newTimes.Sort();
-                double oldMedian = oldTimes[15], newMedian = newTimes[15];
-                measurements.Add(new {
-                    bookmarks = count, query, samples = 31,
-                    baselineMedianMs = oldMedian, currentMedianMs = newMedian,
-                    baselineP95Ms = oldTimes[29], currentP95Ms = newTimes[29],
-                    baselineAllocatedBytes = oldBytes / 31, currentAllocatedBytes = newBytes / 31
-                });
-                Console.WriteLine($"{count,6} bookmarks / {query}: median {oldMedian:F3} -> {newMedian:F3} ms; p95 {oldTimes[29]:F3} -> {newTimes[29]:F3} ms; allocated {oldBytes / 31:N0} -> {newBytes / 31:N0} bytes");
+                Func<IReadOnlyList<BrowserAddressSuggestion>> before = () => Legacy(query, original, history);
+                Func<IReadOnlyList<BrowserAddressSuggestion>> after = () => Current(query, snapshot, history);
+                var result = Measure(before, after);
+                measurements.Add(new { bookmarks = count, query, result.samples, result.baselineMedianMs,
+                    result.currentMedianMs, result.baselineP95Ms, result.currentP95Ms, result.baselineAllocatedBytes, result.currentAllocatedBytes });
+                Console.WriteLine($"{count,6} bookmarks / {query}: {result}");
             }
         }
         var report = new {
             utc = DateTimeOffset.UtcNow, runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
             architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
-            scope = "Synthetic CPU/allocation microbenchmark of local suggestions. Not browser frame rate or whole-app latency.",
-            checkedQueries, checkedAddressPairs = checkedPairs, measurements
+            scope = "Synthetic CPU/allocation microbenchmark of local suggestions and bookmark filtering, excluding XAML and WebView.",
+            baselineBookmarkCollection = args[1], checkedQueries, checkedAddressPairs = checkedPairs, measurements, typing, flyout
         };
         File.WriteAllText(args[0], JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
         Console.WriteLine($"PASS: {checkedQueries} full suggestion equivalence cases; {checkedPairs} address identity pairs.");
     }
 
-    private static void Run(Func<IReadOnlyList<BrowserAddressSuggestion>> action, List<double> times, ref long bytes)
+    private sealed record Measurement(int samples, double baselineMedianMs, double currentMedianMs,
+        double baselineP95Ms, double currentP95Ms, long baselineAllocatedBytes, long currentAllocatedBytes)
+    {
+        public override string ToString() =>
+            $"median {baselineMedianMs:F4} -> {currentMedianMs:F4} ms, p95 {baselineP95Ms:F4} -> {currentP95Ms:F4} ms, allocated {baselineAllocatedBytes:N0} -> {currentAllocatedBytes:N0} bytes";
+    }
+
+    private static Measurement Measure<T>(Func<T> before, Func<T> after)
+    {
+        for (int warm = 0; warm < 12; warm++) { before(); after(); }
+        var oldTimes = new List<double>(31);
+        var newTimes = new List<double>(31);
+        long oldBytes = 0, newBytes = 0;
+        for (int sample = 0; sample < 31; sample++)
+        {
+            if (sample % 2 == 0) { Run(before, oldTimes, ref oldBytes); Run(after, newTimes, ref newBytes); }
+            else { Run(after, newTimes, ref newBytes); Run(before, oldTimes, ref oldBytes); }
+        }
+        oldTimes.Sort();
+        newTimes.Sort();
+        return new(31, oldTimes[15], newTimes[15], oldTimes[29], newTimes[29], oldBytes / 31, newBytes / 31);
+    }
+
+    private static void Run<T>(Func<T> action, List<double> times, ref long bytes)
     {
         long allocation = GC.GetAllocatedBytesForCurrentThread();
         long start = Stopwatch.GetTimestamp();
@@ -181,7 +251,7 @@ namespace StealthWorkspace.Models
 '@
 [IO.File]::WriteAllText((Join-Path $output 'Program.cs'), $program, $utf8)
 $result = Join-Path $output 'results.json'
-& dotnet run --project (Join-Path $output 'Performance.csproj') -c Release -- $result |
+& dotnet run --project (Join-Path $output 'Performance.csproj') -c Release -- $result $baselineStorage |
     Tee-Object -FilePath (Join-Path $output 'results.txt')
 if ($LASTEXITCODE -ne 0) { throw "Browser performance harness failed: $LASTEXITCODE" }
 Write-Output "Results: $result"

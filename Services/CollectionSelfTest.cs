@@ -1,4 +1,5 @@
 using System.Collections.Specialized;
+using System.Collections.Immutable;
 using System.Diagnostics;
 
 namespace StealthWorkspace.Services;
@@ -28,5 +29,21 @@ internal static class CollectionSelfTest
         report(collection.SequenceEqual(new[] { 4, 2, 1, 3 }), "Reordered results never duplicate retained items", "");
         collection.Reconcile(Array.Empty<int>());
         report(collection.Count == 0, "Empty result clears the library", "");
+
+        var first = new BookmarkItem { Title = "Project", Url = "https://example.test/A" };
+        var second = new BookmarkItem { Title = "\U00010400 report", Url = "https://example.test/B" };
+        var snapshot = ImmutableList.Create(first, second);
+        var filter = new BookmarkFilter();
+        report(ReferenceEquals(filter.Filter(snapshot, " "), snapshot),
+            "Opening bookmarks uses the ordered settings snapshot directly", "");
+        string[] queries = ["p", "pr", "proj", "PROJECT", "p", "example.test/B", "\uD801", "\U00010428", "missing", ""];
+        bool equivalent = queries.All(query => filter.Filter(snapshot, query).SequenceEqual(snapshot.Where(item =>
+            item.Title.Contains(query, StringComparison.OrdinalIgnoreCase) || item.Url.Contains(query, StringComparison.OrdinalIgnoreCase))));
+        report(equivalent, "Bookmark filtering handles append, paste, delete, case, URL and supplementary Unicode", "");
+        var added = new BookmarkItem { Title = "Project two", Url = "https://example.test/C" };
+        var changed = snapshot.Remove(first).Add(added);
+        filter.Filter(snapshot, "proj");
+        report(filter.Filter(changed, "proje").SequenceEqual([added]) && filter.Filter(changed, "").SequenceEqual([second, added]),
+            "Changing the bookmark source drops removed items and searches new items in order", "");
     }
 }

@@ -9,12 +9,14 @@ namespace StealthWorkspace.Pages;
 public sealed partial class SettingsPage : Page
 {
     private bool _isLoaded;
-    private bool _busy;
+    private VaultWork? _work;
+    private bool _picking;
 
     public SettingsPage()
     {
         InitializeComponent();
         Loaded += SettingsPage_Loaded;
+        Unloaded += (_, _) => { VaultWork.Changed -= UpdateActions; _isLoaded = false; };
     }
 
     private void SettingsPage_Loaded(object sender, RoutedEventArgs e)
@@ -77,6 +79,8 @@ public sealed partial class SettingsPage : Page
         }
 
         _isLoaded = true;
+        VaultWork.Changed += UpdateActions;
+        UpdateActions();
     }
 
     private void RefreshVaultSecuritySection()
@@ -268,14 +272,7 @@ public sealed partial class SettingsPage : Page
         SettingsService.Instance.Data.CamouflageIndex = Math.Clamp(CamouflageCombo.SelectedIndex, 0, 3);
         SettingsService.Instance.SaveSettings();
 
-        string newTitle = CamouflageCombo.SelectedIndex switch
-        {
-            1 => "Windows 性能与系统诊断工具",
-            2 => "Markdown 知识库与本地笔记",
-            3 => "Terminal Developer Console",
-            _ => "StealthWorkspace 隐私控制台"
-        };
-        MainWindow.Current.UpdateTitle(newTitle);
+        MainWindow.Current.UpdateTitle(MainWindow.GetCamouflageTitle(CamouflageCombo.SelectedIndex));
     }
 
     private void ThemeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -309,7 +306,7 @@ public sealed partial class SettingsPage : Page
 
     private async void ChangeMasterPwdBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (_busy) return;
+        if (VaultWork.IsBusy) return;
 
         var current = CreatePasswordBox("当前主密码", "验证身份后才会修改");
         var newPwd = CreatePasswordBox("新的主密码", "至少 6 个字符");
@@ -342,9 +339,10 @@ public sealed partial class SettingsPage : Page
             return;
         }
 
-        SetBusy(true);
+        if (!BeginWork("修改主密码")) return;
         try
         {
+            ShowActivity("正在验证主密码…");
             using var verify = await VaultService.Instance.VerifyPasswordAsync(oldPassword);
             if (verify.Status != VaultUnlockStatus.Success || verify.IsDecoy)
             {
@@ -357,8 +355,9 @@ public sealed partial class SettingsPage : Page
             }
             verify.ForgetKey();
 
-            var progress = new Progress<double>(value => ShowProgress("正在重新加密真实媒体", value));
-            await VaultService.Instance.ChangeMasterPasswordAsync(newPassword, progress);
+            var progress = CreateProgress("正在重新加密真实媒体…");
+            _work!.Token.ThrowIfCancellationRequested();
+            await VaultService.Instance.ChangeMasterPasswordAsync(newPassword, progress, _work.Token);
             ShowInfo("主密码已更新，全部真实媒体已重新加密。", InfoBarSeverity.Success);
             RefreshVaultSecuritySection();
         }
@@ -369,13 +368,13 @@ public sealed partial class SettingsPage : Page
         }
         finally
         {
-            SetBusy(false);
+            EndWork();
         }
     }
 
     private async void DecoyPwdBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (_busy) return;
+        if (VaultWork.IsBusy) return;
 
         bool hasDecoy = VaultService.Instance.HasDecoyVault;
         PasswordBox? oldDecoy = null;
@@ -415,11 +414,11 @@ public sealed partial class SettingsPage : Page
             return;
         }
 
-        SetBusy(true);
+        if (!BeginWork("设置诱饵密码")) return;
         try
         {
-            var progress = new Progress<double>(value => ShowProgress("正在重新加密诱饵空间", value));
-            await VaultService.Instance.SetDecoyPasswordAsync(newPassword, oldDecoy?.Password, progress);
+            var progress = CreateProgress(hasDecoy ? "正在重新加密诱饵空间…" : "正在创建诱饵空间…");
+            await VaultService.Instance.SetDecoyPasswordAsync(newPassword, oldDecoy?.Password, progress, _work!.Token);
             ShowInfo(hasDecoy ? "诱饵密码已更新。" : "诱饵空间已创建。", InfoBarSeverity.Success);
             RefreshVaultSecuritySection();
         }
@@ -430,21 +429,22 @@ public sealed partial class SettingsPage : Page
         }
         finally
         {
-            SetBusy(false);
+            EndWork();
         }
     }
 
     private async void ClearDecoyBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (_busy) return;
+        if (VaultWork.IsBusy) return;
 
         if (!await ShowDialogAsync("移除诱饵空间",
                 "将永久删除诱饵空间内的全部媒体，并清除诱饵密码。真实保险箱不受影响。",
                 "确认移除")) return;
 
-        SetBusy(true);
+        if (!BeginWork("移除诱饵空间")) return;
         try
         {
+            ShowActivity("正在移除诱饵空间…");
             await VaultService.Instance.ClearDecoyAsync();
             ShowInfo("诱饵空间已移除。", InfoBarSeverity.Success);
             RefreshVaultSecuritySection();
@@ -456,21 +456,22 @@ public sealed partial class SettingsPage : Page
         }
         finally
         {
-            SetBusy(false);
+            EndWork();
         }
     }
 
     private async void ResetVaultBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (_busy) return;
+        if (VaultWork.IsBusy) return;
 
         if (!await ShowDialogAsync("重置保险箱",
                 "此操作会永久销毁真实保险箱与诱饵空间的全部加密媒体和配置，无法恢复。建议先导出重要资料。",
                 "永久销毁")) return;
 
-        SetBusy(true);
+        if (!BeginWork("重置保险箱")) return;
         try
         {
+            ShowActivity("正在重置保险箱…");
             await VaultService.Instance.ResetVaultAsync();
             ShowInfo("保险箱已重置。", InfoBarSeverity.Success);
             MainWindow.Current?.LockWorkspace();
@@ -482,7 +483,7 @@ public sealed partial class SettingsPage : Page
         }
         finally
         {
-            SetBusy(false);
+            EndWork();
         }
     }
 
@@ -514,7 +515,7 @@ public sealed partial class SettingsPage : Page
 
         try
         {
-            return await dialog.ShowAsync() == ContentDialogResult.Primary;
+            return await WorkspaceDialogs.ShowAsync(dialog) == ContentDialogResult.Primary;
         }
         catch (Exception ex)
         {
@@ -525,23 +526,77 @@ public sealed partial class SettingsPage : Page
 
     private void ShowInfo(string message, InfoBarSeverity severity)
     {
+        if (!IsLoaded) return;
+        SettingsProgress.IsIndeterminate = false;
+        SettingsProgress.Visibility = Visibility.Collapsed;
+        SettingsInfoBar.IsClosable = true;
         SettingsInfoBar.Message = message;
         SettingsInfoBar.Severity = severity;
         UiMotion.Open(SettingsInfoBar);
-        DispatcherQueue.TryEnqueue(() => SettingsInfoBar.StartBringIntoView(
-            new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 }));
     }
 
-    private void ShowProgress(string prefix, double value)
+    private void ShowActivity(string message, bool indeterminate = true)
     {
+        _work?.SetPhase(message.TrimEnd('…'));
+        if (!IsLoaded) return;
+        SettingsProgress.Value = 0;
+        SettingsProgress.Visibility = Visibility.Visible;
+        SettingsProgress.IsIndeterminate = indeterminate;
+        SettingsInfoBar.IsClosable = false;
         SettingsInfoBar.Severity = InfoBarSeverity.Informational;
-        SettingsInfoBar.Message = $"{prefix}… {Math.Clamp(value, 0, 1) * 100:0}%";
+        SettingsInfoBar.Message = message;
         UiMotion.Open(SettingsInfoBar);
     }
 
-    private void SetBusy(bool busy)
+    private IProgress<double> CreateProgress(string message)
     {
-        _busy = busy;
+        ShowActivity(message, indeterminate: false);
+        var work = _work;
+        string phase = message.TrimEnd('…');
+        return new PercentProgress(percent =>
+        {
+            if (work?.Label != phase || !ReferenceEquals(_work, work)) return;
+            work.Report(percent / 100);
+            if (IsLoaded && SettingsInfoBar.Message == message)
+                SettingsProgress.Value = percent;
+        });
+    }
+
+    // File operations can report per block. Coalesce before dispatch to the UI thread.
+    private sealed class PercentProgress(Action<double> update) : Progress<double>(update)
+    {
+        private readonly System.Threading.Lock _sync = new();
+        private int _previous = -1;
+
+        protected override void OnReport(double value)
+        {
+            int percent = (int)Math.Floor(Math.Clamp(value, 0, 1) * 100);
+            lock (_sync)
+            {
+                if (percent <= _previous) return;
+                _previous = percent;
+                base.OnReport(percent);
+            }
+        }
+    }
+
+    private bool BeginWork(string label)
+    {
+        if (!IsLoaded || _work != null) return false;
+        _work = VaultWork.TryBegin(label);
+        if (_work == null) ShowInfo("请等待当前保险箱任务完成后重试。", InfoBarSeverity.Warning);
+        return _work != null;
+    }
+
+    private void EndWork()
+    {
+        _work?.Dispose();
+        _work = null;
+    }
+
+    private void UpdateActions()
+    {
+        bool busy = VaultWork.IsBusy || _picking;
         BackupButton.IsEnabled = !busy;
         VerifyBackupButton.IsEnabled = !busy;
         ChangeMasterPwdBtn.IsEnabled = !busy;
@@ -552,41 +607,41 @@ public sealed partial class SettingsPage : Page
 
     private async void Backup_Click(object sender, RoutedEventArgs e)
     {
-        if (_busy) return;
-        SetBusy(true);
+        if (VaultWork.IsBusy || _picking) return;
+        _picking = true;
+        UpdateActions();
         try
         {
             var picker = new Windows.Storage.Pickers.FileSavePicker { SuggestedFileName = $"保险箱备份-{DateTime.Now:yyyyMMdd-HHmm}" };
             WinRT.Interop.InitializeWithWindow.Initialize(picker, MainWindow.CurrentHandle);
             picker.FileTypeChoices.Add("加密保险箱备份", new[] { ".swbackup" });
             var target = await picker.PickSaveFileAsync();
-            if (target == null) return;
-            ShowInfo("正在创建备份…", InfoBarSeverity.Informational);
-            await VaultService.Instance.CreateBackupAsync(target.Path, new Progress<double>(p => ShowInfo($"正在创建备份… {p:P0}", InfoBarSeverity.Informational)));
-            int count = await VaultService.Instance.VerifyBackupAsync(target.Path);
+            if (target == null || !BeginWork("创建备份")) return;
+            await VaultService.Instance.CreateBackupAsync(target.Path, CreateProgress("正在创建备份…"), _work!.Token);
+            int count = await VaultService.Instance.VerifyBackupAsync(target.Path, _work.Token, CreateProgress("正在校验备份…"));
             ShowInfo($"备份已保存并校验通过，共 {count} 个文件。", InfoBarSeverity.Success);
         }
         catch (Exception ex) { ShowInfo("备份未完成：" + ex.Message, InfoBarSeverity.Error); }
-        finally { SetBusy(false); }
+        finally { _picking = false; EndWork(); if (IsLoaded) UpdateActions(); }
     }
 
     private async void VerifyBackup_Click(object sender, RoutedEventArgs e)
     {
-        if (_busy) return;
-        SetBusy(true);
+        if (VaultWork.IsBusy || _picking) return;
+        _picking = true;
+        UpdateActions();
         try
         {
             var picker = new Windows.Storage.Pickers.FileOpenPicker();
             WinRT.Interop.InitializeWithWindow.Initialize(picker, MainWindow.CurrentHandle);
             picker.FileTypeFilter.Add(".swbackup");
             var source = await picker.PickSingleFileAsync();
-            if (source == null) return;
-            ShowInfo("正在检查备份…", InfoBarSeverity.Informational);
-            int count = await VaultService.Instance.VerifyBackupAsync(source.Path);
+            if (source == null || !BeginWork("检查备份")) return;
+            int count = await VaultService.Instance.VerifyBackupAsync(source.Path, _work!.Token, CreateProgress("正在检查备份…"));
             ShowInfo($"完整性检查通过，共 {count} 个文件。此 Windows 用户可以读取备份索引，打开媒体仍需原保险箱密码。", InfoBarSeverity.Success);
         }
         catch (Exception ex) { ShowInfo("备份检查失败：" + ex.Message, InfoBarSeverity.Error); }
-        finally { SetBusy(false); }
+        finally { _picking = false; EndWork(); if (IsLoaded) UpdateActions(); }
     }
 
     #endregion

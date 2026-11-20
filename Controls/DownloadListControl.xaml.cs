@@ -19,10 +19,14 @@ public sealed partial class DownloadListControl : UserControl
     }
 
     private void DownloadsChanged(object? sender, NotifyCollectionChangedEventArgs args) => UpdateEmpty();
-    private void UpdateEmpty() => EmptyText.Visibility = BrowserDownloads.Items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    private void UpdateEmpty() => UiMotion.SetVisible(EmptyText, BrowserDownloads.Items.Count == 0, MotionCue.Fade);
     private void ClearFinished_Click(object sender, RoutedEventArgs args) => BrowserDownloads.ClearFinished();
     private void PauseResume_Click(object sender, RoutedEventArgs args) => Apply(sender, item => item.TogglePauseResume());
     private void Cancel_Click(object sender, RoutedEventArgs args) => Apply(sender, item => item.Cancel());
+    private async void StoreDownload_Click(object sender, RoutedEventArgs args)
+    {
+        if ((sender as FrameworkElement)?.DataContext is BrowserDownloadItem item) await item.StoreInVaultAsync();
+    }
 
     private void Apply(object sender, Action<BrowserDownloadItem> action)
     {
@@ -60,7 +64,7 @@ public sealed partial class DownloadListControl : UserControl
     private void ShowFailure(string message, Exception ex)
     {
         ActionError.Message = message;
-        ActionError.IsOpen = true;
+        UiMotion.Open(ActionError);
         AppLog.Warn("Download list action: " + ex.GetType().Name);
     }
 }

@@ -30,11 +30,12 @@
             <StackPanel Spacing="6">
                 <StackPanel Spacing="4">
                     <TextBlock Text="媒体库" Style="{StaticResource StealthPageTitleStyle}" />
-                    <Border x:Name="VaultBadge" CornerRadius="6" Padding="8,3" HorizontalAlignment="Left"
+                    <Border CornerRadius="6" Padding="8,3" HorizontalAlignment="Left"
+                            ToolTipService.ToolTip="AES-256-GCM 分块加密 · 播放全程内存解密"
                             Background="{ThemeResource SubtleFillColorSecondaryBrush}"
                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1">
-                        <TextBlock x:Name="VaultBadgeText" Text="默认存储" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium" />
+                        <TextBlock Text="加密保险箱" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium" />
                     </Border>
                 </StackPanel>
                 <TextBlock x:Name="StatsSummaryText" Text="图片与视频，保存在你的加密空间。"
@@ -58,6 +59,8 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <ComboBox x:Name="MediaFilter" SelectedIndex="0" SelectionChanged="MediaFilter_SelectionChanged"
                           AutomationProperties.Name="媒体类型" HorizontalAlignment="Stretch">
@@ -65,10 +68,18 @@
                     <ComboBoxItem Content="视频" />
                     <ComboBoxItem Content="图片" />
                 </ComboBox>
-                <DropDownButton x:Name="LibraryActions" Grid.Column="1" Content="更多">
+                <ComboBox x:Name="MediaSort" Grid.Column="1" SelectedIndex="0" SelectionChanged="MediaFilter_SelectionChanged"
+                          AutomationProperties.Name="媒体排序">
+                    <ComboBoxItem Content="最新导入" />
+                    <ComboBoxItem Content="文件名" />
+                    <ComboBoxItem Content="体积从大到小" />
+                </ComboBox>
+                <ToggleButton x:Name="BatchMode" Grid.Column="2" Content="多选" Click="BatchMode_Click" AutomationProperties.Name="多选管理" />
+                <DropDownButton x:Name="LibraryActions" Grid.Column="3" Content="更多">
                     <DropDownButton.Flyout>
                         <MenuFlyout>
                             <MenuFlyoutItem x:Name="PlayButton" Text="打开选中媒体" Icon="Play" Click="PlaySelected_Click" />
+                            <MenuFlyoutItem x:Name="RenameButton" Text="重命名" Icon="Rename" Click="RenameSelected_Click" />
                             <MenuFlyoutItem x:Name="ExportButton" Text="导出副本" Icon="Share" Click="ExportSelected_Click" />
                             <MenuFlyoutItem x:Name="DeleteButton" Text="粉碎删除选中项" Icon="Delete" Click="DeleteSelected_Click" />
                             <MenuFlyoutSeparator />
@@ -77,6 +88,12 @@
                     </DropDownButton.Flyout>
                 </DropDownButton>
             </Grid>
+            <StackPanel x:Name="BatchActions" Orientation="Horizontal" Spacing="8" Visibility="Collapsed">
+                <TextBlock x:Name="SelectionCount" VerticalAlignment="Center" />
+                <Button Content="全选" Click="SelectAll_Click" />
+                <Button x:Name="BatchExportButton" Content="导出到文件夹" Click="ExportSelected_Click" />
+                <Button x:Name="BatchDeleteButton" Content="粉碎删除" Click="DeleteSelected_Click" />
+            </StackPanel>
         </StackPanel>
 
         <!-- Media Grid / Cards Surface -->
@@ -105,6 +122,7 @@
 
             <!-- Drag & Drop Overlay Indicator -->
             <Border x:Name="DragOverlay"
+                    IsHitTestVisible="False"
                     Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"
                     BorderThickness="2"
@@ -120,6 +138,7 @@
             <!-- Media Items GridView -->
             <GridView x:Name="MediaGridView"
                       SelectionMode="Single"
+                      SelectionChanged="MediaGridView_SelectionChanged"
                       DoubleTapped="MediaGridView_DoubleTapped"
                       PreviewKeyDown="MediaGridView_KeyDown"
                       ContainerContentChanging="MediaGridView_ContainerContentChanging"
@@ -128,6 +147,13 @@
                 <GridView.ItemContainerTransitions>
                     <TransitionCollection />
                 </GridView.ItemContainerTransitions>
+                <GridView.ItemContainerStyle>
+                    <Style TargetType="GridViewItem" BasedOn="{StaticResource DefaultGridViewItemStyle}">
+                        <Setter Property="Margin" Value="0,0,8,8" />
+                        <Setter Property="Padding" Value="2" />
+                        <Setter Property="CornerRadius" Value="12" />
+                    </Style>
+                </GridView.ItemContainerStyle>
                 <GridView.ItemTemplate>
                     <DataTemplate x:DataType="models:VaultItem">
                         <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
@@ -136,12 +162,12 @@
                                 CornerRadius="10"
                                 Width="168"
                                 Height="188"
-                                Padding="10"
-                                Margin="0,0,8,8">
+                                Padding="10">
                             <!-- Right Click Context Menu -->
                             <Border.ContextFlyout>
                                 <MenuFlyout>
                                     <MenuFlyoutItem Text="打开媒体" Icon="Play" Tag="{x:Bind Id}" Click="FlyoutPlay_Click" />
+                                    <MenuFlyoutItem Text="重命名" Icon="Rename" Tag="{x:Bind Id}" Click="FlyoutRename_Click" />
                                     <MenuFlyoutItem Text="解密导出至磁盘" Icon="Share" Tag="{x:Bind Id}" Click="FlyoutExport_Click" />
                                     <MenuFlyoutSeparator />
                                     <MenuFlyoutItem Text="彻底粉碎删除" Icon="Delete" Tag="{x:Bind Id}" Click="FlyoutDelete_Click" Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
@@ -157,12 +183,12 @@
 
                                 <!-- Card Header: Icon & Media Badge -->
                                 <Grid Grid.Row="0">
-                                    <Border CornerRadius="6"
-                                            Background="{ThemeResource StealthBrandSubtleBrush}">
-                                        <FontIcon Glyph="{x:Bind DisplayIconGlyph}" FontSize="18" Foreground="{ThemeResource AccentFillColorDefaultBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    <Border CornerRadius="6" Background="{ThemeResource StealthBrandSubtleBrush}">
+                                        <Grid>
+                                            <FontIcon Glyph="{x:Bind DisplayIconGlyph}" FontSize="18" Foreground="{ThemeResource AccentFillColorDefaultBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            <Image x:Name="MediaThumbnail" Stretch="UniformToFill" />
+                                        </Grid>
                                     </Border>
-                                    <Image x:Name="MediaThumbnail" Stretch="UniformToFill" Loaded="Thumbnail_Loaded"
-                                           Unloaded="Thumbnail_Unloaded" DataContextChanged="Thumbnail_DataContextChanged" />
                                     <Border HorizontalAlignment="Right" VerticalAlignment="Top" Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="4" Padding="6,2">
                                         <TextBlock Text="{x:Bind FileExtension}" FontSize="12" FontWeight="Bold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                     </Border>
@@ -170,13 +196,14 @@
 
                                 <!-- Card Center: Title -->
                                 <StackPanel Grid.Row="1" VerticalAlignment="Center" Spacing="4">
-                                    <TextBlock Text="{x:Bind OriginalFileName}" FontWeight="SemiBold" FontSize="13"
-                                               MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{x:Bind OriginalFileName}" />
+                                    <TextBlock Text="{x:Bind OriginalFileName, Mode=OneWay}" FontWeight="SemiBold" FontSize="13"
+                                               MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{x:Bind OriginalFileName, Mode=OneWay}" />
                                 </StackPanel>
 
                                 <!-- Card Footer: Size & Date -->
                                 <Grid Grid.Row="2">
                                     <TextBlock Text="{x:Bind DisplaySize}" FontSize="12" Foreground="{ThemeResource AccentFillColorDefaultBrush}" FontWeight="Medium" HorizontalAlignment="Left" />
+                                    <TextBlock Text="{x:Bind DisplayDuration, Mode=OneWay}" FontSize="12" HorizontalAlignment="Right" />
                                 </Grid>
                             </Grid>
                         </Border>
@@ -188,8 +215,10 @@
         <StackPanel Grid.Row="3" Spacing="4">
             <TextBlock x:Name="StatusText" Text="就绪" TextWrapping="Wrap"
                        Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-            <ProgressBar x:Name="ImportProgressBar" Visibility="Collapsed" />
-            <Button x:Name="CancelImportButton" Content="取消导入" Click="CancelImport_Click" Visibility="Collapsed" />
+            <StackPanel x:Name="OperationProgress" Visibility="Collapsed" Spacing="4">
+                <ProgressBar x:Name="ImportProgressBar" AutomationProperties.Name="文件处理进度" />
+                <Button x:Name="CancelImportButton" Content="取消导入" Click="CancelImport_Click" Visibility="Collapsed" />
+            </StackPanel>
             <StackPanel x:Name="FailureActions" Orientation="Horizontal" Spacing="8" Visibility="Collapsed">
                 <Button Content="重试失败项" Click="RetryFailed_Click" />
                 <Button Content="查看失败详情" Click="ImportDetails_Click" />

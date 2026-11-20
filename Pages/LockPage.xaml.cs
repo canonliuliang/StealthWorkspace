@@ -22,7 +22,6 @@ public sealed partial class LockPage : Page
     private void LockPage_Loaded(object sender, RoutedEventArgs e)
     {
         CheckVaultState();
-        DispatcherQueue.TryEnqueue(() => UnlockPasswordBox.Focus(FocusState.Programmatic));
     }
 
     private void CheckVaultState()
@@ -30,32 +29,28 @@ public sealed partial class LockPage : Page
         var vault = VaultService.Instance;
         MsgInfoBar.IsOpen = false;
 
-        if (vault.IsCorrupted)
+        bool corrupted = vault.IsCorrupted;
+        bool unlock = !corrupted && vault.HasVault;
+        if (corrupted)
         {
-            UnlockPanel.Visibility = Visibility.Collapsed;
-            SetupPanel.Visibility = Visibility.Collapsed;
-            CorruptPanel.Visibility = Visibility.Visible;
             CorruptDetailText.Text = string.IsNullOrEmpty(vault.LoadError)
                 ? "加密配置无法解密或已损坏。为避免覆盖数据，应用不会自动进入首次设置。"
                 : vault.LoadError;
-            return;
         }
 
-        CorruptPanel.Visibility = Visibility.Collapsed;
+        ForgotButton.Visibility = unlock ? Visibility.Visible : Visibility.Collapsed;
+        UiMotion.SetVisible(UnlockPanel, unlock);
+        UiMotion.SetVisible(SetupPanel, !corrupted && !unlock);
+        UiMotion.SetVisible(CorruptPanel, corrupted);
+        FocusField(corrupted ? RetryButton : unlock ? UnlockPasswordBox : SetupMasterPwd);
+    }
 
-        if (vault.HasVault)
+    private void FocusField(Control target)
+    {
+        DispatcherQueue.TryEnqueue(() =>
         {
-            UnlockPanel.Visibility = Visibility.Visible;
-            SetupPanel.Visibility = Visibility.Collapsed;
-            ForgotButton.Visibility = Visibility.Visible;
-            DispatcherQueue.TryEnqueue(() => UnlockPasswordBox.Focus(FocusState.Programmatic));
-        }
-        else
-        {
-            UnlockPanel.Visibility = Visibility.Collapsed;
-            SetupPanel.Visibility = Visibility.Visible;
-            ForgotButton.Visibility = Visibility.Collapsed;
-        }
+            if (IsLoaded && target.IsEnabled) target.Focus(FocusState.Programmatic);
+        });
     }
 
     private void UnlockBtn_Click(object sender, RoutedEventArgs e)
@@ -79,7 +74,7 @@ public sealed partial class LockPage : Page
         string password = UnlockPasswordBox.Password;
         if (string.IsNullOrEmpty(password))
         {
-            ShowMessage("请输入密码", InfoBarSeverity.Warning);
+            ShowMessage("请输入密码", InfoBarSeverity.Warning, UnlockPasswordBox);
             return;
         }
 
@@ -122,9 +117,8 @@ public sealed partial class LockPage : Page
                     break;
 
                 default:
-                    ShowMessage("密码错误，请重试", InfoBarSeverity.Error);
                     UnlockPasswordBox.Password = string.Empty;
-                    UnlockPasswordBox.Focus(FocusState.Programmatic);
+                    ShowMessage("密码错误，请重试", InfoBarSeverity.Error, UnlockPasswordBox);
                     break;
             }
         }
@@ -143,15 +137,17 @@ public sealed partial class LockPage : Page
     {
         if (seconds <= 0) return;
 
-        UnlockButton.IsEnabled = false;
+        BusyRing.IsActive = false;
+        BusyPanel.Visibility = Visibility.Collapsed;
+        BuildLabel.Visibility = Visibility.Visible;
         for (int remaining = seconds; remaining > 0; remaining--)
         {
             if (!IsLoaded) return;
             ShowMessage($"尝试次数过多，请在 {remaining} 秒后重试。", InfoBarSeverity.Warning);
             await Task.Delay(1000);
         }
-        UnlockButton.IsEnabled = true;
         MsgInfoBar.IsOpen = false;
+        FocusField(UnlockPasswordBox);
     }
 
     private async void SetupConfirmBtn_Click(object sender, RoutedEventArgs e)
@@ -165,17 +161,17 @@ public sealed partial class LockPage : Page
 
         if (string.IsNullOrWhiteSpace(master))
         {
-            ShowMessage("访问密码不能为空", InfoBarSeverity.Warning);
+            ShowMessage("访问密码不能为空", InfoBarSeverity.Warning, SetupMasterPwd);
             return;
         }
         if (master.Length < 6)
         {
-            ShowMessage("访问密码至少需要 6 个字符", InfoBarSeverity.Warning);
+            ShowMessage("访问密码至少需要 6 个字符", InfoBarSeverity.Warning, SetupMasterPwd);
             return;
         }
         if (!string.Equals(master, confirm, StringComparison.Ordinal))
         {
-            ShowMessage("两次输入的密码不一致", InfoBarSeverity.Warning);
+            ShowMessage("两次输入的密码不一致", InfoBarSeverity.Warning, SetupConfirmPwd);
             return;
         }
 
@@ -183,17 +179,20 @@ public sealed partial class LockPage : Page
         {
             if (decoy.Length < 6)
             {
-                ShowMessage("诱饵密码至少需要 6 个字符", InfoBarSeverity.Warning);
+                DecoyExpander.IsExpanded = true;
+                ShowMessage("诱饵密码至少需要 6 个字符", InfoBarSeverity.Warning, SetupDecoyPwd);
                 return;
             }
             if (!string.Equals(decoy, decoyConfirm, StringComparison.Ordinal))
             {
-                ShowMessage("两次输入的诱饵密码不一致", InfoBarSeverity.Warning);
+                DecoyExpander.IsExpanded = true;
+                ShowMessage("两次输入的诱饵密码不一致", InfoBarSeverity.Warning, SetupDecoyConfirmPwd);
                 return;
             }
             if (string.Equals(decoy, master, StringComparison.Ordinal))
             {
-                ShowMessage("诱饵密码不能与主密码相同", InfoBarSeverity.Warning);
+                DecoyExpander.IsExpanded = true;
+                ShowMessage("诱饵密码不能与主密码相同", InfoBarSeverity.Warning, SetupDecoyPwd);
                 return;
             }
         }
@@ -205,8 +204,7 @@ public sealed partial class LockPage : Page
         SetBusy(true, "正在创建加密保险箱…");
         try
         {
-            var progress = new Progress<double>(_ => { });
-            await VaultService.Instance.InitializeVaultAsync(master, string.IsNullOrEmpty(decoy) ? null : decoy, progress);
+            await VaultService.Instance.InitializeVaultAsync(master, string.IsNullOrEmpty(decoy) ? null : decoy);
 
             SetupMasterPwd.Password = string.Empty;
             SetupConfirmPwd.Password = string.Empty;
@@ -259,7 +257,7 @@ public sealed partial class LockPage : Page
         ContentDialogResult result;
         try
         {
-            result = await dialog.ShowAsync();
+            result = await WorkspaceDialogs.ShowAsync(dialog);
         }
         catch (Exception ex)
         {
@@ -273,8 +271,8 @@ public sealed partial class LockPage : Page
         try
         {
             await VaultService.Instance.ResetVaultAsync();
-            ShowMessage("保险箱已重置，请重新设置访问密码。", InfoBarSeverity.Success);
             CheckVaultState();
+            ShowMessage("保险箱已重置，请重新设置访问密码。", InfoBarSeverity.Success);
         }
         catch (Exception ex)
         {
@@ -290,9 +288,10 @@ public sealed partial class LockPage : Page
     private void SetBusy(bool busy, string text)
     {
         _busy = busy;
-        BusyPanel.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
-        BusyRing.IsActive = busy;
         BusyText.Text = text;
+        BuildLabel.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
+        UiMotion.SetVisible(BusyPanel, busy, MotionCue.Fade);
+        BusyRing.IsActive = busy;
         UnlockButton.IsEnabled = !busy;
         SetupButton.IsEnabled = !busy;
         RestoreBackupButton.IsEnabled = !busy;
@@ -323,10 +322,11 @@ public sealed partial class LockPage : Page
         finally { SetBusy(false, string.Empty); }
     }
 
-    private void ShowMessage(string message, InfoBarSeverity severity)
+    private void ShowMessage(string message, InfoBarSeverity severity, Control? focusTarget = null)
     {
         MsgInfoBar.Message = message;
         MsgInfoBar.Severity = severity;
-        MsgInfoBar.IsOpen = true;
+        UiMotion.Open(MsgInfoBar);
+        if (focusTarget != null) FocusField(focusTarget);
     }
 }

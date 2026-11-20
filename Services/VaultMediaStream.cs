@@ -30,14 +30,20 @@ public sealed class VaultMediaStream : Stream
     private bool _disposed;
 
     public VaultMediaStream(string encryptedFilePath, byte[] masterKey)
+        : this(OpenFile(encryptedFilePath), masterKey)
     {
-        if (masterKey == null || masterKey.Length != CryptoService.KeySize)
-            throw new ArgumentException("Invalid vault key.", nameof(masterKey));
+    }
 
-        _file = new FileStream(encryptedFilePath, FileMode.Open, FileAccess.Read, FileShare.Read,
-            bufferSize: 64 * 1024, FileOptions.RandomAccess);
+    internal static FileStream OpenFile(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+        bufferSize: 64 * 1024, FileOptions.RandomAccess);
+
+    internal VaultMediaStream(FileStream file, byte[] masterKey)
+    {
+        _file = file;
         try
         {
+            if (masterKey == null || masterKey.Length != CryptoService.KeySize)
+                throw new ArgumentException("Invalid vault key.", nameof(masterKey));
             _header = CryptoService.ReadHeader(_file);
             _fileKey = _header.Format == VaultFileFormat.V2
                 ? CryptoService.DeriveFileKey(masterKey, _header.FileSalt)
@@ -91,14 +97,10 @@ public sealed class VaultMediaStream : Stream
             ThrowIfDisposed();
             if (count == 0 || _position >= _header.PlainLength) return 0;
 
+            var (chunkIndex, offsetInChunk) = LocateChunk(_position);
             int total = 0;
             while (count > 0 && _position < _header.PlainLength)
             {
-                long chunkIndexLong = _position / _header.ChunkSize;
-                if (chunkIndexLong >= _header.ChunkCount) break;
-                int chunkIndex = (int)chunkIndexLong;
-                int offsetInChunk = (int)(_position - chunkIndexLong * _header.ChunkSize);
-
                 byte[] chunk = GetChunk(chunkIndex);
                 int available = chunk.Length - offsetInChunk;
                 if (available <= 0) break;
@@ -109,10 +111,30 @@ public sealed class VaultMediaStream : Stream
                 offset += toCopy;
                 count -= toCopy;
                 total += toCopy;
+                chunkIndex++;
+                offsetInChunk = 0;
             }
 
             return total;
         }
+    }
+
+    private (int Index, int Offset) LocateChunk(long position)
+    {
+        var records = _header.ChunkTable;
+        if (records == null) return ((int)(position / _header.ChunkSize), (int)(position % _header.ChunkSize));
+
+        // V1 can contain short interior records. Subtract the per-record framing
+        // from the indexed ciphertext offsets to find their plaintext positions.
+        long PlainStart(int index) => records[index].Offset - _header.DataOffset - (long)index * CryptoService.RecordHeaderSize;
+        int low = 0, high = records.Length - 1;
+        while (low < high)
+        {
+            int middle = low + (high - low + 1) / 2;
+            if (PlainStart(middle) <= position) low = middle;
+            else high = middle - 1;
+        }
+        return (low, (int)(position - PlainStart(low)));
     }
 
     public override long Seek(long offset, SeekOrigin origin)

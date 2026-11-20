@@ -1,4 +1,4 @@
-(function openImageViewer(startSource, animateEnabled) {
+(function openImageViewer(startSource, animateEnabled, saveTicket) {
     'use strict';
     const rootId = 'stealth-image-viewer-7b54c4';
     const existing = document.getElementById(rootId);
@@ -109,6 +109,9 @@
     const zoomLabel = button('100%', '原始尺寸（1）', () => { chosenMode = mode = 'manual'; scale = 1; layout(); });
     zoomLabel.style.minWidth = '64px';
     button('+', '放大（+）', () => zoom(1.25));
+    const save = button('加密保存', '加密保存到媒体库', event => {
+        if (event.isTrusted && displayedImage === currentImage && saveTicket) window.chrome.webview.postMessage(saveTicket);
+    });
     const close = button('×', '关闭阅读器（Esc）', closeViewer);
     close.style.fontSize = '24px';
 
@@ -154,6 +157,7 @@
             if (image !== currentImage || disposed) return;
             if (displayedImage && displayedImage !== image) releaseImage(displayedImage);
             displayedImage = image; canvas.replaceChildren(image);
+            enable(save, true);
             status.textContent = image.naturalWidth + ' × ' + image.naturalHeight;
             // Long strips should be readable on first open, not a miniature
             // column. An explicit user choice remains in force while switching.
@@ -173,6 +177,7 @@
             status.textContent = '图片加载失败，可重试或切换其他图片';
         };
         status.textContent = '正在加载第 ' + (index + 1) + ' 张图片…';
+        enable(save, false);
         counter.textContent = (index + 1) + ' / ' + pictures.length;
         title.textContent = picture.title || '图片阅读'; title.title = picture.title;
         enable(previous, index > 0); enable(next, index < pictures.length - 1);

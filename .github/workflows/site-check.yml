@@ -1,7 +1,7 @@
 name: Website checks
 on:
   pull_request:
-    paths: ['website/**', 'tools/site.mjs', 'tools/release-readiness*']
+    paths: ['website/**', 'Services/AppInfo.cs', 'tools/site.mjs', 'tools/release-readiness*']
 permissions:
   contents: read
 jobs:

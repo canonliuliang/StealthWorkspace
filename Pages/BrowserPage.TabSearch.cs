@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using StealthWorkspace.Controls;
 using StealthWorkspace.Models;
+using StealthWorkspace.Services;
 using Windows.System;
 
 namespace StealthWorkspace.Pages;
@@ -10,6 +11,9 @@ namespace StealthWorkspace.Pages;
 public sealed partial class BrowserPage
 {
     private bool _tabSearchOpen;
+    private bool _tabRefreshQueued;
+    private readonly List<BrowserTabSearchItem> _tabSearchRows = new();
+    private readonly FontIconSource _closedTabIcon = new() { Glyph = "\uE81C" };
 
     private void BrowserPage_PreviewKeyDown(object sender, KeyRoutedEventArgs args)
     {
@@ -32,44 +36,80 @@ public sealed partial class BrowserPage
 
     private void TabListFlyout_Opening(object sender, object args)
     {
-        _tabSearchOpen = true;
+        TabSearchScope.SelectedItem = OpenTabsSection;
         TabSearchBox.Text = "";
+        _tabSearchOpen = true;
         RefreshTabList();
     }
 
     private void TabListFlyout_Opened(object sender, object args) => TabSearchBox.Focus(FocusState.Programmatic);
     private void TabListFlyout_Closed(object sender, object args) => ClearTabSearch();
-    private void TabSearchBox_TextChanged(object sender, TextChangedEventArgs args) { if (_tabSearchOpen) RefreshTabList(); }
+    private void TabSearchBox_TextChanged(object sender, TextChangedEventArgs args) { if (_tabSearchOpen) FilterTabList(); }
+    private void TabSearchScope_SelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    {
+        if (!_tabSearchOpen) return;
+        RefreshTabList();
+    }
 
     private void ClearTabSearch()
     {
         _tabSearchOpen = false;
         TabSearchResults.ItemsSource = null;
+        _tabSearchRows.Clear();
         TabSearchBox.Text = "";
     }
 
     private void CloseTabSearch() { TabListFlyout.Hide(); ClearTabSearch(); }
 
+    private void ScheduleOpenTabRefresh()
+    {
+        if (!_tabSearchOpen || TabSearchScope.SelectedItem != OpenTabsSection || _tabRefreshQueued) return;
+        _tabRefreshQueued = DispatcherQueue.TryEnqueue(() =>
+        {
+            _tabRefreshQueued = false;
+            if (_tabSearchOpen && TabSearchScope.SelectedItem == OpenTabsSection) RefreshTabList();
+        });
+    }
+
     private void RefreshTabList()
     {
         if (TabSearchResults == null || TabSearchBox == null) return;
-        var previous = (TabSearchResults.SelectedItem as BrowserTabSearchItem)?.Tab;
-        string query = TabSearchBox.Text.Trim();
-        var matches = new List<BrowserTabSearchItem>();
-        foreach (var item in BrowserTabView.TabItems.OfType<TabViewItem>())
+        _tabSearchRows.Clear();
+        bool recent = TabSearchScope.SelectedItem == ClosedTabsSection;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(TabSearchResults, recent ? "最近关闭的标签页" : "打开的标签页");
+        if (recent)
         {
-            if (item.Content is not BrowserTabControl tab) continue;
-            string title = item.Header?.ToString() ?? "新标签页";
-            string address = tab.CurrentUrl;
-            if (!title.Contains(query, StringComparison.OrdinalIgnoreCase) && !address.Contains(query, StringComparison.OrdinalIgnoreCase)) continue;
-            matches.Add(new BrowserTabSearchItem(item, title, string.IsNullOrEmpty(address) || address == "about:blank" ? "尚未打开网页" : address, tab.TabIcon));
+            foreach (var closed in BrowserSessionHistory.RecentlyClosed)
+                _tabSearchRows.Add(new BrowserTabSearchItem(closed, _closedTabIcon));
         }
-        // ListView owns scrolling and virtualizes rows; no outer ScrollViewer.
+        else
+        {
+            foreach (var item in BrowserTabView.TabItems.OfType<TabViewItem>())
+            {
+                if (item.Content is not BrowserTabControl tab) continue;
+                string title = item.Header?.ToString() ?? "新标签页";
+                string address = tab.CurrentUrl;
+                _tabSearchRows.Add(new BrowserTabSearchItem(item, title,
+                    string.IsNullOrEmpty(address) || address == "about:blank" ? "尚未打开网页" : address, item.IconSource));
+            }
+        }
+        FilterTabList();
+    }
+
+    private void FilterTabList()
+    {
+        // Typing filters the flyout's in-memory snapshot. Reading CoreWebView2.Source
+        // and constructing a native IconSource for every tab on each keystroke is costly.
+        var previous = TabSearchResults.SelectedItem as BrowserTabSearchItem;
+        string query = TabSearchBox.Text.Trim();
+        var matches = _tabSearchRows.Where(item => item.Title.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+            item.Address.Contains(query, StringComparison.OrdinalIgnoreCase)).ToArray();
         TabSearchResults.ItemsSource = matches;
-        TabSearchResults.SelectedItem = matches.FirstOrDefault(item => ReferenceEquals(item.Tab, previous))
+        TabSearchResults.SelectedItem = matches.FirstOrDefault(item =>
+            item.Tab != null && ReferenceEquals(item.Tab, previous?.Tab) || item.Closed != null && ReferenceEquals(item.Closed, previous?.Closed))
             ?? matches.FirstOrDefault(item => ReferenceEquals(item.Tab, BrowserTabView.SelectedItem)) ?? matches.FirstOrDefault();
-        TabSearchEmpty.Visibility = matches.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        ReopenClosedButton.IsEnabled = _closedTabs.Count > 0;
+        TabSearchEmpty.Text = query.Length == 0 && TabSearchScope.SelectedItem == ClosedTabsSection ? "本次会话还没有关闭的网页" : "没有匹配的标签页";
+        UiMotion.SetVisible(TabSearchEmpty, matches.Length == 0, MotionCue.Fade);
     }
 
     private void TabSearchBox_KeyDown(object sender, KeyRoutedEventArgs args)
@@ -90,8 +130,9 @@ public sealed partial class BrowserPage
 
     private void ActivateSearchTab(BrowserTabSearchItem item)
     {
-        if (!BrowserTabView.TabItems.Contains(item.Tab)) return;
-        BrowserTabView.SelectedItem = item.Tab;
+        if (item.Closed != null) ReopenClosedTab(item.Closed);
+        else if (item.Tab != null && BrowserTabView.TabItems.Contains(item.Tab)) BrowserTabView.SelectedItem = item.Tab;
+        else return;
         TabListFlyout.Hide();
     }
 

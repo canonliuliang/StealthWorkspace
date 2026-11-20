@@ -30,6 +30,7 @@ public sealed partial class BrowserTabControl : UserControl
     private static DispatcherQueue? _uiDispatcherQueue;
     private static int _initializedTabCount;
     private static bool _hostWindowVisible = true;
+    private static bool _privacyCoverActive;
 
     /// <summary>Number of tabs whose CoreWebView2 has been initialized in this process.
     /// Used by the UI smoke test to prove the browser kernel actually started.</summary>
@@ -39,8 +40,11 @@ public sealed partial class BrowserTabControl : UserControl
     /// <summary>Last browser kernel initialization error (type/code only, no paths/URLs).</summary>
     public static string LastInitializationError { get; private set; } = string.Empty;
 
-    private readonly ObservableCollection<CookieDisplayItem> _allCookies = new();
-    private readonly ObservableCollection<CookieDisplayItem> _filteredCookies = new();
+    private readonly List<CookieDisplayItem> _allCookies = new();
+    private readonly ObservableRangeCollection<CookieDisplayItem> _filteredCookies = new();
+    private readonly BrowserTabPermissions _tabPermissions = new();
+    private int _cookieLoadVersion;
+    private string? _permissionPanelOrigin;
     private readonly ObservableCollection<HistorySessionItem> _sessionHistory = BrowserSessionHistory.Items;
     private readonly object _disposeSync = new();
 
@@ -67,6 +71,7 @@ public sealed partial class BrowserTabControl : UserControl
     private bool _backgroundMemoryReduced;
     private int _suspendRetries;
     private bool _isPlayingAudio;
+    private bool _tabMutedByUser;
     private BitmapImage? _favicon;
     private int _faviconVersion;
     private bool _isBrowserFullScreen;
@@ -92,6 +97,7 @@ public sealed partial class BrowserTabControl : UserControl
     private volatile bool _isDisposed;
 
     public event Action<string>? TitleChanged;
+    internal event Action? DocumentAddressChanged;
     public event Action<bool>? AudioPlayingChanged;
     public event Action<string, bool>? NewTabRequested;
     internal Func<bool, Task<BrowserTabControl?>>? PopupRequested;
@@ -122,11 +128,14 @@ public sealed partial class BrowserTabControl : UserControl
     }
 
     internal bool HasBrowserControl => _browserControl != null;
+    internal UIElement NavigationChrome => TopNavBar;
     internal bool IsPageFullScreen => _isBrowserFullScreen;
     internal bool HasPrivacyUi => PrivacyContent != null;
     internal bool HasAuxiliaryUi => PrivacyContent != null || BookmarksContent != null || MoreActionsContent != null;
     internal bool IsSmokeSuspended => _hookedCore?.IsSuspended == true;
     internal bool IsSmokeBrowserAwake => _hookedCore is { IsSuspended: false };
+    internal bool IsAudioMuted => _hookedCore?.IsMuted == true;
+    internal bool HasPendingDownloadBadge => DownloadCountBadge.Visibility == Visibility.Visible;
     internal bool IsSmokeNavigationComplete => _activeNavigationId == null && _isInitialized && !_isInitializing;
 
     public string CurrentTitle { get; private set; } = "新标签页";
@@ -143,6 +152,7 @@ public sealed partial class BrowserTabControl : UserControl
         PreviewKeyDown += BrowserTabControl_PreviewKeyDown;
 
         UpdateEmptyNotices();
+        PrivacyMediaGuard.AppAudioMuteChanged += OnAppAudioMuteChanged;
     }
 
     #region Lifetime & Disposal
@@ -151,6 +161,9 @@ public sealed partial class BrowserTabControl : UserControl
     {
         if (_isDisposed) return;
 
+        BrowserDownloads.PendingCountChanged -= UpdateDownloadBadge;
+        BrowserDownloads.PendingCountChanged += UpdateDownloadBadge;
+        UpdateDownloadBadge();
         SubscribeSettings();
         AttachFaviconScale();
         LoadPermissionSettings();
@@ -167,7 +180,8 @@ public sealed partial class BrowserTabControl : UserControl
         if (!_focusAddressOnLoad) return;
         DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
-            if (!_focusAddressOnLoad || !IsLoaded || _isDisposed || !_isSelected) return;
+            if (!_focusAddressOnLoad || !IsLoaded || _isDisposed || !_isSelected || MainWindow.Current?.IsPrivacyCoverVisible == true) return;
+            if (StartSurface.Visibility == Visibility.Visible) UiMotion.Reveal(StartContent);
             FocusAddressBar();
         });
     }
@@ -193,7 +207,22 @@ public sealed partial class BrowserTabControl : UserControl
         else ScheduleBackgroundSleep();
     }
 
-    private bool IsForegroundTab => _isSelected && _hostWindowVisible;
+    private bool IsForegroundTab => _isSelected && _hostWindowVisible && !_privacyCoverActive;
+
+    internal static void SetPrivacyCoverActive(bool active)
+    {
+        if (_privacyCoverActive == active) return;
+        _privacyCoverActive = active;
+        foreach (var tab in SnapshotLiveTabs())
+        {
+            tab.ApplyAppAudioMute();
+            tab.UpdateBrowserVisibility();
+            if (active) tab._backgroundMemoryReduced = false;
+            else if (tab.IsForegroundTab || tab._isPlayingAudio || tab.HasRunningDownloads ||
+                tab._isBrowserFullScreen || tab._activeNavigationId != null) tab.ResumeBrowser();
+            tab.ScheduleBackgroundSleep();
+        }
+    }
 
     internal static void SetHostWindowVisible(bool visible)
     {
@@ -208,8 +237,8 @@ public sealed partial class BrowserTabControl : UserControl
     }
 
     private bool CanSleepInBackground => !_isDisposed && !IsForegroundTab && !_isInitializing &&
-        _isInitialized && !_suspending && !_backgroundMemoryReduced && !_isPlayingAudio && !_isBrowserFullScreen &&
-        !HasRunningDownloads && (_activeNavigationId == null || _documentReady);
+        _isInitialized && !_suspending && !_backgroundMemoryReduced && (_privacyCoverActive ||
+        (!_isPlayingAudio && !_isBrowserFullScreen && !HasRunningDownloads && (_activeNavigationId == null || _documentReady)));
 
     private void UpdateBrowserVisibility()
     {
@@ -231,8 +260,8 @@ public sealed partial class BrowserTabControl : UserControl
             _backgroundTimer.Tick += BackgroundTimer_Tick;
         }
         if (retryDelay == null) _suspendRetries = 0;
-        _backgroundTimer.Interval = retryDelay ?? (!_hostWindowVisible && _backgroundIdleDelay > TimeSpan.FromSeconds(15)
-            ? TimeSpan.FromSeconds(15) : _backgroundIdleDelay);
+        _backgroundTimer.Interval = retryDelay ?? (_privacyCoverActive ? TimeSpan.FromMilliseconds(1)
+            : !_hostWindowVisible && _backgroundIdleDelay > TimeSpan.FromSeconds(15) ? TimeSpan.FromSeconds(15) : _backgroundIdleDelay);
         _backgroundTimer.Start();
     }
 
@@ -279,7 +308,7 @@ public sealed partial class BrowserTabControl : UserControl
     {
         try
         {
-            if (_hookedCore is not { } core) return;
+            if (_privacyCoverActive || _hookedCore is not { } core) return;
             if (core.IsSuspended) core.Resume();
             if (core.MemoryUsageTargetLevel == CoreWebView2MemoryUsageTargetLevel.Low)
                 core.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Normal;
@@ -294,6 +323,7 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void BrowserTabControl_Unloaded(object sender, RoutedEventArgs e)
     {
+        BrowserDownloads.PendingCountChanged -= UpdateDownloadBadge;
         DetachFaviconScale();
         // Do not dispose here: the tab itself is disposed by BrowserPage when it is
         // actually closed. Unloaded can also fire merely because the TabView hides
@@ -354,7 +384,7 @@ public sealed partial class BrowserTabControl : UserControl
     private static async Task DisposeTabsAsync(List<BrowserTabControl> tabs)
     {
         BrowserDownloads.EndSession();
-        BrowserSessionHistory.Items.Clear();
+        BrowserSessionHistory.Clear();
         await Task.WhenAll(tabs.Select(tab => tab.DisposeTabAsync()));
     }
 
@@ -380,6 +410,7 @@ public sealed partial class BrowserTabControl : UserControl
             _disposeTask = result;
         }
 
+        PrivacyMediaGuard.AppAudioMuteChanged -= OnAppAudioMuteChanged;
         _ = RunDisposeAsync(completion);
         return result;
     }
@@ -462,7 +493,9 @@ public sealed partial class BrowserTabControl : UserControl
             }
             _downloadsFlyout?.Hide();
             _downloadsFlyout = null;
+            BrowserDownloads.PendingCountChanged -= UpdateDownloadBadge;
             _displayedDownload = null;
+            if (PrivacySections != null) PrivacySections.SelectionChanged -= PrivacySections_SelectionChanged;
             DetachBookmarkUi();
             foreach (var reservation in _downloadPaths.Values) reservation.Dispose();
             _downloadPaths.Clear();
@@ -501,12 +534,12 @@ public sealed partial class BrowserTabControl : UserControl
             // The page's delegates capture the TabViewItem, whose native flyout
             // delegates in turn capture this control. Break that cycle at close.
             TitleChanged = null;
+            DocumentAddressChanged = null;
             AudioPlayingChanged = null;
             NewTabRequested = null;
             PopupRequested = null;
             CloseRequested = null;
             DownloadsActivityChanged = null;
-            _allowedPopupOrigins.Clear();
             _blockedPopupUrls.Clear();
             FullScreenModeChanged = null;
             NavigationVisualChanged = null;
@@ -668,6 +701,8 @@ public sealed partial class BrowserTabControl : UserControl
 
             ConfigureCoreWebView2(core);
             AttachCoreWebView2Handlers(core);
+            // Apply the current policy before the new (or recreated) core can navigate.
+            core.IsMuted = _privacyCoverActive || _tabMutedByUser || PrivacyMediaGuard.IsAppAudioMuted;
 
             _isInitialized = true;
             UpdateBrowserVisibility();
@@ -892,6 +927,10 @@ public sealed partial class BrowserTabControl : UserControl
             core.ContainsFullScreenElementChanged += CoreWebView2_ContainsFullScreenElementChanged;
             core.NewWindowRequested += CoreWebView2_NewWindowRequested;
             core.ContextMenuRequested += CoreWebView2_ContextMenuRequested;
+            // WinRT may deliver a different managed wrapper for the same native
+            // sender. Bind the callback to the core that owns this registration.
+            _readerMessageHandler = (_, args) => ImageViewerMessageReceived(core, args);
+            core.WebMessageReceived += _readerMessageHandler;
             core.WindowCloseRequested += CoreWebView2_WindowCloseRequested;
             core.ProcessFailed += CoreWebView2_ProcessFailed;
             core.FaviconChanged += CoreWebView2_FaviconChanged;
@@ -908,6 +947,8 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void DetachCoreWebView2Handlers()
     {
+        _tabPermissions.SetDocument(null);
+        ClearCookieRows();
         CancelResponseProbe();
         CancelFaviconRefresh();
         DetachFind();
@@ -925,6 +966,8 @@ public sealed partial class BrowserTabControl : UserControl
             core.ContainsFullScreenElementChanged -= CoreWebView2_ContainsFullScreenElementChanged;
             core.NewWindowRequested -= CoreWebView2_NewWindowRequested;
             core.ContextMenuRequested -= CoreWebView2_ContextMenuRequested;
+            if (_readerMessageHandler != null) core.WebMessageReceived -= _readerMessageHandler;
+            _readerMessageHandler = null;
             core.WindowCloseRequested -= CoreWebView2_WindowCloseRequested;
             core.ProcessFailed -= CoreWebView2_ProcessFailed;
             core.FaviconChanged -= CoreWebView2_FaviconChanged;
@@ -991,7 +1034,8 @@ public sealed partial class BrowserTabControl : UserControl
         if (core == null) return false;
         try { await core.CallDevToolsProtocolMethodAsync("Page.crash", "{}").AsTask().WaitAsync(TimeSpan.FromSeconds(3)); }
         catch (Exception ex) { SmokeTest.Report("browser: crash request ended=" + ex.GetType().Name); }
-        for (int i = 0; i < 50 && !BrowserErrorBar.IsOpen; i++) await Task.Delay(100);
+        // WebView2 can finish native crash reporting several seconds after the CDP request times out.
+        for (int i = 0; i < 150 && !BrowserErrorBar.IsOpen; i++) await Task.Delay(100);
         if (_needsRecreate || !_isInitialized || !BrowserErrorBar.IsOpen) return false;
         var ready = new TaskCompletionSource<bool>();
         void Completed(CoreWebView2 sender, CoreWebView2NavigationCompletedEventArgs args) => ready.TrySetResult(args.IsSuccess);
@@ -1067,6 +1111,19 @@ public sealed partial class BrowserTabControl : UserControl
                     BrowserDownloads.Items.Any(item => item.FilePath == operation!.ResultFilePath && item.IsCompleted);
                 SmokeTest.Report("browser: shared download manager opens with completed record=" + ok);
                 _downloadsFlyout?.Hide();
+                if (ok)
+                {
+                    var record = BrowserDownloads.Items.Single(item => item.FilePath == operation!.ResultFilePath);
+                    var vault = VaultService.Instance;
+                    var existing = vault.VisibleItems.Select(i => i.Id).ToHashSet();
+                    await record.StoreInVaultAsync();
+                    await record.StoreInVaultAsync();
+                    var imported = vault.VisibleItems.Single(item => !existing.Contains(item.Id));
+                    using (var reader = new StreamReader(vault.OpenDecryptedStream(imported)))
+                        ok = !record.CanStore && !File.Exists(record.FilePath) && reader.ReadToEnd() == "synthetic download check";
+                    await vault.DeleteItemAsync(imported);
+                    SmokeTest.Report("browser: completed download stored once, decrypted bytes verified, original removed=" + ok);
+                }
             }
             return ok;
         }
@@ -1119,31 +1176,27 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void CoreWebView2_PermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
     {
-        if (_isDisposed) return;
-
-        // Always read the source of truth. The ToggleSwitch instances may lag behind
-        // SettingsService (and they only write settings back, never drive the decision).
-        AppSettingsData cfg = SettingsService.Instance.Data;
-        bool shouldBlock = e.PermissionKind switch
+        // By default WebView2 may cache the decision and bypass our handler on
+        // the next request, even after the user changes this switch.
+        try { e.SavesInProfile = false; }
+        catch (Exception ex)
         {
-            CoreWebView2PermissionKind.Camera => cfg.BlockCamera,
-            CoreWebView2PermissionKind.Microphone => cfg.BlockMicrophone,
-            CoreWebView2PermissionKind.Geolocation => cfg.BlockGeolocation,
-            CoreWebView2PermissionKind.Notifications => cfg.BlockNotifications,
-            CoreWebView2PermissionKind.ClipboardRead => true,
-            _ => true,
-        };
-
-        if (!shouldBlock) return;
+            e.State = CoreWebView2PermissionState.Deny;
+            AppLog.Warn("WebView2 request-scoped permissions unavailable: " + ex.GetType().Name);
+            return;
+        }
+        _tabPermissions.SetDocument(_hookedCore?.Source);
+        if (!_isDisposed && !_retainedForDownloads &&
+            !_tabPermissions.Blocks(e.PermissionKind, e.Uri, SettingsService.Instance.Data)) return;
 
         e.State = CoreWebView2PermissionState.Deny;
         e.Handled = true;
+        if (_isDisposed || _retainedForDownloads) return;
 
         _blockedCounter++;
-        ShieldBlockedBadge.Visibility = Visibility.Visible;
+        UiMotion.SetVisible(ShieldBlockedBadge, true, MotionCue.Fade);
         ShieldBlockedCountText.Text = _blockedCounter.ToString(CultureInfo.InvariantCulture);
-        SetHubStatus($"已拦截传感器/权限探测请求 ({_blockedCounter})");
-        AppLog.Info($"PermissionRequested denied: {e.PermissionKind}");
+        SetHubStatus($"此标签页已阻止 {_blockedCounter} 次权限请求");
     }
 
     private static void ApplyBrowserColorScheme(CoreWebView2 core)
@@ -1173,16 +1226,19 @@ public sealed partial class BrowserTabControl : UserControl
         try
         {
             AppSettingsData cfg = SettingsService.Instance.Data;
-            CameraBlockToggle.IsOn = cfg.BlockCamera;
-            MicBlockToggle.IsOn = cfg.BlockMicrophone;
-            GeoBlockToggle.IsOn = cfg.BlockGeolocation;
-            NotifyBlockToggle.IsOn = cfg.BlockNotifications;
+            string? document = PermissionScope.SelectedIndex == 0 ? _hookedCore?.Source : null;
+            CameraBlockToggle.IsOn = _tabPermissions.Blocks(CoreWebView2PermissionKind.Camera, document, cfg);
+            MicBlockToggle.IsOn = _tabPermissions.Blocks(CoreWebView2PermissionKind.Microphone, document, cfg);
+            GeoBlockToggle.IsOn = _tabPermissions.Blocks(CoreWebView2PermissionKind.Geolocation, document, cfg);
+            NotifyBlockToggle.IsOn = _tabPermissions.Blocks(CoreWebView2PermissionKind.Notifications, document, cfg);
         }
         finally
         {
             _isUpdatingToggles = false;
         }
     }
+
+    private void PermissionScope_SelectionChanged(object sender, SelectionChangedEventArgs e) => LoadPermissionSettings();
 
     private void PermissionToggle_Toggled(object sender, RoutedEventArgs e)
     {
@@ -1192,12 +1248,28 @@ public sealed partial class BrowserTabControl : UserControl
             return;
         }
 
-        // The toggles are only a UI mirror; always persist into SettingsService.
         AppSettingsData cfg = SettingsService.Instance.Data;
-        cfg.BlockCamera = CameraBlockToggle.IsOn;
-        cfg.BlockMicrophone = MicBlockToggle.IsOn;
-        cfg.BlockGeolocation = GeoBlockToggle.IsOn;
-        cfg.BlockNotifications = NotifyBlockToggle.IsOn;
+        var toggle = (ToggleSwitch)sender;
+        CoreWebView2PermissionKind kind;
+        if (toggle == CameraBlockToggle) kind = CoreWebView2PermissionKind.Camera;
+        else if (toggle == MicBlockToggle) kind = CoreWebView2PermissionKind.Microphone;
+        else if (toggle == GeoBlockToggle) kind = CoreWebView2PermissionKind.Geolocation;
+        else if (toggle == NotifyBlockToggle) kind = CoreWebView2PermissionKind.Notifications;
+        else return;
+        if (PermissionScope.SelectedIndex == 0)
+        {
+            if (_permissionPanelOrigin == null || _permissionPanelOrigin != _tabPermissions.Origin) return;
+            _tabPermissions.SetSiteRule(kind, toggle.IsOn, cfg);
+            return;
+        }
+        if (PermissionScope.SelectedIndex != 1) return;
+        switch (kind)
+        {
+            case CoreWebView2PermissionKind.Camera: cfg.BlockCamera = toggle.IsOn; break;
+            case CoreWebView2PermissionKind.Microphone: cfg.BlockMicrophone = toggle.IsOn; break;
+            case CoreWebView2PermissionKind.Geolocation: cfg.BlockGeolocation = toggle.IsOn; break;
+            case CoreWebView2PermissionKind.Notifications: cfg.BlockNotifications = toggle.IsOn; break;
+        }
         SettingsService.Instance.SaveSettings();
     }
 
@@ -1225,6 +1297,7 @@ public sealed partial class BrowserTabControl : UserControl
             LoadPermissionSettings();
             UpdateBookmarkStarState();
             RefreshStartBookmarks();
+            RefreshBookmarkList();
             return;
         }
 
@@ -1234,6 +1307,7 @@ public sealed partial class BrowserTabControl : UserControl
             LoadPermissionSettings();
             UpdateBookmarkStarState();
             RefreshStartBookmarks();
+            RefreshBookmarkList();
         });
     }
 
@@ -1278,9 +1352,7 @@ public sealed partial class BrowserTabControl : UserControl
             }
 
             string displayName = Path.GetFileName(targetPath);
-            DownloadToastTitle.Text = $"正在下载：{displayName}";
-            DownloadToastDesc.Text = "文件保存在应用下载文件夹，未自动加密。";
-            DownloadToast.Visibility = Visibility.Visible;
+            ShowDownloadToast("\uE896", $"正在下载：{displayName}", "文件保存在应用下载文件夹，未自动加密。");
             SetHubStatus("下载保存在应用文件夹，未自动加密");
             AppLog.Info("DownloadStarting: 下载已重定向到应用隐藏隔离目录");
 
@@ -1317,9 +1389,7 @@ public sealed partial class BrowserTabControl : UserControl
 
             try
             {
-                DownloadToastTitle.Text = "下载已阻止";
-                DownloadToastDesc.Text = "无法创建应用下载文件夹，下载未开始。";
-                DownloadToast.Visibility = Visibility.Visible;
+                ShowDownloadToast("\uE7BA", "下载已阻止", "无法创建应用下载文件夹，下载未开始。");
             }
             catch
             {
@@ -1383,9 +1453,7 @@ public sealed partial class BrowserTabControl : UserControl
             {
                 case CoreWebView2DownloadState.Completed:
                     DetachDownloadStateHandler(operation);
-                    DownloadToastTitle.Text = "下载完成";
-                    DownloadToastDesc.Text = "文件保存在应用下载文件夹，未自动加密。";
-                    DownloadToast.Visibility = Visibility.Visible;
+                    ShowDownloadToast("\uE73E", "下载完成", record?.FileName ?? "文件已保存在应用下载文件夹。", record);
                     AppLog.Info("Download: 已下载到应用隐藏隔离目录");
                     break;
 
@@ -1394,10 +1462,9 @@ public sealed partial class BrowserTabControl : UserControl
                     // UserCanceled. Keep resumable operations attached in both cases.
                     if (!operation.CanResume) DetachDownloadStateHandler(operation);
                     else ScheduleBackgroundSleep();
-                    DownloadToastTitle.Text = operation.CanResume && Models.BrowserDownloadItem.IsUserPause(operation.InterruptReason)
-                        ? "下载已暂停" : "下载已中断";
-                    DownloadToastDesc.Text = operation.CanResume ? "可以在下载列表中继续" : "下载未完成，可重新下载";
-                    DownloadToast.Visibility = Visibility.Visible;
+                    bool paused = operation.CanResume && Models.BrowserDownloadItem.IsUserPause(operation.InterruptReason);
+                    ShowDownloadToast(paused ? "\uE769" : "\uE7BA", paused ? "下载已暂停" : "下载已中断",
+                        operation.CanResume ? "可以在下载列表中继续" : "下载未完成，可重新下载");
                     SetHubStatus($"下载被中断（{operation.InterruptReason}）");
                     AppLog.Warn($"Download interrupted: {operation.InterruptReason}");
                     break;
@@ -1407,6 +1474,9 @@ public sealed partial class BrowserTabControl : UserControl
                     ScheduleBackgroundSleep();
                     _displayedDownload = operation;
                     _downloadProgressUpdatedAt = 0;
+                    DownloadVaultActions.Visibility = Visibility.Collapsed;
+                    DownloadVaultActions.DataContext = null;
+                    DownloadToastIcon.Glyph = "\uE896";
                     DownloadToastTitle.Text = "正在下载：" + Path.GetFileName(operation.ResultFilePath);
                     OnDownloadProgressChanged(operation, e);
                     break;
@@ -1435,9 +1505,34 @@ public sealed partial class BrowserTabControl : UserControl
         catch (Exception ex) { AppLog.Warn("Download progress: " + ex.GetType().Name); }
     }
 
+    private void UpdateDownloadBadge()
+    {
+        int count = BrowserDownloads.PendingCount;
+        DownloadCountText.Text = count.ToString(CultureInfo.CurrentCulture);
+        DownloadCountBadge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(DownloadsBtn, count > 0 ? $"下载，{count} 个未完成" : "下载");
+    }
+
+    private async void StoreDownload_Click(object sender, RoutedEventArgs args)
+    {
+        if (DownloadVaultActions.DataContext is BrowserDownloadItem item) await item.StoreInVaultAsync();
+    }
+
+    private void ShowDownloadToast(string glyph, string title, string description, BrowserDownloadItem? completed = null)
+    {
+        DownloadVaultActions.DataContext = completed;
+        DownloadVaultActions.Visibility = completed != null ? Visibility.Visible : Visibility.Collapsed;
+        bool changedState = DownloadToast.Visibility == Visibility.Visible && DownloadToastIcon.Glyph != glyph;
+        DownloadToastIcon.Glyph = glyph;
+        DownloadToastTitle.Text = title;
+        DownloadToastDesc.Text = description;
+        UiMotion.SetOverlayVisible(DownloadToast, true, MotionCue.FromBelow);
+        if (changedState && IsForegroundTab) UiMotion.Reveal(DownloadToastIcon, MotionCue.Fade);
+    }
+
     private void DismissDownloadToast_Click(object sender, RoutedEventArgs e)
     {
-        DownloadToast.Visibility = Visibility.Collapsed;
+        UiMotion.SetOverlayVisible(DownloadToast, false, MotionCue.FromBelow);
     }
 
     #endregion
@@ -1518,17 +1613,7 @@ public sealed partial class BrowserTabControl : UserControl
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(BookmarkStarBtn, action);
         ToolTipService.SetToolTip(BookmarkStarBtn, action + " (Ctrl+D)");
 
-        if (bookmarked)
-        {
-            BookmarkStarIcon.Glyph = "\uE735";
-            BookmarkStarIcon.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                Windows.UI.Color.FromArgb(255, 245, 158, 11)); // Amber
-        }
-        else
-        {
-            BookmarkStarIcon.Glyph = "\uE734";
-            BookmarkStarIcon.ClearValue(FontIcon.ForegroundProperty);
-        }
+        VisualStateManager.GoToState(this, bookmarked ? "Bookmarked" : "NotBookmarked", false);
     }
 
     private void BookmarkStarBtn_Click(object sender, RoutedEventArgs e)
@@ -1551,7 +1636,8 @@ public sealed partial class BrowserTabControl : UserControl
         }
 
         UpdateBookmarkStarState();
-        if (!saved) ShowBookmarkSaveError();
+        if (saved) UiMotion.Reveal(BookmarkStarIcon, MotionCue.Fade);
+        else ShowBookmarkSaveError();
     }
 
     private void BookmarksFlyout_Opening(object? sender, object e)
@@ -1559,6 +1645,7 @@ public sealed partial class BrowserTabControl : UserControl
         if (_isDisposed) return;
         CancelInitialAddressFocus();
         if (BookmarksContent == null) FindName(nameof(BookmarksContent));
+        _bookmarkFilter = new();
         BookmarkSearchBox.Text = "";
         RefreshBookmarkList();
     }
@@ -1590,13 +1677,33 @@ public sealed partial class BrowserTabControl : UserControl
 
     internal void ToggleAudioMute() => AudioMuteBtn_Click(this, new RoutedEventArgs());
 
+    private void OnAppAudioMuteChanged(bool _)
+    {
+        if (DispatcherQueue.HasThreadAccess) ApplyAppAudioMute();
+        else DispatcherQueue.TryEnqueue(ApplyAppAudioMute);
+    }
+
+    private void ApplyAppAudioMute()
+    {
+        if (_isDisposed || _hookedCore is not { } core) return;
+        try
+        {
+            core.IsMuted = _privacyCoverActive || _tabMutedByUser || PrivacyMediaGuard.IsAppAudioMuted;
+            UpdateAudioIcon();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"更新浏览器静音状态失败: {ex.GetType().Name}");
+        }
+    }
+
     private void UpdateAudioIcon()
     {
         CoreWebView2? core = _browserControl?.CoreWebView2;
         bool isMuted = core != null && core.IsMuted;
         if (AudioMuteBtn != null)
         {
-            AudioMuteBtn.IsEnabled = core != null;
+            AudioMuteBtn.IsEnabled = core != null && !_privacyCoverActive && !PrivacyMediaGuard.IsAppAudioMuted;
             AudioMuteBtn.Content = isMuted ? "取消静音" : "静音标签页";
         }
         NavigationVisualChanged?.Invoke();
@@ -1604,14 +1711,16 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void AudioMuteBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (_isDisposed) return;
+        if (_isDisposed || _privacyCoverActive || PrivacyMediaGuard.IsAppAudioMuted) return;
 
         CoreWebView2? core = _browserControl?.CoreWebView2;
         if (core == null) return;
 
         try
         {
-            core.IsMuted = !core.IsMuted;
+            bool mute = !core.IsMuted;
+            core.IsMuted = mute;
+            _tabMutedByUser = mute;
             UpdateAudioIcon();
         }
         catch (Exception ex)
@@ -1624,48 +1733,20 @@ public sealed partial class BrowserTabControl : UserControl
 
     #region Privacy Hub Flyout
 
-    private void SetActiveTab(Button activeButton, FrameworkElement activePanel)
+    private int _privacySectionIndex;
+
+    private void PrivacySections_SelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
     {
-        try
-        {
-            var accentStyle = (Style)Application.Current.Resources["AccentButtonStyle"];
-            var subtleStyle = (Style)Application.Current.Resources["SubtleButtonStyle"];
-
-            TabFirewallBtn.Style = subtleStyle;
-            TabCookieBtn.Style = subtleStyle;
-            TabStorageBtn.Style = subtleStyle;
-            TabHistoryBtn.Style = subtleStyle;
-
-            activeButton.Style = accentStyle;
-
-            PanelFirewall.Visibility = Visibility.Collapsed;
-            PanelCookie.Visibility = Visibility.Collapsed;
-            PanelStorage.Visibility = Visibility.Collapsed;
-            PanelHistory.Visibility = Visibility.Collapsed;
-
-            activePanel.Visibility = Visibility.Visible;
-            UiMotion.Enter(activePanel);
-        }
-        catch (Exception ex)
-        {
-            AppLog.Error("SetActiveTab failed", ex);
-        }
-    }
-
-    private void TabFirewall_Click(object sender, RoutedEventArgs e) => SetActiveTab(TabFirewallBtn, PanelFirewall);
-
-    private void TabCookie_Click(object sender, RoutedEventArgs e)
-    {
-        SetActiveTab(TabCookieBtn, PanelCookie);
-        _ = RefreshCookiesAsync();
-    }
-
-    private void TabStorage_Click(object sender, RoutedEventArgs e) => SetActiveTab(TabStorageBtn, PanelStorage);
-
-    private void TabHistory_Click(object sender, RoutedEventArgs e)
-    {
-        SetActiveTab(TabHistoryBtn, PanelHistory);
-        UpdateEmptyNotices();
+        if (sender.SelectedItem is not { } selection) return;
+        int index = sender.Items.IndexOf(selection);
+        if (index < 0 || index == _privacySectionIndex) return;
+        bool fromRight = (index > _privacySectionIndex) == (sender.FlowDirection == FlowDirection.LeftToRight);
+        PrivacyPanels.Children[_privacySectionIndex].Visibility = Visibility.Collapsed;
+        _privacySectionIndex = index;
+        UiMotion.SetVisible((FrameworkElement)PrivacyPanels.Children[index], true, fromRight ? MotionCue.FromRight : MotionCue.FromLeft);
+        if (selection == CookiesSection) _ = RefreshCookiesAsync();
+        else ClearCookieRows();
+        if (selection == HistorySection) UpdateEmptyNotices();
     }
 
     private void CloseFlyout_Click(object sender, RoutedEventArgs e)
@@ -1673,11 +1754,22 @@ public sealed partial class BrowserTabControl : UserControl
         PrivacyFlyout.Hide();
     }
 
+    private void PrivacyFlyout_Closed(object? sender, object e)
+    {
+        _permissionPanelOrigin = null;
+        ClearCookieRows();
+    }
+
     private void PrivacyFlyout_Opening(object? sender, object e)
     {
         CancelInitialAddressFocus();
         EnsurePrivacyContent();
         string currentUrl = GetCurrentDocumentUrl();
+        _tabPermissions.SetDocument(currentUrl);
+        _permissionPanelOrigin = _tabPermissions.Origin;
+        CurrentSiteScope.IsEnabled = _tabPermissions.Origin != null;
+        PermissionScope.SelectedIndex = CurrentSiteScope.IsEnabled ? 0 : 1;
+        LoadPermissionSettings();
         FlyoutDomainText.Text = DescribeHost(currentUrl);
         SessionStateText.Text = Uri.TryCreate(currentUrl, UriKind.Absolute, out var site) && site.Scheme is "http" or "https"
             ? site.Scheme == "https" ? "HTTPS · 临时会话" : "HTTP · 连接未加密"
@@ -1698,6 +1790,8 @@ public sealed partial class BrowserTabControl : UserControl
         _isUpdatingToggles = true;
         try { FindName(nameof(PrivacyContent)); }
         finally { _isUpdatingToggles = false; }
+        PrivacySections.SelectedItem = PermissionsSection;
+        PrivacySections.SelectionChanged += PrivacySections_SelectionChanged;
         CookieListView.ItemsSource = _filteredCookies;
         HistoryListView.ItemsSource = _sessionHistory;
         SessionStateText.Text = _isInitialized ? "临时会话已启动" : "尚未打开网页";
@@ -1788,13 +1882,27 @@ public sealed partial class BrowserTabControl : UserControl
                 }
             }
         }
-        var bookmarkProbe = await CheckMenuAsync("bookmarks", BookmarksFlyout, FavoritesBtn, () => BookmarksContent?.IsLoaded == true);
+        async Task<(bool Loaded, bool FocusStable)> CheckBookmarkMenuAsync(string name)
+        {
+            // Prove that XAML projects a nonempty immutable source, including
+            // its first row. The smoke fixture never needs to persist this item.
+            var original = cfg.Bookmarks;
+            var marker = new BookmarkItem { Title = "Fixture bookmark", Url = "https://bookmarks.invalid/check" };
+            cfg.Bookmarks = original.Insert(0, marker);
+            try
+            {
+                return await CheckMenuAsync(name, BookmarksFlyout, FavoritesBtn, () => BookmarksContent?.IsLoaded == true &&
+                    BookmarksListView.Items.Count == cfg.Bookmarks.Count && ReferenceEquals(BookmarksListView.Items[0], marker));
+            }
+            finally { cfg.Bookmarks = original; }
+        }
+        var bookmarkProbe = await CheckBookmarkMenuAsync("bookmarks");
         var bookmarks = BookmarksContent;
-        bool bookmarksLoaded = bookmarkProbe.Loaded && BookmarksListView.ItemsSource != null;
+        bool bookmarksLoaded = bookmarkProbe.Loaded && BookmarksListView.ItemsSource == null && _bookmarkFilter == null;
         var actionsProbe = await CheckMenuAsync("actions", MoreActionsFlyout, BrowserMenuBtn, () => MoreActionsContent?.IsLoaded == true);
         var actions = MoreActionsContent;
         bool actionsLoaded = actionsProbe.Loaded && AudioMuteBtn != null && ZoomResetBtn != null;
-        var bookmarkReuse = await CheckMenuAsync("bookmarks-reuse", BookmarksFlyout, FavoritesBtn, () => BookmarksContent?.IsLoaded == true);
+        var bookmarkReuse = await CheckBookmarkMenuAsync("bookmarks-reuse");
         bool reusedBookmarks = bookmarkReuse.Loaded && ReferenceEquals(bookmarks, BookmarksContent);
         var actionsReuse = await CheckMenuAsync("actions-reuse", MoreActionsFlyout, BrowserMenuBtn, () => MoreActionsContent?.IsLoaded == true);
         bool reusedActions = actionsReuse.Loaded && ReferenceEquals(actions, MoreActionsContent);
@@ -1809,29 +1917,35 @@ public sealed partial class BrowserTabControl : UserControl
 
     #region Cookie Management
 
+    private void ClearCookieRows()
+    {
+        _cookieLoadVersion++;
+        _allCookies.Clear();
+        if (_filteredCookies.Count > 0)
+        {
+            _filteredCookies.Clear();
+            UpdateEmptyNotices();
+        }
+    }
+
     private async Task RefreshCookiesAsync()
     {
         if (_isDisposed) return;
 
-        CoreWebView2? core = _browserControl?.CoreWebView2;
-        if (core == null)
+        CoreWebView2? core = _hookedCore;
+        if (core == null || !TryCreateWebUri(core.Source, out var currentUri) || currentUri == null)
         {
-            SetHubStatus("浏览器内核尚未就绪，无法读取 Cookie");
+            ClearCookieRows();
+            SetHubStatus("当前没有可查看 Cookie 的网页");
             return;
         }
 
+        int version = ++_cookieLoadVersion;
         try
         {
-            // Prefer CoreWebView2.Source: the XAML control's Source can be stale.
-            string currentUrl = GetCurrentDocumentUrl();
-            string queryUri = TryCreateWebUri(currentUrl, out Uri? currentUri) && currentUri != null
-                ? currentUri.AbsoluteUri
-                : string.Empty; // empty => all cookies of the isolated profile
-
-            // Return type is the WinRT-projected cookie collection; 'var' keeps this
-            // independent of the exact IReadOnlyList/IVectorView projection.
-            var cookies = await core.CookieManager.GetCookiesAsync(queryUri);
-            if (_isDisposed) return;
+            // An empty URI would return cookies from every tab's origin.
+            var cookies = await core.CookieManager.GetCookiesAsync(currentUri.AbsoluteUri);
+            if (_isDisposed || version != _cookieLoadVersion || !ReferenceEquals(core, _hookedCore)) return;
 
             _allCookies.Clear();
             foreach (CoreWebView2Cookie cookie in cookies)
@@ -1840,54 +1954,30 @@ public sealed partial class BrowserTabControl : UserControl
                 {
                     Name = cookie.Name,
                     Domain = cookie.Domain,
-                    Value = cookie.Value,
                     Path = cookie.Path,
                     IsSecure = cookie.IsSecure,
                     IsHttpOnly = cookie.IsHttpOnly,
-                    DisplayExpires = FormatCookieExpiry(cookie),
-                    NativeCookie = cookie,
                 });
             }
 
             FilterCookies();
-            SetHubStatus($"隔离会话中共有 {_allCookies.Count} 个 Cookie");
+            SetHubStatus($"当前网页匹配 {_allCookies.Count} 个 Cookie");
         }
         catch (Exception ex)
         {
+            if (_isDisposed || version != _cookieLoadVersion) return;
+            ClearCookieRows();
             AppLog.Error("RefreshCookiesAsync failed", ex);
             SetHubStatus("读取 Cookie 失败（详情见诊断日志）");
         }
     }
 
-    private static string FormatCookieExpiry(CoreWebView2Cookie cookie)
-    {
-        try
-        {
-            if (cookie.IsSession || cookie.Expires <= 0) return "会话结束";
-            return DateTimeOffset.FromUnixTimeSeconds((long)cookie.Expires)
-                .LocalDateTime
-                .ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
-        }
-        catch
-        {
-            return "会话结束";
-        }
-    }
-
     private void FilterCookies()
     {
-        string query = CookieSearchBox?.Text?.Trim().ToLowerInvariant() ?? string.Empty;
-        _filteredCookies.Clear();
-
-        foreach (CookieDisplayItem cookie in _allCookies)
-        {
-            if (string.IsNullOrEmpty(query) ||
-                cookie.Name.ToLowerInvariant().Contains(query) ||
-                cookie.Domain.ToLowerInvariant().Contains(query))
-            {
-                _filteredCookies.Add(cookie);
-            }
-        }
+        string query = CookieSearchBox?.Text?.Trim() ?? string.Empty;
+        _filteredCookies.Reconcile(query.Length == 0 ? _allCookies : _allCookies.Where(cookie =>
+            cookie.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+            cookie.Domain.Contains(query, StringComparison.OrdinalIgnoreCase)).ToArray());
 
         UpdateEmptyNotices();
     }
@@ -1903,18 +1993,19 @@ public sealed partial class BrowserTabControl : UserControl
         CoreWebView2? core = _hookedCore;
         if (core == null) return;
 
-        if ((sender as FrameworkElement)?.Tag is not CookieDisplayItem cookieItem) return;
+        if ((sender as FrameworkElement)?.Tag is not CookieDisplayItem cookieItem || !_allCookies.Contains(cookieItem)) return;
 
+        int version = _cookieLoadVersion;
         try
         {
             await BrowserSiteData.DeleteMatchingCookiesAsync(core,
                 cookie => cookie.Name == cookieItem.Name && cookie.Domain == cookieItem.Domain && cookie.Path == cookieItem.Path,
-                () => !_isDisposed && ReferenceEquals(core, _hookedCore));
-            if (_isDisposed || !ReferenceEquals(core, _hookedCore)) return;
+                () => !_isDisposed && ReferenceEquals(core, _hookedCore) && version == _cookieLoadVersion);
+            if (_isDisposed || !ReferenceEquals(core, _hookedCore) || version != _cookieLoadVersion) return;
             _allCookies.Remove(cookieItem);
             _filteredCookies.Remove(cookieItem);
             UpdateEmptyNotices();
-            SetHubStatus($"已删除 Cookie: {cookieItem.Name}");
+            SetHubStatus("已删除所选 Cookie");
             AppLog.Info("CookieManager: 已删除单个 Cookie");
         }
         catch (Exception ex)
@@ -1939,11 +2030,12 @@ public sealed partial class BrowserTabControl : UserControl
         }
 
         string host = currentUri.IdnHost;
+        int version = _cookieLoadVersion;
         try
         {
             int count = await BrowserSiteData.DeleteCookiesForHostAsync(core, host,
                 () => !_isDisposed && ReferenceEquals(_hookedCore, core));
-            if (_isDisposed || !ReferenceEquals(_hookedCore, core)) return;
+            if (_isDisposed || !ReferenceEquals(_hookedCore, core) || version != _cookieLoadVersion) return;
             await RefreshCookiesAsync();
             SetHubStatus($"已清除 {host} 的 {count} 个 Cookie");
             AppLog.Info("CookieManager: 已清除当前站点的 Cookie");
@@ -1964,11 +2056,11 @@ public sealed partial class BrowserTabControl : UserControl
 
         try
         {
+            if (!await ConfirmSessionDataClearAsync(core, "清除所有网站的 Cookie？",
+                "本次会话的所有标签页都会受影响。已登录的网站可能要求你重新登录。")) return;
             await core.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.Cookies);
-            if (_isDisposed) return;
-            _allCookies.Clear();
-            _filteredCookies.Clear();
-            UpdateEmptyNotices();
+            if (_isDisposed || core != _hookedCore) return;
+            ClearCookieRows();
             SetHubStatus("所有 Cookie 已清空");
             AppLog.Info("CookieManager: 已清空全部 Cookie");
         }
@@ -1983,6 +2075,18 @@ public sealed partial class BrowserTabControl : UserControl
 
     #region Storage & Cache
 
+    private async Task<bool> ConfirmSessionDataClearAsync(CoreWebView2 core, string title, string detail)
+    {
+        if (!IsLoaded || !IsForegroundTab || _isDisposed || core != _hookedCore) return false;
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot, Title = title, Content = detail,
+            PrimaryButtonText = "确认清除", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close
+        };
+        var choice = await WorkspaceDialogs.ShowAsync(dialog);
+        return choice == ContentDialogResult.Primary && !_isDisposed && IsLoaded && IsForegroundTab && core == _hookedCore;
+    }
+
     private async void ClearAllStorage_Click(object sender, RoutedEventArgs e)
     {
         if (_isDisposed) return;
@@ -1992,10 +2096,10 @@ public sealed partial class BrowserTabControl : UserControl
 
         try
         {
-            await core.Profile.ClearBrowsingDataAsync(
-                CoreWebView2BrowsingDataKinds.AllDomStorage |
-                CoreWebView2BrowsingDataKinds.IndexedDb |
-                CoreWebView2BrowsingDataKinds.CacheStorage);
+            if (!await ConfirmSessionDataClearAsync(core, "清除所有网站的本地存储？",
+                "本次会话中各网站保存的离线文件、数据库和未同步草稿都可能丢失。Cookie 会保留。")) return;
+            await core.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.AllDomStorage);
+            if (_isDisposed || core != _hookedCore) return;
 
             SetHubStatus("本地存储与缓存已清空（Cookie 需在上方单独清除）");
         }
@@ -2015,11 +2119,9 @@ public sealed partial class BrowserTabControl : UserControl
 
         try
         {
-            await core.Profile.ClearBrowsingDataAsync(
-                CoreWebView2BrowsingDataKinds.DiskCache |
-                CoreWebView2BrowsingDataKinds.CacheStorage);
-
-            SetHubStatus("网页临时缓存已释放");
+            await BrowserSiteData.ClearHttpCacheAsync(core);
+            if (_isDisposed || core != _hookedCore) return;
+            SetHubStatus("已清除 HTTP 磁盘缓存");
         }
         catch (Exception ex)
         {
@@ -2051,16 +2153,16 @@ public sealed partial class BrowserTabControl : UserControl
     {
         if ((sender as FrameworkElement)?.Tag is HistorySessionItem item)
         {
-            _sessionHistory.Remove(item);
+            BrowserSessionHistory.Forget(item);
             UpdateEmptyNotices();
         }
     }
 
     private void ClearSessionHistory_Click(object sender, RoutedEventArgs e)
     {
-        _sessionHistory.Clear();
+        BrowserSessionHistory.Clear();
         UpdateEmptyNotices();
-        SetHubStatus("临时会话历史已清空");
+        SetHubStatus("临时会话历史和最近关闭的标签记录已清空");
     }
 
     private void AddSessionHistory(string title, string url)
@@ -2102,7 +2204,7 @@ public sealed partial class BrowserTabControl : UserControl
         MoreActionsFlyout.Hide();
         EnsurePrivacyContent();
         PrivacyFlyout.ShowAt(SiteShieldBtn);
-        TabHistory_Click(sender, e);
+        PrivacySections.SelectedItem = HistorySection;
     }
 
     private async void OpenDownloadsFolder_Click(object sender, RoutedEventArgs e)
@@ -2129,7 +2231,7 @@ public sealed partial class BrowserTabControl : UserControl
         try
         {
             EnsureDownloadsFlyout().ShowAt(DownloadsBtn);
-            DownloadToast.Visibility = Visibility.Collapsed;
+            UiMotion.SetVisible(DownloadToast, false);
         }
         catch (Exception ex) { AppLog.Warn("Download dialog failed: " + ex.GetType().Name); ShowBrowserError("无法显示下载记录", "可以从更多菜单打开下载文件夹。"); }
     }
@@ -2158,7 +2260,13 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void CoreWebView2_SourceChanged(CoreWebView2 sender, CoreWebView2SourceChangedEventArgs args)
     {
-        if (_isDisposed || IsBlankDocumentUrl(sender.Source)) return;
+        if (_isDisposed) return;
+        DocumentAddressChanged?.Invoke();
+        _tabPermissions.SetDocument(sender.Source);
+        UpdatePopupButton();
+        if (PrivacyFlyout.IsOpen) PrivacyFlyout.Hide();
+        ClearCookieRows();
+        if (IsBlankDocumentUrl(sender.Source)) return;
         // Commit the real address on redirects/SPA navigation without waiting for
         // slow images or ads. Preserve an address the user has started editing.
         if (UrlTextBox.FocusState == FocusState.Unfocused || UrlTextBox.Text == _addressAtNavigationStart)
@@ -2202,9 +2310,12 @@ public sealed partial class BrowserTabControl : UserControl
         SmokeTest.Report("browser: standard canvas readback available=" + canvas);
         ToggleAudioMute();
         bool muted = core.IsMuted;
+        try { PrivacyMediaGuard.SetAppAudioMuted(true); }
+        finally { PrivacyMediaGuard.SetAppAudioMuted(false); }
+        bool keptUserMute = core.IsMuted;
         ToggleAudioMute();
-        SmokeTest.Report($"browser: dynamic title + in-memory favicon={visual}; mute toggles={muted && !core.IsMuted}");
-        return canvas && sharpIcon && visual && muted && !core.IsMuted;
+        SmokeTest.Report($"browser: dynamic title + in-memory favicon={visual}; mute toggles={muted && !core.IsMuted}; user mute restored={keptUserMute}");
+        return canvas && sharpIcon && visual && muted && keptUserMute && !core.IsMuted;
     }
 
     private void UpdateNavigationVisuals()
@@ -2438,6 +2549,8 @@ public sealed partial class BrowserTabControl : UserControl
     private void BrowserControl_NavigationStarting(WebView2 sender, CoreWebView2NavigationStartingEventArgs args)
     {
         if (_isDisposed) return;
+        _imageDocumentId = args.NavigationId;
+        _contextImageDocument = _contextImageSource = _readerTicket = null;
         CancelResponseProbe();
         StopFind();
         HideZoomPanel();
@@ -2446,11 +2559,12 @@ public sealed partial class BrowserTabControl : UserControl
         {
             _blockedPopupUrls.Clear();
             _blockedPopupCount = 0;
-            PopupBlockedBtn.Visibility = Visibility.Collapsed;
+            UpdatePopupButton();
             _addressAtNavigationStart = UrlTextBox.Text;
             _activeNavigationId = args.NavigationId;
         }
-        _backgroundTimer?.Stop();
+        if (_privacyCoverActive) ScheduleBackgroundSleep();
+        else _backgroundTimer?.Stop();
         _documentReady = false;
         _historyRecorded = false;
         if (TryCreateWebUri(args.Uri, out Uri? target)) _lastRequestedUrl = target!.AbsoluteUri;
@@ -2542,6 +2656,8 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void ShowBrowserError(string title, string message)
     {
+        BrowserErrorBar.Severity = InfoBarSeverity.Error;
+        BrowserErrorBar.ActionButton.Visibility = Visibility.Visible;
         BrowserErrorBar.Title = title;
         BrowserErrorBar.Message = message;
         UiMotion.Open(BrowserErrorBar);
@@ -2552,12 +2668,12 @@ public sealed partial class BrowserTabControl : UserControl
     {
         if (CookieEmptyNotice != null)
         {
-            CookieEmptyNotice.Visibility = _filteredCookies.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            UiMotion.SetVisible(CookieEmptyNotice, _filteredCookies.Count == 0, MotionCue.Fade);
         }
 
         if (HistoryEmptyNotice != null)
         {
-            HistoryEmptyNotice.Visibility = _sessionHistory.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            UiMotion.SetVisible(HistoryEmptyNotice, _sessionHistory.Count == 0, MotionCue.Fade);
         }
     }
 

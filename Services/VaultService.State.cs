@@ -21,7 +21,10 @@ public partial class VaultService
         await _mutationGate.WaitAsync(token);
         try
         {
-            if (!allowPendingRecovery && File.Exists(_rotationJournalPath))
+            lock (_sync)
+                if (_loadedFromBackup && !(allowPendingRecovery && allowPendingRemoval))
+                    throw new InvalidOperationException("备份索引尚未恢复为主索引。请先重新解锁；若仍无法恢复，可导出可读取的资料。");
+            if (!allowPendingRecovery && !IsDefinitelyMissing(_rotationJournalPath))
                 throw new InvalidOperationException("存在尚未完成的密码更换恢复记录，原文件已保留。请先重新打开保险箱并检查恢复状态。");
             if (!allowPendingRemoval && !IsDefinitelyMissing(RemovalJournalPath))
                 throw new InvalidOperationException("上次删除或重置尚未完成。请重试该操作或重新打开保险箱完成恢复。");

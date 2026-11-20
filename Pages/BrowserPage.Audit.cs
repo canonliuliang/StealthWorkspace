@@ -181,6 +181,23 @@ public sealed partial class BrowserPage
         child = await OpenAsync("background", background: true);
         AuditRequire(ReferenceEquals(BrowserTabView.SelectedItem, parentItem), "background open does not steal selected tab");
         await CloseTabAsync(child.Item);
+
+        parent.SetAutomaticPopupsForSite(fixture.Address, true);
+        await parent.NavigateAuditAsync(fixture.Address + "/popup?allowed");
+        await WaitAuditAsync(() => BrowserTabView.TabItems.Count == originalCount + 1 && !parent.AuditPopupPending);
+        var allowedChild = BrowserTabView.TabItems.OfType<TabViewItem>().Last();
+        AuditRequire(!ReferenceEquals(allowedChild, parentItem), "site exception allows same-origin automatic popups");
+        await CloseTabAsync(allowedChild);
+
+        await parent.NavigateAuditAsync(fixture.Address + "/popup-frame");
+        await WaitAuditAsync(() => parent.AuditBlockedPopups > 0);
+        AuditRequire(BrowserTabView.TabItems.Count == originalCount, "embedded site does not inherit the top site's popup exception");
+
+        await using var otherSite = new BrowserHttpFixture();
+        await parent.NavigateAuditAsync(otherSite.Address + "/");
+        await parent.NavigateAuditAsync(fixture.Address + "/popup?return");
+        await WaitAuditAsync(() => parent.AuditBlockedPopups > 0);
+        AuditRequire(BrowserTabView.TabItems.Count == originalCount, "leaving a site revokes its popup exception, including on return");
         await CloseTabAsync(parentItem);
     }
 
@@ -211,11 +228,13 @@ public sealed partial class BrowserPage
         var blank = (BrowserTabControl)blankItem.Content;
         AuditRequire(await blank.OpenDownloadsAuditAsync() && !blank.HasBrowserControl,
             "new blank tab shows shared downloads without starting a WebView");
+        AuditRequire(blank.HasPendingDownloadBadge, "new tab displays pending count for the closed tab's download");
         record.TogglePauseResume();
         await WaitAuditAsync(() => record.CanResume);
         AuditRequire(tab.AuditTracksDownload(download), "shared list can pause a download from a closed tab");
         record.TogglePauseResume();
         await WaitAuditAsync(() => record.IsCompleted && _downloadOwners.Count == 0);
+        AuditRequire(!blank.HasPendingDownloadBadge, "completion clears pending badge across tabs");
         byte[] bytes = await File.ReadAllBytesAsync(path);
         AuditRequire(bytes.Length == 4194304 && bytes.All(b => b == 0x5A), "closed-tab download completes with exact content and releases controller");
         await CloseTabAsync(blankItem);

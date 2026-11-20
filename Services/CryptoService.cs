@@ -249,30 +249,26 @@ public static class CryptoService
         byte[] masterKey,
         IProgress<double>? progress = null,
         CancellationToken cancellationToken = default)
-        => EncryptFileCore(sourceFilePath, destEncryptedPath, masterKey, progress, cancellationToken, null);
-
-    internal static byte[] EncryptFileWithDigest(string sourceFilePath, string destEncryptedPath, byte[] masterKey,
-        IProgress<double>? progress, CancellationToken cancellationToken)
     {
-        using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        EncryptFileCore(sourceFilePath, destEncryptedPath, masterKey, progress, cancellationToken, digest);
-        return digest.GetHashAndReset();
+        using var source = new FileStream(sourceFilePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+            bufferSize: 64 * 1024, FileOptions.SequentialScan);
+        EncryptStream(source, destEncryptedPath, masterKey, progress, cancellationToken);
     }
 
-    private static void EncryptFileCore(string sourceFilePath, string destEncryptedPath, byte[] masterKey,
-        IProgress<double>? progress, CancellationToken cancellationToken, IncrementalHash? digest)
+    internal static void EncryptStream(Stream input, string destEncryptedPath, byte[] masterKey,
+        IProgress<double>? progress, CancellationToken cancellationToken, IncrementalHash? digest = null)
     {
         if (masterKey == null || masterKey.Length != KeySize) throw new ArgumentException("Invalid vault key.", nameof(masterKey));
 
-        var fileInfo = new FileInfo(sourceFilePath);
-        long plainLength = fileInfo.Length;
+        long plainLength = input.Length - input.Position;
+        if (plainLength < 0) throw new InvalidDataException("源文件位置超出文件长度。");
         byte[] fileSalt = GenerateRandomBytes(SaltSize);
         byte[] fileKey = DeriveFileKey(masterKey, fileSalt);
+        byte[] plainBuffer = Array.Empty<byte>();
+        byte[] cipherBuffer = Array.Empty<byte>();
 
         try
         {
-            using var input = new FileStream(sourceFilePath, FileMode.Open, FileAccess.Read, FileShare.Read,
-                bufferSize: 64 * 1024, FileOptions.SequentialScan);
             using var output = new FileStream(destEncryptedPath, FileMode.Create, FileAccess.Write, FileShare.None,
                 bufferSize: 64 * 1024, FileOptions.SequentialScan);
 
@@ -285,8 +281,8 @@ public static class CryptoService
             output.Write(header);
 
             using var aes = new AesGcm(fileKey, TagSize);
-            byte[] plainBuffer = new byte[DefaultChunkSize];
-            byte[] cipherBuffer = new byte[DefaultChunkSize];
+            plainBuffer = new byte[DefaultChunkSize];
+            cipherBuffer = new byte[DefaultChunkSize];
             byte[] nonce = new byte[NonceSize];
             byte[] tag = new byte[TagSize];
 
@@ -317,8 +313,6 @@ public static class CryptoService
                 progress?.Report(plainLength == 0 ? 1.0 : (double)processed / plainLength);
             }
 
-            CryptographicOperations.ZeroMemory(plainBuffer);
-            CryptographicOperations.ZeroMemory(cipherBuffer);
             output.Flush(true);
 
             long expected = HeaderSizeV2 + (long)index * RecordHeaderSize + plainLength;
@@ -326,6 +320,8 @@ public static class CryptoService
         }
         finally
         {
+            CryptographicOperations.ZeroMemory(plainBuffer);
+            CryptographicOperations.ZeroMemory(cipherBuffer);
             CryptographicOperations.ZeroMemory(fileKey);
         }
     }
@@ -616,9 +612,10 @@ public static class CryptoService
         }
     }
 
-    internal static bool ShredImportedFile(string filePath, SafeShred.FileIdentity expected, byte[] digest)
+    internal static bool ShredImportedFile(string filePath, SafeShred.FileIdentity expected, byte[] digest,
+        Func<bool>? authorize = null)
     {
-        try { return SafeShred.OverwriteAndDelete(filePath, GetConfiguredPasses(), expected, digest); }
+        try { return SafeShred.OverwriteAndDelete(filePath, GetConfiguredPasses(), expected, digest, authorize); }
         catch (Exception ex)
         {
             AppLog.Warn($"导入后的原件已改变或无法安全粉碎，原件已保留: {ex.GetType().Name}");

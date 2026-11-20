@@ -117,6 +117,85 @@ internal static class VaultIntegritySelfTest
         File.WriteAllBytes(sample, bytes);
         var item = await source.ImportFileAsync(sample, false);
 
+        await Check("Vault: a restored catalog permits item deletion and decoy removal in the same session", async () =>
+        {
+            string location = Path.Combine(root, "backup-delete");
+            var vault = new VaultService(location);
+            await vault.InitializeVaultAsync("Recovery#123", "DecoyRecovery#123");
+            await vault.ImportFileAsync(sample, false);
+            vault.Lock();
+            string catalog = Path.Combine(location, "system_catalog.dat");
+            File.Copy(catalog, catalog + ".bak", true);
+            File.WriteAllBytes(catalog, [1, 2, 3]);
+            vault = new VaultService(location);
+            Require(vault.ApplyUnlock(vault.VerifyPassword("Recovery#123")));
+            await vault.DeleteItemAsync(vault.VisibleItems.Single());
+            await vault.ClearDecoyAsync();
+            Require(vault.VisibleItems.Count == 0 && !vault.HasDecoyVault);
+        });
+
+        await Check("Vault: temporarily unreadable primary is retried before validating the password", async () =>
+        {
+            string location = Path.Combine(root, "busy-primary");
+            var vault = new VaultService(location);
+            await vault.InitializeVaultAsync("OldRecovery#123");
+            string primary = Path.Combine(location, "system_catalog.dat");
+            byte[] older = File.ReadAllBytes(primary);
+            await vault.ChangeMasterPasswordAsync("NewRecovery#123");
+            vault.Lock();
+            byte[] newer = File.ReadAllBytes(primary);
+            File.WriteAllBytes(primary + ".bak", older);
+            using (File.Open(primary, FileMode.Open, FileAccess.Read, FileShare.Delete))
+            {
+                vault = new VaultService(location);
+                Require(vault.ApplyUnlock(vault.VerifyPassword("OldRecovery#123")));
+                await ExpectFailure(() => vault.ImportFileAsync(sample, false));
+                vault.Lock();
+            }
+            Require(vault.ApplyUnlock(vault.VerifyPassword("NewRecovery#123")));
+            Require(File.ReadAllBytes(primary).AsSpan().SequenceEqual(newer));
+        });
+
+        foreach (string journalName in new[] { "rotate.dat", "remove.dat" })
+        {
+            await Check($"Export: unreadable {journalName} allows rescue and remains protected", async () =>
+            {
+                string journal = Path.Combine(root, "source", journalName);
+                byte[] damaged = [1, 2, 3];
+                File.WriteAllBytes(journal, damaged);
+                try
+                {
+                    await ExpectFailure(() => source.ImportFileAsync(sample, false));
+                    await ExpectFailure(() => source.ExportItemAsync(item, journal));
+                    string target = Path.Combine(root, "rescue-" + journalName);
+                    await source.ExportItemAsync(item, target);
+                    Require(File.ReadAllBytes(target).AsSpan().SequenceEqual(bytes));
+                    Require(File.ReadAllBytes(journal).AsSpan().SequenceEqual(damaged));
+                }
+                finally { File.Delete(journal); }
+            });
+        }
+
+        await Check("Vault: a missing deletion target is reconciled with a matching fallback catalog", async () =>
+        {
+            string location = Path.Combine(root, "fallback-removal");
+            var vault = new VaultService(location);
+            await vault.InitializeVaultAsync("Recovery#123");
+            var doomed = await vault.ImportFileAsync(sample, false);
+            await vault.ImportFileAsync(sample, false);
+            string catalog = Path.Combine(location, "system_catalog.dat");
+            File.Copy(catalog, catalog + ".bak", true);
+            using (File.Open(catalog, FileMode.Open, FileAccess.Read, FileShare.Read))
+                await ExpectFailure(() => vault.DeleteItemAsync(doomed));
+            vault.Lock();
+            File.WriteAllBytes(catalog, [1, 2, 3]);
+            vault = new VaultService(location);
+            Require(vault.ApplyUnlock(vault.VerifyPassword("Recovery#123")));
+            Require(!File.Exists(Path.Combine(location, "remove.dat")));
+            using var survivor = vault.GetDecryptedMemoryStream(vault.VisibleItems.Single());
+            Require(survivor.ToArray().AsSpan().SequenceEqual(bytes));
+        });
+
         await Check("Export: existing sibling .part file remains untouched", async () =>
         {
             string target = Path.Combine(root, "export.bin");
@@ -183,10 +262,22 @@ internal static class VaultIntegritySelfTest
         await Check("Unlock: a password rotation invalidates previously verified credentials", async () =>
         {
             using var old = source.VerifyPassword("IntegrityFixture#123");
-            await source.ChangeMasterPasswordAsync("RotatedIntegrity#123");
+            string journal = Path.Combine(root, "source", "rotate.dat");
+            bool checkedCommit = false;
+            var progress = new InlineProgress(value =>
+            {
+                if (value != 1 || checkedCommit) return;
+                using var clear = source.GetDecryptedMemoryStream(item);
+                Require(clear.ToArray().AsSpan().SequenceEqual(bytes));
+                checkedCommit = true;
+            });
+            using (var pinned = source.OpenDecryptedStream(item))
+                await source.ChangeMasterPasswordAsync("RotatedIntegrity#123", progress);
+            Require(checkedCommit && File.Exists(journal));
             Require(!source.ApplyUnlock(old));
             source.Lock();
             Require(source.ApplyUnlock(source.VerifyPassword("RotatedIntegrity#123")));
+            Require(!File.Exists(journal));
             using var stream = source.OpenDecryptedStream(source.VisibleItems.Single());
             Require(SHA256.HashData(stream).AsSpan().SequenceEqual(SHA256.HashData(bytes)));
         });
@@ -199,6 +290,34 @@ internal static class VaultIntegritySelfTest
             return Task.CompletedTask;
         });
         source.Lock();
+
+        await Check("Rotation: a lock or switch to decoy during the change preserves the new session", async () =>
+        {
+            var vault = new VaultService(Path.Combine(root, "rotation-session"));
+            await vault.InitializeVaultAsync("InitialMain#123", "UnchangedDecoy#123");
+            vault.Lock();
+            Require(vault.ApplyUnlock(vault.VerifyPassword("UnchangedDecoy#123")));
+            await vault.ImportFileAsync(sample, false);
+            foreach (bool switchToDecoy in new[] { false, true })
+            {
+                string old = switchToDecoy ? "AfterLock#123" : "InitialMain#123";
+                string next = switchToDecoy ? "AfterSwitch#123" : "AfterLock#123";
+                vault.Lock();
+                Require(vault.ApplyUnlock(vault.VerifyPassword(old)));
+                await vault.ChangeMasterPasswordAsync(next, new InlineProgress(value =>
+                {
+                    if (value != 0.02) return;
+                    vault.Lock();
+                    if (switchToDecoy) Require(vault.ApplyUnlock(vault.VerifyPassword("UnchangedDecoy#123")));
+                }));
+                Require(vault.IsUnlocked == switchToDecoy && vault.IsDecoyMode == switchToDecoy);
+                if (switchToDecoy)
+                {
+                    using var clear = vault.GetDecryptedMemoryStream(vault.VisibleItems.Single());
+                    Require(clear.ToArray().AsSpan().SequenceEqual(bytes));
+                }
+            }
+        });
 
         await Check("Import: verified original removal supports ordinary and read-only files", async () =>
         {
@@ -261,6 +380,36 @@ internal static class VaultIntegritySelfTest
             Require(relocked && vault.IsUnlocked && vault.VisibleItems.Count == 0);
             Require(!Directory.EnumerateFiles(Path.Combine(root, "epoch-import", "MediaVault")).Any());
             Require(File.ReadAllBytes(sample).AsSpan().SequenceEqual(bytes));
+            vault.Lock();
+        });
+
+        await Check("Library: queued imports, export, rename and deletion cannot cross a re-unlock", async () =>
+        {
+            var vault = new VaultService(Path.Combine(root, "queued-library-session"));
+            await vault.InitializeVaultAsync("LibraryEpoch#123");
+            var item = await vault.ImportFileAsync(sample, false);
+            var gate = (SemaphoreSlim)typeof(VaultService).GetField("_mutationGate", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(vault)!;
+            string export = Path.Combine(root, "revoked-export.bin");
+            using var memory = new MemoryStream(bytes, writable: false);
+            await gate.WaitAsync();
+            Task[] requests;
+            try
+            {
+                requests = [
+                    vault.ImportFileAsync(sample, true),
+                    vault.ImportStreamAsync(memory, "queued.png", new InlineProgress(_ => { }), default),
+                    vault.ExportItemAsync(item, export),
+                    vault.RenameItemAsync(item, "new-name" + item.FileExtension),
+                    vault.DeleteItemsAsync([item])
+                ];
+                Require(requests.All(request => !request.IsCompleted));
+                vault.Lock();
+                Require(vault.ApplyUnlock(vault.VerifyPassword("LibraryEpoch#123")));
+            }
+            finally { gate.Release(); }
+            foreach (var request in requests) await ExpectFailure(() => request);
+            Require(vault.VisibleItems.Single().OriginalFileName == Path.GetFileName(sample));
+            Require(!File.Exists(export) && File.ReadAllBytes(sample).AsSpan().SequenceEqual(bytes));
             vault.Lock();
         });
 

@@ -13,13 +13,14 @@
     </Window.SystemBackdrop>
 
     <Grid x:Name="RootGrid" Background="{ThemeResource StealthCanvasBrush}">
+      <Grid x:Name="WorkspaceContent">
         <Grid.RowDefinitions>
             <RowDefinition x:Name="TitleBarRow" Height="44" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
         <!-- Custom Fluent TitleBar Row (Calm & Elegant) -->
-        <Grid Grid.Row="0">
+        <Grid x:Name="TitleBarHost" Grid.Row="0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
@@ -29,7 +30,6 @@
                 x:Name="AppTitleBar"
                 Grid.Column="0"
                 Title="Stealth"
-                Subtitle="私密浏览器"
                 BackRequested="TitleBar_BackRequested"
                 IsBackButtonVisible="False"
                 IsPaneToggleButtonVisible="True"
@@ -53,7 +53,8 @@
                         AutomationProperties.Name="工作区状态，打开痕迹清理"
                         ToolTipService.ToolTip="查看工作区状态与痕迹清理">
                     <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                        <FontIcon Glyph="&#xE946;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <FontIcon x:Name="StatusIcon" Glyph="&#xE946;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <ProgressRing x:Name="StatusProgress" Width="14" Height="14" IsActive="False" Visibility="Collapsed" />
                         <TextBlock x:Name="StatusBadgeText" Text="就绪" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium" />
                     </StackPanel>
                 </Button>
@@ -114,28 +115,23 @@
 
             <Frame x:Name="NavFrame" Navigated="NavFrame_Navigated" />
         </NavigationView>
+      </Grid>
 
         <!-- Camouflage Windows Update Screen (BossKeyAction == 2) -->
         <Grid x:Name="CamouflageOverlay"
-              Grid.RowSpan="2"
               Background="#001830"
               Visibility="Collapsed"
               KeyDown="CamouflageOverlay_KeyDown"
               Canvas.ZIndex="100"
               IsTabStop="True">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="20">
-                <ProgressRing IsActive="True" Width="50" Height="50" Foreground="White" />
+                <ProgressRing x:Name="CamouflageProgress" IsActive="False" Width="50" Height="50" Foreground="White" />
                 <TextBlock Text="正在配置 Windows 更新&#x0a;请勿关闭计算机，这需要一些时间..."
                            FontSize="18"
                            FontWeight="Normal"
                            Foreground="White"
                            TextAlignment="Center"
                            LineHeight="28" />
-                <TextBlock Text="按 Esc 退出伪装"
-                           FontSize="12"
-                           Foreground="#BFFFFFFF"
-                           HorizontalAlignment="Center"
-                           Margin="0,30,0,0" />
             </StackPanel>
         </Grid>
     </Grid>

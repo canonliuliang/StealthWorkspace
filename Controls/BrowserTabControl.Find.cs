@@ -107,7 +107,7 @@ public sealed partial class BrowserTabControl
 
     private void ShowFallbackFindBar()
     {
-        FindBar.Visibility = Visibility.Visible;
+        UiMotion.SetVisible(FindBar, true, MotionCue.FromAbove);
         FindTextBox.Focus(FocusState.Programmatic);
         FindTextBox.SelectAll();
         QueueFind();

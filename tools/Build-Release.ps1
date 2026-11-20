@@ -14,6 +14,9 @@ New-Item -ItemType Directory -Path $appRoot -Force | Out-Null
 $platform = if ($Runtime -eq 'win-arm64') { 'ARM64' } else { 'x64' }
 & dotnet publish (Join-Path $repoRoot 'StealthWorkspace.csproj') -c Release -r $Runtime "-p:Platform=$platform" --self-contained true -p:ContinuousIntegrationBuild=true -p:DebugType=none -p:DebugSymbols=false -o $appRoot --nologo
 if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed.' }
+$binaryVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $appRoot 'StealthWorkspace.dll')).ProductVersion.Split('+')[0]
+$uiVersion = [regex]::Match([IO.File]::ReadAllText((Join-Path $repoRoot 'Services/AppInfo.cs')), 'DisplayVersion = "([^"]+)"').Groups[1].Value
+if ($binaryVersion -ne $Version -or $uiVersion -ne $Version) { throw "Package, binary and UI versions must match ($Version, $binaryVersion, $uiVersion)." }
 foreach ($required in 'StealthWorkspace.exe','StealthWorkspace.dll','StealthWorkspace.deps.json','StealthWorkspace.runtimeconfig.json','StealthWorkspace.pri','Assets/AppIcon.ico') {
     if (!(Test-Path -LiteralPath (Join-Path $appRoot $required) -PathType Leaf)) { throw "Missing runtime file: $required" }
 }

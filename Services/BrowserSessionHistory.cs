@@ -6,6 +6,30 @@ namespace StealthWorkspace.Services;
 internal static class BrowserSessionHistory
 {
     internal static ObservableCollection<HistorySessionItem> Items { get; } = new();
+    private static readonly List<ClosedBrowserTab> Closed = new();
+    internal static IReadOnlyList<ClosedBrowserTab> RecentlyClosed => Closed;
+
+    internal static void RememberClosed(string title, string address, int position)
+    {
+        if (position < 0 || !Uri.TryCreate(address, UriKind.Absolute, out var uri) ||
+            uri.Scheme is not ("http" or "https")) return;
+        Closed.Insert(0, new ClosedBrowserTab(string.IsNullOrWhiteSpace(title) ? uri.Host : title, uri.AbsoluteUri, position));
+        if (Closed.Count > 20) Closed.RemoveAt(Closed.Count - 1);
+    }
+
+    internal static void RemoveClosed(ClosedBrowserTab item) => Closed.Remove(item);
+
+    internal static void Forget(HistorySessionItem item)
+    {
+        Closed.RemoveAll(tab => tab.Url == item.Url);
+        Items.Remove(item);
+    }
+
+    internal static void Clear()
+    {
+        Closed.Clear();
+        Items.Clear();
+    }
 
     internal static void Record(string title, string address)
     {
@@ -32,4 +56,13 @@ internal static class BrowserSessionHistory
             return;
         }
     }
+}
+
+// Keep only the information required to reopen an address in this unlocked
+// session. Never retain a controller, document, POST body, or form value.
+internal sealed class ClosedBrowserTab(string title, string url, int position)
+{
+    internal string Title { get; } = title;
+    internal string Url { get; } = url;
+    internal int Position { get; } = position;
 }

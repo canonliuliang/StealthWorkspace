@@ -14,14 +14,15 @@ namespace StealthWorkspace.Pages;
 public sealed partial class BrowserPage : Page
 {
     private readonly HashSet<TabViewItem> _closingTabs = new();
-    private readonly List<(string Url, string Title)> _closedTabs = new();
     private readonly Dictionary<TabViewItem, TabViewItem> _tabOpeners = new();
 
     private bool _isPageLoaded;
     private bool _isBurningAll;
+    private bool _confirmingEnd;
     private bool _isUnloading;
     private bool _browserFullScreen;
     private BrowserTabControl? _selectedTab;
+    internal UIElement NavigationChrome => _selectedTab?.NavigationChrome ?? TabSearchButton;
 
     public BrowserPage()
     {
@@ -62,8 +63,6 @@ public sealed partial class BrowserPage : Page
 
     private async Task ClearLockedSessionAsync()
     {
-        _closedTabs.Clear();
-
         // Re-entrancy guard: Unloaded can be raised more than once while the page is
         // being torn down. Only the first run releases the tabs.
         if (_isUnloading) return;
@@ -115,7 +114,7 @@ public sealed partial class BrowserPage : Page
     {
         CloseTabSearch();
         BrowserDownloads.EndSession();
-        BrowserSessionHistory.Items.Clear();
+        BrowserSessionHistory.Clear();
         _tabOpeners.Clear();
         List<TabViewItem> tabs = BrowserTabView.TabItems.OfType<TabViewItem>().ToList();
         BrowserTabView.TabItems.Clear();
@@ -134,7 +133,7 @@ public sealed partial class BrowserPage : Page
 
     #region Tab creation
 
-    private TabViewItem? CreateNewTab(string? initialUrl = null, [System.Runtime.CompilerServices.CallerMemberName] string origin = "", bool select = true)
+    private TabViewItem? CreateNewTab(string? initialUrl = null, [System.Runtime.CompilerServices.CallerMemberName] string origin = "", bool select = true, int? position = null)
     {
         if (!_isPageLoaded || _isUnloading || _isBurningAll || !VaultService.Instance.IsUnlocked) return null;
         if (SmokeTest.Enabled) SmokeTest.Report($"tab-create: origin={origin}; existing={BrowserTabView.TabItems.Count}; live={BrowserTabControl.LiveTabCount}");
@@ -157,16 +156,18 @@ public sealed partial class BrowserPage : Page
                 if (!BrowserTabView.TabItems.Contains(tabItem)) return;
                 tabItem.Header = title;
                 ToolTipService.SetToolTip(tabItem, title);
-                if (_tabSearchOpen) RefreshTabList();
+                ScheduleOpenTabRefresh();
             });
         };
 
+        tabControl.DocumentAddressChanged += ScheduleOpenTabRefresh;
         tabControl.AudioPlayingChanged += isPlaying =>
         {
             DispatcherQueue.TryEnqueue(() =>
             {
                 if (!BrowserTabView.TabItems.Contains(tabItem)) return;
                 tabItem.IconSource = tabControl.TabIcon;
+                ScheduleOpenTabRefresh();
             });
         };
 
@@ -206,6 +207,7 @@ public sealed partial class BrowserPage : Page
         {
             if (!BrowserTabView.TabItems.Contains(tabItem)) return;
             tabItem.IconSource = tabControl.TabIcon;
+            ScheduleOpenTabRefresh();
         };
         var menu = new MenuFlyout();
         var duplicate = new MenuFlyoutItem { Text = "复制标签页" };
@@ -225,7 +227,8 @@ public sealed partial class BrowserPage : Page
 
         tabItem.Content = tabControl;
 
-        BrowserTabView.TabItems.Add(tabItem);
+        if (position is int index) BrowserTabView.TabItems.Insert(Math.Clamp(index, 0, BrowserTabView.TabItems.Count), tabItem);
+        else BrowserTabView.TabItems.Add(tabItem);
         if (select) BrowserTabView.SelectedItem = tabItem;
         UpdateTabCount();
 
@@ -276,7 +279,29 @@ public sealed partial class BrowserPage : Page
         var secondItem = BrowserTabView.SelectedItem as TabViewItem;
         bool lazy = second != null && !ReferenceEquals(first, second) && !second.HasBrowserControl;
         SmokeTest.Report("browser: new tabs defer WebView2 control creation=" + lazy);
-        if (!lazy || !await second!.RunSmokeNavigationAsync()) return false;
+        if (!lazy || second == null) return false;
+        bool mutedDuringInitialization;
+        try
+        {
+            PrivacyMediaGuard.SetAppAudioMuted(true);
+            if (!await second.RunSmokeNavigationAsync()) return false;
+            second.ToggleAudioMute();
+            mutedDuringInitialization = first.IsAudioMuted && second.IsAudioMuted;
+        }
+        finally { PrivacyMediaGuard.SetAppAudioMuted(false); }
+        bool privacyMute = mutedDuringInitialization && !first.IsAudioMuted && !second.IsAudioMuted;
+        SmokeTest.Report("browser: privacy mute covers background and newly initialized tabs=" + privacyMute);
+        if (!privacyMute) return false;
+        int countBeforeConfirm = BrowserTabView.TabItems.Count;
+        BurnAllTabs_Click(EndSessionBtn, new RoutedEventArgs());
+        bool prompted = _confirmingEnd && !_isBurningAll;
+        await Task.Delay(150);
+        WorkspaceDialogs.DismissForPrivacy();
+        for (int i = 0; i < 50 && _confirmingEnd; i++) await Task.Delay(50);
+        bool preservedTabs = prompted && !_confirmingEnd && BrowserTabView.TabItems.Count == countBeforeConfirm &&
+            ReferenceEquals(BrowserTabView.SelectedItem, secondItem) && second.HasBrowserControl;
+        SmokeTest.Report("browser: clicking end session prompts and dismissal preserves loaded tabs=" + preservedTabs);
+        if (!preservedTabs) return false;
         if (!await second.HasSmokeCookieAsync(create: true)) return false;
 
         var sleep = await first.CheckSmokeBackgroundSleepAsync();
@@ -286,6 +311,17 @@ public sealed partial class BrowserPage : Page
         bool resumed = await first.VerifySmokeResumeAsync();
         SmokeTest.Report("browser: resumed with unsaved page state=" + resumed);
         if (!resumed) return false;
+        bool covered;
+        try
+        {
+            BrowserTabControl.SetPrivacyCoverActive(true);
+            for (int i = 0; i < 100 && !(first.IsSmokeSuspended && second.IsSmokeSuspended); i++) await Task.Delay(100);
+            covered = first.IsAudioMuted && second.IsAudioMuted && first.IsSmokeSuspended && second.IsSmokeSuspended;
+        }
+        finally { BrowserTabControl.SetPrivacyCoverActive(false); }
+        bool coverRestored = !first.IsAudioMuted && !second.IsAudioMuted && await first.VerifySmokeResumeAsync();
+        SmokeTest.Report($"browser: privacy cover muted and suspended every tab={covered}; restored selected document={coverRestored}");
+        if (!covered || !coverRestored) return false;
         if (MainWindow.Current?.AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
         {
             try
@@ -354,7 +390,7 @@ public sealed partial class BrowserPage : Page
     }
 
     internal BrowserTabControl? SmokeSelectedTab => _selectedTab;
-    internal bool SmokeSessionIsEmpty => _closedTabs.Count == 0 && BrowserTabView.TabItems.OfType<TabViewItem>().All(t => t.Content is BrowserTabControl tab && !tab.HasBrowserControl);
+    internal bool SmokeSessionIsEmpty => BrowserSessionHistory.RecentlyClosed.Count == 0 && BrowserTabView.TabItems.OfType<TabViewItem>().All(t => t.Content is BrowserTabControl tab && !tab.HasBrowserControl);
 
     private async Task<bool> CheckTabManagementSmokeAsync()
     {
@@ -365,17 +401,41 @@ public sealed partial class BrowserPage : Page
         for (int i = 0; i < 100 && (!tab.IsSmokeNavigationComplete || tab.CurrentTitle != "HTTP fixture"); i++) await Task.Delay(100);
         if (tab.CurrentTitle != "HTTP fixture") return false;
         string url = tab.CurrentUrl;
+        int position = BrowserTabView.TabItems.IndexOf(item);
+        var neighbor = CreateNewTab(fixture.Address + "/page?neighbor")!;
+        await WaitAuditAsync(() => ((BrowserTabControl)neighbor.Content).CurrentTitle == "HTTP fixture");
+        var trailing = CreateNewTab()!;
         int count = BrowserTabView.TabItems.Count;
         await CloseTabAsync(item);
-        ReopenClosedTab();
+        await CloseTabAsync(neighbor);
+        TabSearchScope.SelectedItem = ClosedTabsSection;
+        TabSearchBox.Text = url;
+        RefreshTabList();
+        var wanted = TabSearchResults.Items.OfType<Models.BrowserTabSearchItem>().SingleOrDefault(row => row.Address == url);
+        if (wanted == null) return false;
+        ActivateSearchTab(wanted);
         var reopened = (BrowserTabControl)((TabViewItem)BrowserTabView.SelectedItem).Content;
         for (int i = 0; i < 100 && (!reopened.IsSmokeNavigationComplete || reopened.CurrentTitle != "HTTP fixture"); i++) await Task.Delay(100);
-        bool restored = BrowserTabView.TabItems.Count == count && reopened.CurrentUrl == url && reopened.CurrentTitle == "HTTP fixture";
-        SmokeTest.Report("browser: closed tab restores URL and loads successfully=" + restored);
+        bool restored = BrowserTabView.TabItems.Count == count - 1 && BrowserTabView.SelectedIndex == position &&
+            BrowserSessionHistory.RecentlyClosed[0].Url.EndsWith("?neighbor", StringComparison.Ordinal) &&
+            reopened.CurrentUrl == url && reopened.CurrentTitle == "HTTP fixture";
+        SmokeTest.Report("browser: older closed tab restores its address and strip position, newer record retained=" + restored);
+        ReopenClosedTab();
+        var latest = (TabViewItem)BrowserTabView.SelectedItem;
+        await WaitAuditAsync(() => ((BrowserTabControl)latest.Content).CurrentUrl.EndsWith("?neighbor", StringComparison.Ordinal));
+        await CloseTabAsync(latest);
+        await CloseTabAsync(trailing);
+        BrowserTabView.SelectedItem = BrowserTabView.TabItems.OfType<TabViewItem>().Single(t => ReferenceEquals(t.Content, reopened));
+        TabSearchScope.SelectedItem = OpenTabsSection;
         TabSearchBox.Text = "HTTP fixture";
         RefreshTabList();
         bool filtered = TabSearchResults.Items.Count == 1;
-        SmokeTest.Report("browser: tab search filters title=" + filtered);
+        var byTitle = TabSearchResults.SelectedItem;
+        TabSearchBox.Text = fixture.Address;
+        FilterTabList();
+        filtered &= byTitle != null && ReferenceEquals(byTitle, TabSearchResults.SelectedItem);
+        ClearTabSearch();
+        SmokeTest.Report("browser: tab search finds the same row by title and address without rereading WebViews=" + filtered);
         if (!restored || !filtered) return false;
         return await reopened.RunSmokeNavigationAsync(checkSleep: true);
     }
@@ -390,12 +450,7 @@ public sealed partial class BrowserPage : Page
         if (!BrowserTabView.TabItems.Contains(tabItem)) return;
         if (!_closingTabs.Add(tabItem)) return; // already closing / already disposed
 
-        if (!_isBurningAll && !_isUnloading && tabItem.Content is BrowserTabControl closing &&
-            Uri.TryCreate(closing.CurrentUrl, UriKind.Absolute, out var closedUri) && closedUri.Scheme is "http" or "https")
-        {
-            _closedTabs.Add((closedUri.AbsoluteUri, closing.CurrentTitle));
-            if (_closedTabs.Count > 20) _closedTabs.RemoveAt(0);
-        }
+        int closedPosition = BrowserTabView.TabItems.IndexOf(tabItem);
 
         try
         {
@@ -409,6 +464,8 @@ public sealed partial class BrowserPage : Page
                     BrowserTabView.SelectedItem = opener;
                 foreach (var key in _tabOpeners.Where(entry => ReferenceEquals(entry.Key, tabItem) || ReferenceEquals(entry.Value, tabItem)).Select(entry => entry.Key).ToArray()) _tabOpeners.Remove(key);
                 BrowserTabView.TabItems.Remove(tabItem);
+                if (!_isBurningAll && !_isUnloading && tabItem.Content is BrowserTabControl closed)
+                    BrowserSessionHistory.RememberClosed(closed.CurrentTitle, closed.CurrentUrl, closedPosition);
             }
             catch (Exception ex)
             {
@@ -462,13 +519,12 @@ public sealed partial class BrowserPage : Page
         _isBurningAll = true;
         CloseTabSearch();
         _tabOpeners.Clear();
-        _closedTabs.Clear();
         EndSessionBtn.IsEnabled = false;
         BrowserTabView.IsAddTabButtonVisible = false;
         SessionNotice.Title = "正在结束会话";
         SessionNotice.Message = "正在关闭标签并清除本次浏览数据。";
         SessionNotice.Severity = InfoBarSeverity.Informational;
-        SessionNotice.IsOpen = true;
+        UiMotion.Open(SessionNotice);
 
         try
         {
@@ -482,12 +538,13 @@ public sealed partial class BrowserPage : Page
                 return closing;
             });
 
-            SessionNotice.IsOpen = !cleaned;
-            if (!cleaned)
+            if (cleaned) SessionNotice.IsOpen = false;
+            else
             {
                 SessionNotice.Title = "旧会话数据尚未完全清除";
                 SessionNotice.Message = "新的标签页将使用新会话。可再次结束会话重试，或在退出时重试。";
                 SessionNotice.Severity = InfoBarSeverity.Warning;
+                UiMotion.Open(SessionNotice);
             }
             return cleaned;
         }
@@ -497,6 +554,7 @@ public sealed partial class BrowserPage : Page
             SessionNotice.Title = "无法结束会话";
             SessionNotice.Message = "请重试。";
             SessionNotice.Severity = InfoBarSeverity.Error;
+            UiMotion.Open(SessionNotice);
             return false;
         }
         finally
@@ -537,7 +595,27 @@ public sealed partial class BrowserPage : Page
 
     private async void BurnAllTabs_Click(object sender, RoutedEventArgs e)
     {
-        await BurnAllTabsAsync();
+        if (_confirmingEnd || _isBurningAll || _isUnloading) return;
+        int loaded = BrowserTabView.TabItems.OfType<TabViewItem>().Count(item => item.Content is BrowserTabControl { HasBrowserControl: true });
+        int pending = BrowserDownloads.PendingCount;
+        if (loaded > 1 || pending > 0)
+        {
+            _confirmingEnd = true;
+            try
+            {
+                var dialog = new ContentDialog
+                {
+                    XamlRoot = XamlRoot, Title = "结束本次浏览会话？",
+                    Content = $"将关闭全部标签页，并清除本次浏览记录和网站登录状态。" +
+                        (pending > 0 ? $"\n{pending} 个未完成下载也将取消。" : ""),
+                    PrimaryButtonText = "结束会话", CloseButtonText = "继续浏览", DefaultButton = ContentDialogButton.Close
+                };
+                if (await WorkspaceDialogs.ShowAsync(dialog) != ContentDialogResult.Primary) return;
+            }
+            catch (Exception ex) { AppLog.Warn("Confirm end session: " + ex.GetType().Name); return; }
+            finally { _confirmingEnd = false; }
+        }
+        if (VaultService.Instance.IsUnlocked && MainWindow.Current?.IsPrivacyCoverVisible != true) await BurnAllTabsAsync();
     }
 
     #endregion
@@ -550,15 +628,14 @@ public sealed partial class BrowserPage : Page
         if (_tabSearchOpen) RefreshTabList();
     }
 
-    private void ReopenClosedTab()
+    private void ReopenClosedTab(ClosedBrowserTab? closed = null)
     {
-        if (_closedTabs.Count == 0 || !_isPageLoaded || _isUnloading || _isBurningAll || !VaultService.Instance.IsUnlocked) return;
-        var closed = _closedTabs[^1];
-        _closedTabs.RemoveAt(_closedTabs.Count - 1);
-        CreateNewTab(closed.Url);
+        closed ??= BrowserSessionHistory.RecentlyClosed.FirstOrDefault();
+        if (closed != null && BrowserSessionHistory.RecentlyClosed.Contains(closed) &&
+            CreateNewTab(closed.Url, position: closed.Position) != null)
+            BrowserSessionHistory.RemoveClosed(closed);
     }
 
-    private void ReopenTab_Click(object sender, RoutedEventArgs e) { TabListFlyout.Hide(); ReopenClosedTab(); }
     private void ReopenTabAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; ReopenClosedTab(); }
     private void SwitchTabAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {

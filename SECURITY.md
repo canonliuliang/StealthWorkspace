@@ -4,4 +4,4 @@
 
 不要在公开 Issue 中提交密码、私密媒体、保险箱、Cookie、访问令牌或未审阅的日志。
 
-若仓库开启 GitHub Private vulnerability reporting，请通过 Security → Report a vulnerability 提交可复现的最小示例。该入口未启用时，先用不包含漏洞利用细节和个人数据的 Issue 请求维护者提供私下报告渠道。不要把普通功能问题误报为漏洞。
+仓库已启用 GitHub 私密漏洞报告。请提供受影响版本、平台与使用合成数据观察到的行为。维护者可在同一报告中跟进修复和验证。[提交私密安全报告](https://github.com/canonliuliang/StealthWorkspace/security/advisories/new)
