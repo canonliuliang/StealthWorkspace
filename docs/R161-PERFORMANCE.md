@@ -61,3 +61,9 @@ Expand-Archive -LiteralPath $archive -DestinationPath $source
 ./tools/Test-BrowserPerformance.ps1 -BaselineRoot $source
 ./tools/Test-BookmarkPersistence.ps1 -BaselineRoot $source
 ```
+
+## 多标签持续运行与权限读回
+
+Windows 11 ARM64，WebView2 157.0.4341.60。使用独立的 r16.1 ARM64 候选便携构建，保留三个带 DOM 状态的网页，循环创建、加载和关闭一个临时标签。20.01 分钟完成 79 次循环，79 个采样点中应用私有内存为 56.2–100.6 MiB，托管内存 1.9–5.1 MiB，采样的渲染器私有内存 70.1–99.7 MiB。结束时保留页面状态读回正确，控件释放，会话目录清理成功。运行时拒绝了后台休眠请求，采样中实际休眠标签为零。20 分钟单轮实验不支持推断整日内存增长、续航或跨设备效果。
+
+随后用含最终锁定和净化链接改动的候选包重跑完整 Browser 回归。页面调用地理位置 API 得到权限拒绝。在不配置 STUN/TURN 服务的本地 ICE 收集中观察到两个 mDNS 候选、零个数字 IP 候选，只记录计数。外部中继、网络代理、系统 DNS 配置及其他网络条件不在这个实验范围内。渲染器恢复后可继续暂停的下载并核对文件字节。浏览器进程整体退出后能创建新进程并重新浏览，这次观察中会话 Cookie 未保留。
