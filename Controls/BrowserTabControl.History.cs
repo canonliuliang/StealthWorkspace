@@ -23,6 +23,11 @@ public sealed partial class BrowserTabControl
     {
         _sessionHistory.CollectionChanged -= SessionHistory_CollectionChanged;
         if (HistorySearchBox == null || HistoryListView == null) return;
+        if (_isDisposed)
+        {
+            HistoryListView.ItemsSource = null;
+            return;
+        }
         if (active) _sessionHistory.CollectionChanged += SessionHistory_CollectionChanged;
         else HistorySearchBox.Text = "";
         FilterSessionHistory();
@@ -34,6 +39,11 @@ public sealed partial class BrowserTabControl
     private void FilterSessionHistory()
     {
         if (HistoryListView == null || HistorySearchBox == null || HistoryEmptyText == null) return;
+        if (_isDisposed)
+        {
+            HistoryListView.ItemsSource = null;
+            return;
+        }
         string query = HistorySearchBox.Text.Trim();
         HistoryListView.ItemsSource = query.Length == 0 ? _sessionHistory :
             _sessionHistory.Where(item => item.Title.Contains(query, StringComparison.OrdinalIgnoreCase)

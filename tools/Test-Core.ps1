@@ -18,8 +18,13 @@ $startInfo.WorkingDirectory = $appRoot
 # ArgumentList to preserve Unicode/space-containing paths without shell parsing.
 $startInfo.UseShellExecute = $false
 $startInfo.CreateNoWindow = $true
-$startInfo.ArgumentList.Add('--self-test')
-$startInfo.ArgumentList.Add($reportPath)
+if ($null -ne $startInfo.PSObject.Properties['ArgumentList']) {
+    $startInfo.ArgumentList.Add('--self-test')
+    $startInfo.ArgumentList.Add($reportPath)
+} else {
+    $escapedReport = '"' + ($reportPath -replace '"', '\"') + '"'
+    $startInfo.Arguments = "--self-test $escapedReport"
+}
 $testProcess = [Diagnostics.Process]::Start($startInfo)
 if (!$testProcess.WaitForExit($TimeoutSeconds * 1000)) {
     $testProcess.Kill()

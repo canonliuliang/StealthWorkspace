@@ -13,13 +13,11 @@ public static class SystemAudio
 {
     private static readonly object Gate = new();
     private static bool _mutedByUs;
-    private static bool _unavailable;
 
     public static bool MuteForBossKey()
     {
         lock (Gate)
         {
-            if (_unavailable) return false;
             try
             {
                 bool muted;
@@ -37,7 +35,6 @@ public static class SystemAudio
             }
             catch (Exception ex)
             {
-                _unavailable = true;
                 AppLog.Warn($"系统静音不可用: {ex.GetType().Name}");
                 return false;
             }
@@ -68,7 +65,6 @@ public static class SystemAudio
         using var endpoint = AudioEndpointVolume.TryOpen();
         if (endpoint == null)
         {
-            _unavailable = true;
             return false;
         }
         return endpoint.TryGetMute(out muted);

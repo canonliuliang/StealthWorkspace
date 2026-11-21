@@ -7,7 +7,13 @@ namespace StealthWorkspace.Services;
 internal static class BrowserZoomInput
 {
     internal static bool IsOwnerForeground(nint ownerWindow) => ownerWindow != 0 && GetForegroundWindow() == ownerWindow;
-    internal static bool Send(nint ownerWindow, ushort key)
+    internal static bool Send(nint ownerWindow, ushort key) =>
+        key is (0x30 or 0xBB or 0xBD) && SendControlChord(ownerWindow, key);
+
+    internal static bool SendDownloadsForAudit(nint ownerWindow) =>
+        SmokeTest.BrowserAudit && SendControlChord(ownerWindow, 0x4A);
+
+    private static bool SendControlChord(nint ownerWindow, ushort key)
     {
         if (SmokeTest.Enabled)
         {
@@ -15,7 +21,7 @@ internal static class BrowserZoomInput
             GetWindowThreadProcessId(foreground, out uint process);
             SmokeTest.Report($"zoom input: owner={ownerWindow}; foreground={foreground}; foreground-root={GetAncestor(foreground, 2)}; foreground-owner={GetAncestor(foreground, 3)}; foreground-pid={process}; current-pid={Environment.ProcessId}; ABI-size={Marshal.SizeOf<Input>()}");
         }
-        if (key is not (0x30 or 0xBB or 0xBD) || !IsOwnerForeground(ownerWindow)) return false;
+        if (!IsOwnerForeground(ownerWindow)) return false;
         if (Down(0x12) || Down(0x5B) || Down(0x5C)) return false;
         bool controlHeld = Down(0x11);
         var input = new List<Input>(4);

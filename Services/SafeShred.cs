@@ -30,11 +30,11 @@ internal static class SafeShred
         if (!SafeFileSystem.IsPlainPath(path)) return false;
         string fullPath = Path.GetFullPath(path);
         using var metadata = CreateFileW(fullPath, 0x80 | 0x100, 7, IntPtr.Zero,
-            3, 0x00200000, IntPtr.Zero); // READ/WRITE_ATTRIBUTES, SHARE_READ/WRITE/DELETE, OPEN_REPARSE_POINT
+            3, 0x00200000, IntPtr.Zero); // Pin the named object without following it.
         if (metadata.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
         if (!GetFileInformationByHandle(metadata, out var info)) throw new Win32Exception(Marshal.GetLastWin32Error());
         if (expected != null && expected.Value != IdentityOf(info)) return false;
-        if (!IsSingleRegularFile(info))
+        if (!IsSingleRegularFile(metadata, info))
         {
             AppLog.Warn("粉碎已跳过硬链接或重解析点，原件已保留");
             return false;
@@ -49,14 +49,14 @@ internal static class SafeShred
             using var handle = ReOpenFile(metadata, access, 0, 0x80000000);
             if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
             if (!GetFileInformationByHandle(handle, out var writable)) throw new Win32Exception(Marshal.GetLastWin32Error());
-            if (!IsSingleRegularFile(writable) || !SameFile(info, writable) || !SafeFileSystem.IsPlainPath(fullPath)) return false;
+            if (!IsSingleRegularFile(handle, writable) || !SameFile(info, writable) || !SafeFileSystem.IsPlainPath(fullPath)) return false;
             if (expected != null && expected.Value != IdentityOf(writable)) return false;
             // Compare identity, not spelling: SUBST and 8.3 names can refer to this same file.
             // Zero requested access permits a metadata identity probe beside the exclusive writer.
             using (var probe = CreateFileW(fullPath, 0, 7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero))
             {
                 if (probe.IsInvalid || !GetFileInformationByHandle(probe, out var named)
-                    || !IsSingleRegularFile(named) || !SameFile(writable, named)) return false;
+                    || !IsSingleRegularFile(probe, named) || !SameFile(writable, named)) return false;
             }
             using var stream = new FileStream(handle, expectedDigest == null ? FileAccess.Write : FileAccess.ReadWrite, 64 * 1024, isAsync: false);
             if (expectedDigest != null)
@@ -108,8 +108,22 @@ internal static class SafeShred
         }
     }
 
-    private static bool IsSingleRegularFile(FileInformation info) => info.NumberOfLinks == 1
-        && (info.Attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) == 0;
+    private static bool IsSingleRegularFile(SafeFileHandle handle, FileInformation info) => info.NumberOfLinks == 1
+        && (info.Attributes & FileAttributes.Directory) == 0
+        && ((info.Attributes & FileAttributes.ReparsePoint) == 0 || SafeFileSystem.IsSafeInPlaceReparsePoint(handle));
+
+    internal static bool IsHardLink(string path)
+    {
+        try
+        {
+            using var handle = CreateFileW(Path.GetFullPath(path), 0, 7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
+            return !handle.IsInvalid && GetFileInformationByHandle(handle, out var info) && info.NumberOfLinks > 1;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     private static bool SameFile(FileInformation left, FileInformation right) =>
         left.VolumeSerialNumber == right.VolumeSerialNumber && left.FileIndexHigh == right.FileIndexHigh && left.FileIndexLow == right.FileIndexLow;

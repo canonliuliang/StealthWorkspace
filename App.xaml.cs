@@ -52,7 +52,8 @@ public partial class App : Application
         // Keep the app alive but never silently swallow: the encrypted diagnostic log is
         // the place where these are recorded now.
         AppLog.Error("未处理的 UI 异常", e.Exception);
-        SmokeTest.Report("unhandled-ui-exception: " + e.Exception?.GetType().Name);
+        SmokeTest.Report("unhandled-ui-exception: " + e.Exception?.GetType().Name +
+            (e.Exception is TypeLoadException missingType ? " " + missingType.TypeName : string.Empty));
         e.Handled = true;
     }
 

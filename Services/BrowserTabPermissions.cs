@@ -48,7 +48,16 @@ internal sealed class BrowserTabPermissions
         else _overrides[kind] = block;
     }
 
-    internal bool Blocks(CoreWebView2PermissionKind kind, string? requester, AppSettingsData defaults) =>
-        _overrides.TryGetValue(kind, out bool block) && Origin == OriginOf(requester)
-            ? block : DefaultBlocked(kind, defaults);
+    internal bool Blocks(CoreWebView2PermissionKind kind, string? requester, AppSettingsData defaults)
+    {
+        bool sameTopOrigin = Origin != null && Origin == OriginOf(requester);
+        if (sameTopOrigin && _overrides.TryGetValue(kind, out bool block)) return block;
+        return DefaultBlocked(kind, defaults);
+    }
+
+    // These two requests are denied unless the visible tab obtains a one-time
+    // confirmation. An ordinary site exception cannot grant filesystem access.
+    internal bool CanAskForFilePermission(CoreWebView2PermissionKind kind, string? requester) =>
+        kind is (CoreWebView2PermissionKind.MultipleAutomaticDownloads or CoreWebView2PermissionKind.FileReadWrite)
+        && Origin != null && Origin == OriginOf(requester);
 }

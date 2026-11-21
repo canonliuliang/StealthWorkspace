@@ -5,7 +5,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace StealthWorkspace.Services;
 
-/// <summary>Fail-closed traversal for cleanup: never follow a directory or file reparse point.</summary>
+/// <summary>Allow known in-place file providers and reject redirections or unrecognized tags.</summary>
 internal static class SafeFileSystem
 {
     /// <summary>Resolve existing ancestors through handles, including short names and DOS drive aliases.</summary>
@@ -51,13 +51,42 @@ internal static class SafeFileSystem
             string? current = Path.GetFullPath(path);
             while (current != null)
             {
-                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return false;
+                if (HasLinkReparsePoint(current)) return false;
                 current = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(current));
             }
             return true;
         }
         catch { return false; }
     }
+
+    internal static bool HasLinkReparsePoint(string path)
+    {
+        FileAttributes attributes = File.GetAttributes(path);
+        if ((attributes & FileAttributes.ReparsePoint) == 0) return false;
+        using var handle = CreateFileW(path, 0, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+        return !IsSafeInPlaceReparsePoint(handle);
+    }
+
+    // Removing the read-only flag changes every hard link to the same file. On Windows 11
+    // unlink just this name and leave the attributes of all surviving names untouched.
+    internal static void DeleteReadOnlyFile(string path)
+    {
+        using var handle = CreateFileW(path, 0x00010000 /* DELETE */, 7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
+        if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!IsPlainPath(path)) throw new IOException("文件位置已改变，清理已跳过。");
+        uint flags = 0x01 | 0x10; // FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE
+        if (!SetFileInformationByHandle(handle, 21 /* FileDispositionInfoEx */, ref flags, sizeof(uint)))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
+
+    internal static bool IsSafeInPlaceReparseTag(uint tag) =>
+        // Surrogate bit (0x20000000) marks symlinks, junctions and mount points that redirect traversal.
+        // Non-surrogate Cloud Files (OneDrive Known Folder Move: 0x9000*01A), WOF (0x80000017) and Dedup (0x80000013) are in-place files/folders.
+        (tag & 0x20000000u) == 0 && ((tag & 0xFFFF0FFFu) == 0x9000001Au || tag is 0x80000017u or 0x80000013u);
+
+    internal static bool IsSafeInPlaceReparsePoint(SafeFileHandle handle) =>
+        !handle.IsInvalid && GetFileInformationByHandleEx(handle, 9 /* FileAttributeTagInfo */, out var info,
+            (uint)Marshal.SizeOf<FileAttributeTagInfo>()) && IsSafeInPlaceReparseTag(info.ReparseTag);
 
     internal static List<string> EnumerateFiles(string root, bool recursive, out int failures,
         Func<string, bool>? skipDirectory = null, CancellationToken cancellationToken = default)
@@ -80,7 +109,7 @@ internal static class SafeFileSystem
                     try
                     {
                         FileAttributes attributes = File.GetAttributes(entry);
-                        if ((attributes & FileAttributes.ReparsePoint) != 0) continue;
+                        if ((attributes & FileAttributes.ReparsePoint) != 0 && HasLinkReparsePoint(entry)) continue;
                         if ((attributes & FileAttributes.Directory) != 0)
                         {
                             if (recursive && skipDirectory?.Invoke(entry) != true) pending.Push(entry);
@@ -97,9 +126,24 @@ internal static class SafeFileSystem
         return files;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileAttributeTagInfo
+    {
+        internal uint FileAttributes;
+        internal uint ReparseTag;
+    }
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
     private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security,
         uint disposition, uint flags, IntPtr template);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
     private static extern uint GetFinalPathNameByHandleW(SafeFileHandle handle, StringBuilder path, uint length, uint flags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int fileInformationClass,
+        out FileAttributeTagInfo fileInformation, uint bufferSize);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int fileInformationClass,
+        ref uint flags, uint bufferSize);
 }

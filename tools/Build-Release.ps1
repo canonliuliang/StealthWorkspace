@@ -21,7 +21,7 @@ foreach ($required in 'StealthWorkspace.exe','StealthWorkspace.dll','StealthWork
     if (!(Test-Path -LiteralPath (Join-Path $appRoot $required) -PathType Leaf)) { throw "Missing runtime file: $required" }
 }
 $forbidden = Get-ChildItem -LiteralPath $appRoot -Recurse -Force | Where-Object {
-    $_.Name -match '^(WorkspaceData|MediaVault|IsolatedDownloads|BrowserSessions|Stealth_WebProfile.*|StealthVault_Store|system_catalog\.dat.*|rotate\.dat.*|remove\.dat.*|settings\.dat.*|app\.log.*|\.migrated|\.legacy-import-disabled.*|\.legacy-migration-.*)$' -or $_.Extension -in '.svault','.svbackup','.pfx','.key','.dmp'
+    $_.Name -match '^(WorkspaceData|MediaVault|IsolatedDownloads.*|BrowserSessions|Stealth_WebProfile.*|StealthVault_Store|system_catalog\.dat.*|rotate\.dat.*|remove\.dat.*|settings\.dat.*|app\.log.*|crash\.log|\.migrated|\.legacy-import-disabled.*|\.legacy-migration-.*)$' -or $_.Extension -in '.svault','.svbackup','.swbackup','.pfx','.key','.dmp'
 }
 if ($forbidden) { throw 'Publish output contains private data or signing material; packaging stopped.' }
 & (Join-Path $PSScriptRoot 'Test-Core.ps1') -PublishDirectory $appRoot -OutputPath (Join-Path $releaseRoot 'core-tests.txt')

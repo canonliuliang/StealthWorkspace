@@ -105,6 +105,19 @@ public sealed partial class BrowserTabControl
         }
     }
 
+    internal async Task CheckDownloadShortcutAuditAsync()
+    {
+        var flyout = EnsureDownloadsFlyout();
+        for (int i = 0; i < 50 && flyout.IsOpen; i++) await Task.Delay(25);
+        UrlTextBox.Focus(Microsoft.UI.Xaml.FocusState.Keyboard);
+        if (flyout.IsOpen || !Services.BrowserZoomInput.SendDownloadsForAudit(MainWindow.CurrentHandle))
+            throw new InvalidOperationException("Could not send Ctrl+J to the test window");
+        for (int i = 0; i < 80 && !flyout.IsOpen; i++) await Task.Delay(25);
+        if (!flyout.IsOpen) throw new InvalidOperationException("Ctrl+J failed to show downloads from the address bar");
+        flyout.Hide();
+        Services.SmokeTest.Report("download flyout: native Ctrl+J opened the shared downloads from the address bar");
+    }
+
     internal async Task<CoreWebView2DownloadOperation> BeginDownloadAuditAsync(string address)
     {
         var core = _hookedCore ?? throw new InvalidOperationException("Audit core missing");

@@ -99,6 +99,8 @@ internal static class MediaAcceptance
             {
                 var element = (Microsoft.UI.Xaml.Controls.MediaPlayerElement)player()!.FindName("PlayerElement");
                 var media = element.MediaPlayer;
+                Require(!media.CommandManager.IsEnabled && !media.SystemMediaTransportControls.IsEnabled,
+                    "private playback leaves Windows media transport commands disabled");
                 bool originalMute = media.IsMuted;
                 try
                 {

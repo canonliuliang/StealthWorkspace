@@ -121,7 +121,7 @@ public sealed partial class CleanerPage : Page
         {
             Text = $"{item.Name} — 共检测到 {item.DetectedCount} 项（以下展示前 {item.PreviewEntries.Count} 条样本）：",
             Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            Opacity = 0.8,
             TextWrapping = TextWrapping.Wrap
         });
 
@@ -130,8 +130,6 @@ public sealed partial class CleanerPage : Page
             ItemsSource = item.PreviewEntries,
             MaxHeight = 320,
             SelectionMode = ListViewSelectionMode.None,
-            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["LayerFillColorDefaultBrush"],
-            BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"],
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(6)
         };
@@ -204,19 +202,54 @@ public sealed partial class CleanerPage : Page
 
             List<CleanerItem> cleanResults = await CleanerService.Instance.CleanAsync(selected, options, progress, operation.Token);
             string cleanSummary = BuildCleanSummary(cleanResults);
+            Dictionary<CleanerCategory, CleanerItem> cleanedByCategory = cleanResults
+                .Where(item => item.IsSelected)
+                .ToDictionary(item => item.Category);
 
             if (!_isPageLoaded) return;
 
-            SummaryText.Text = cleanSummary + " 正在重新扫描…";
+            foreach (CleanerItem existing in Items)
+            {
+                if (cleanedByCategory.TryGetValue(existing.Category, out CleanerItem? cleaned))
+                {
+                    existing.ApplyScanResult(cleaned);
+                }
+            }
+
+            bool hasFailure = cleanResults.Any(r => r.IsSelected && r.Outcome == CleanOutcome.Failed);
+            bool hasSkipped = cleanResults.Any(r => r.IsSelected && r.Outcome == CleanOutcome.Skipped);
+            SummaryText.Text = cleanSummary + " 正在刷新统计…";
             try
             {
-                // Merge selection state from snapshot into refreshed list
+                // Merge selection state from snapshot into refreshed list, while preserving detailed clean status text.
                 List<CleanerItem> refreshed = await CleanerService.Instance.ScanAsync(snapshot, progress, options, operation.Token);
                 if (!_isPageLoaded) return;
 
+                foreach (CleanerItem item in refreshed)
+                {
+                    if (cleanedByCategory.TryGetValue(item.Category, out CleanerItem? cleaned) &&
+                        !string.IsNullOrWhiteSpace(cleaned.Status))
+                    {
+                        item.Status = cleaned.Status;
+                        item.Outcome = cleaned.Outcome;
+                    }
+                }
+
                 ApplyResults(refreshed);
                 UpdateStatsBadge(refreshed);
-                SummaryText.Text = cleanSummary + "（列表已重新扫描）";
+                SummaryText.Text = cleanSummary;
+                if (hasFailure)
+                {
+                    ShowInfoBar(InfoBarSeverity.Warning, "部分清理未完成", cleanSummary);
+                }
+                else if (hasSkipped)
+                {
+                    ShowInfoBar(InfoBarSeverity.Informational, "清理已完成，部分项目已跳过", cleanSummary);
+                }
+                else
+                {
+                    ShowInfoBar(InfoBarSeverity.Success, "清理已完成", cleanSummary);
+                }
             }
             catch (OperationCanceledException) when (operation.IsCancellationRequested)
             {

@@ -100,6 +100,7 @@ public static class SelfTest
                 && MainWindow.MillisecondsUntilIdleLock(5, 100, uint.MaxValue - 99) == 299_800,
                 "Idle deadline handles new input, overdue lock and Windows tick counter wrap");
             await BookmarkHtmlSelfTest.RunAsync(testRoot, Report);
+            await WorkspaceSessionSelfTest.RunAsync(Report);
             BrowserAddressSelfTest.Run(Report, testRoot);
             await BrowserShareLinkTests.RunAsync(Report);
             await VaultIntegritySelfTest.RunAsync(testRoot, Report, Skip);
@@ -152,12 +153,21 @@ public static class SelfTest
             using (var afterExisting = BrowserDownloadPath.Reserve(testRoot, "same-name.bin"))
                 Report(Path.GetFileName(afterExisting.FilePath) != "same-name.bin" && File.ReadAllText(Path.Combine(testRoot, "same-name.bin")) == "keep existing bytes",
                     "Download reservation preserves an existing file");
-            foreach (string unsafeName in new[] { "CON.txt", "COM¹.txt", "lpt².tar.gz", "CONOUT$.txt", "..", "NUL", "x/y\\z.bin", new string('a', 180) + ".jpg" })
+            foreach (string unsafeName in new[] { "CON.txt", "COM¹.txt", "lpt².tar.gz", "CONOUT$.txt", "..", "NUL", "x/y\\z.bin", new string('a', 180) + ".jpg", new string('a', 119) + " ", new string('a', 115) + ".v2.jpg" })
             {
                 using var reserved = BrowserDownloadPath.Reserve(testRoot, unsafeName);
-                try { File.WriteAllText(reserved.FilePath, "fixture"); Report(File.Exists(reserved.FilePath), "Download name accepted by Windows: " + unsafeName); }
+                try
+                {
+                    File.WriteAllText(reserved.FilePath, "fixture");
+                    string fileName = Path.GetFileName(reserved.FilePath);
+                    Report(File.Exists(reserved.FilePath) && !fileName.Contains("..", StringComparison.Ordinal) && !fileName.EndsWith(' ') && !fileName.EndsWith('.'),
+                        "Download name accepted by Windows: " + unsafeName);
+                }
                 catch (Exception ex) { Report(false, "Download name accepted by Windows: " + unsafeName, ex.GetType().Name); }
             }
+            Report(SafeFileSystem.IsSafeInPlaceReparseTag(0x9000001Au) && SafeFileSystem.IsSafeInPlaceReparseTag(0x9000301Au) &&
+                !SafeFileSystem.IsSafeInPlaceReparseTag(0xA000000Cu) && !SafeFileSystem.IsSafeInPlaceReparseTag(0xA0000003u),
+                "SafeFileSystem distinguishes Cloud Files tags from symlink and junction surrogates");
             foreach (var (domain, host, expected) in new (string, string, bool)[] {
                 ("example.com", "example.com", true), (".example.com", "sub.example.com", true),
                 (".example.com", "EXAMPLE.COM", true), ("example.com", "sub.example.com", false),

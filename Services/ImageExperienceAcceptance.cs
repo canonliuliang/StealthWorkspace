@@ -79,6 +79,7 @@ internal static class ImageExperienceAcceptance
         Require(page.IsImageReady && page.CurrentMediaId == items[2].Id, "sidebar reopens the last item in this unlock session");
         page.ReturnToGallery();
         await Task.Delay(200);
+        await CheckAnimationsAsync(root, currentGallery()!, open, current);
         open(items[0]);
         page = current()!;
         Task pending = page.SelectMediaAsync(2);
@@ -135,6 +136,46 @@ internal static class ImageExperienceAcceptance
         for (int i = 0; i < VisualTreeHelper.GetChildrenCount(element); i++)
             if (FindConfirm(VisualTreeHelper.GetChild(element, i), label) is { } child) return child;
         return null;
+    }
+
+    private static async Task CheckAnimationsAsync(string root, VaultPage gallery, Action<VaultItem> open, Func<PlayerPage?> current)
+    {
+        // Synthetic 8x8 GIF; 12x12 WebP with partial blue and transparent frames,
+        // durations 120/230/340 ms and a finite loop count of two.
+        foreach (var (name, data) in new[]
+        {
+            ("motion.gif", "R0lGODlhCAAIAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQAMAAAACwAAAAACAAIAAAIDwABCBxIsKDBgwgTKkwYEAAh+QQBMAABACwAAAAACAAIAIEAAP8AAAAAAAAAAAAIDwABCBxIsKDBgwgTKkwYEAA7"),
+            ("motion.webp", "UklGRrwAAABXRUJQVlA4WAoAAAASAAAACwAACwAAQU5JTQYAAAAAAAAAAgBBTk1GKAAAAAAAAAAAAAsAAAsAAHgAAAJWUDhMDwAAAC8LwAIABxD9j/4HIqL/AQBBTk1GKAAAAAIAAAIAAAIAAAIAAOYAAABWUDhMDwAAAC8CgAAABxDR//4HIqL/AQBBTk1GMAAAAAAAAAAAAAYAAAYAAFQBAAJWUDhMFwAAAC8GgAEQDxDzH/MfDIUAAqBIvInof8D/AA==")
+        })
+        {
+            string path = Path.Combine(root, name);
+            await File.WriteAllBytesAsync(path, Convert.FromBase64String(data));
+        }
+        var imported = await gallery.ImportFilesAsync([Path.Combine(root, "motion.gif"), Path.Combine(root, "motion.webp")]);
+        Require(imported.Imported == 2, "two animated fixtures imported into the encrypted vault");
+        foreach (string name in new[] { "motion.gif", "motion.webp" })
+        {
+            open(VaultService.Instance.VisibleItems.Single(i => i.OriginalFileName == name));
+            var page = current()!;
+            var view = (Image)page.FindName("ImageViewer");
+            int displayed = view.Source == null ? 0 : 1;
+            long registration = view.RegisterPropertyChangedCallback(Image.SourceProperty, (_, _) => { if (view.Source != null) displayed++; });
+            try
+            {
+                for (int i = 0; i < 150 && !page.IsImageReady; i++) await Task.Delay(20);
+                if (name.EndsWith(".gif", StringComparison.Ordinal))
+                    Require(view.Source is Microsoft.UI.Xaml.Media.Imaging.BitmapImage { IsAnimatedBitmap: true, IsPlaying: true }, "encrypted GIF is playing through WinUI");
+                else
+                {
+                    for (int i = 0; i < 200 && displayed < 6; i++) await Task.Delay(20);
+                    await Task.Delay(700);
+                    Require(displayed == 6 && page.MediaError == null, "encrypted WebP displays all three frames twice and stops");
+                }
+            }
+            finally { view.UnregisterPropertyChangedCallback(Image.SourceProperty, registration); }
+            page.ReturnToGallery();
+            await Task.Delay(100);
+        }
     }
 
     private static void Require(bool condition, string message)

@@ -11,12 +11,25 @@ namespace StealthWorkspace.Pages;
 public sealed partial class LockPage : Page
 {
     private bool _busy;
+    private CancellationTokenSource? _cooldownCts;
 
     public LockPage()
     {
         InitializeComponent();
         BuildLabel.Text = "构建 " + AppInfo.BuildStamp;
         Loaded += LockPage_Loaded;
+        Unloaded += (_, _) => _cooldownCts?.Cancel();
+    }
+
+    internal void ClearSensitiveInputs()
+    {
+        _cooldownCts?.Cancel();
+        UnlockPasswordBox.Password = string.Empty;
+        SetupMasterPwd.Password = string.Empty;
+        SetupConfirmPwd.Password = string.Empty;
+        SetupDecoyPwd.Password = string.Empty;
+        SetupDecoyConfirmPwd.Password = string.Empty;
+        if (IsLoaded) CheckVaultState();
     }
 
     private void LockPage_Loaded(object sender, RoutedEventArgs e)
@@ -69,7 +82,7 @@ public sealed partial class LockPage : Page
 
     private async Task DoUnlockAsync()
     {
-        if (_busy) return;
+        if (_busy || _cooldownCts != null) return;
 
         string password = UnlockPasswordBox.Password;
         if (string.IsNullOrEmpty(password))
@@ -78,6 +91,7 @@ public sealed partial class LockPage : Page
             return;
         }
 
+        UnlockPasswordBox.Password = string.Empty;
         SetBusy(true, "正在校验密码…");
         try
         {
@@ -87,9 +101,9 @@ public sealed partial class LockPage : Page
             switch (result.Status)
             {
                 case VaultUnlockStatus.Success:
+                    UnlockPasswordBox.Password = string.Empty;
                     if (VaultService.Instance.ApplyUnlock(result))
                     {
-                        UnlockPasswordBox.Password = string.Empty;
                         MainWindow.Current?.OnUnlocked();
                     }
                     else
@@ -101,18 +115,21 @@ public sealed partial class LockPage : Page
                 case VaultUnlockStatus.LockedOut:
                     ShowMessage(result.Message, InfoBarSeverity.Warning);
                     UnlockPasswordBox.Password = string.Empty;
-                    await CoolDownAsync(result.RetryAfterSeconds);
+                    _ = CoolDownAsync(result.RetryAfterSeconds);
                     break;
 
                 case VaultUnlockStatus.Corrupted:
+                    UnlockPasswordBox.Password = string.Empty;
                     CheckVaultState();
                     break;
 
                 case VaultUnlockStatus.NoVault:
+                    UnlockPasswordBox.Password = string.Empty;
                     CheckVaultState();
                     break;
 
                 case VaultUnlockStatus.Error:
+                    UnlockPasswordBox.Password = string.Empty;
                     ShowMessage(string.IsNullOrEmpty(result.Message) ? "校验失败。" : result.Message, InfoBarSeverity.Error);
                     break;
 
@@ -124,6 +141,7 @@ public sealed partial class LockPage : Page
         }
         catch (Exception ex)
         {
+            UnlockPasswordBox.Password = string.Empty;
             AppLog.Error("解锁流程异常", ex);
             ShowMessage("解锁时发生内部错误，请重试。", InfoBarSeverity.Error);
         }
@@ -137,16 +155,38 @@ public sealed partial class LockPage : Page
     {
         if (seconds <= 0) return;
 
+        _cooldownCts?.Cancel();
+        using var cts = new CancellationTokenSource();
+        _cooldownCts = cts;
+
         BusyRing.IsActive = false;
         BusyPanel.Visibility = Visibility.Collapsed;
         BuildLabel.Visibility = Visibility.Visible;
-        for (int remaining = seconds; remaining > 0; remaining--)
+        UnlockButton.IsEnabled = false;
+        UnlockPasswordBox.IsEnabled = false;
+        try
         {
-            if (!IsLoaded) return;
-            ShowMessage($"尝试次数过多，请在 {remaining} 秒后重试。", InfoBarSeverity.Warning);
-            await Task.Delay(1000);
+            for (int remaining = seconds; remaining > 0; remaining--)
+            {
+                if (!IsLoaded || cts.IsCancellationRequested) return;
+                ShowMessage($"尝试次数过多，请在 {remaining} 秒后重试。", InfoBarSeverity.Warning);
+                await Task.Delay(1000, cts.Token);
+            }
+            MsgInfoBar.IsOpen = false;
         }
-        MsgInfoBar.IsOpen = false;
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        finally
+        {
+            if (ReferenceEquals(_cooldownCts, cts))
+            {
+                _cooldownCts = null;
+                UnlockButton.IsEnabled = !_busy;
+                UnlockPasswordBox.IsEnabled = !_busy;
+            }
+        }
         FocusField(UnlockPasswordBox);
     }
 
@@ -219,6 +259,7 @@ public sealed partial class LockPage : Page
         }
         catch (Exception ex)
         {
+            ClearSensitiveInputs();
             AppLog.Error("初始化保险箱失败", ex);
             ShowMessage("创建保险箱失败：" + ex.Message, InfoBarSeverity.Error);
         }
@@ -267,6 +308,7 @@ public sealed partial class LockPage : Page
 
         if (result != ContentDialogResult.Primary) return;
 
+        _cooldownCts?.Cancel();
         SetBusy(true, "正在销毁保险箱…");
         try
         {
@@ -292,10 +334,10 @@ public sealed partial class LockPage : Page
         BuildLabel.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
         UiMotion.SetVisible(BusyPanel, busy, MotionCue.Fade);
         BusyRing.IsActive = busy;
-        UnlockButton.IsEnabled = !busy;
+        UnlockButton.IsEnabled = !busy && _cooldownCts == null;
         SetupButton.IsEnabled = !busy;
         RestoreBackupButton.IsEnabled = !busy;
-        UnlockPasswordBox.IsEnabled = !busy;
+        UnlockPasswordBox.IsEnabled = !busy && _cooldownCts == null;
         SetupMasterPwd.IsEnabled = !busy;
         SetupConfirmPwd.IsEnabled = !busy;
         SetupDecoyPwd.IsEnabled = !busy;

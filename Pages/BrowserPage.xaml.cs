@@ -723,6 +723,13 @@ public sealed partial class BrowserPage : Page
         args.Handled = true;
     }
 
+    private void DownloadsAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (_selectedTab == null) return;
+        _selectedTab.OpenDownloadsFromShortcut();
+        args.Handled = true;
+    }
+
     private void CloseTabAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
         args.Handled = true;

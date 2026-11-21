@@ -1,19 +1,30 @@
 param(
-    [Parameter(Mandatory = $true)][string]$CandidateDirectory,
-    [string]$PublishDirectory
+    [string]$CandidateDirectory,
+    [string]$PublishDirectory,
+    [switch]$SkipShortcuts
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
 if (!$PublishDirectory) {
-    $architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
     $PublishDirectory = Join-Path $projectRoot "bin\Release\net10.0-windows10.0.26100.0\win-$architecture\publish"
 }
+$runRoot = Join-Path $projectRoot ('artifacts\local-update-' + [guid]::NewGuid().ToString('N'))
+if (!$CandidateDirectory) {
+    $package = Join-Path $runRoot 'package'
+    $project = [xml][IO.File]::ReadAllText((Join-Path $projectRoot 'StealthWorkspace.csproj'))
+    $version = $project.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
+    & (Join-Path $PSScriptRoot 'Build-Release.ps1') -Runtime "win-$architecture" -Version $version -OutputDirectory $package
+    $CandidateDirectory = Join-Path $package 'app'
+}
 $candidateRoot = (Resolve-Path -LiteralPath $CandidateDirectory).Path.TrimEnd('\')
-$publishRoot = (Resolve-Path -LiteralPath $PublishDirectory).Path.TrimEnd('\')
+$publishRoot = [IO.Path]::GetFullPath($PublishDirectory).TrimEnd('\')
 $workspacePrefix = $projectRoot.TrimEnd('\') + '\'
 foreach ($path in @($candidateRoot, $publishRoot)) {
     if (!$path.StartsWith($workspacePrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Release directories must be inside this project.' }
-    if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Release directories must not be junctions or symbolic links.' }
+    for ($ancestor = $path; $ancestor.StartsWith($workspacePrefix, [StringComparison]::OrdinalIgnoreCase); $ancestor = [IO.Path]::GetDirectoryName($ancestor)) {
+        if ((Test-Path -LiteralPath $ancestor) -and ((Get-Item -LiteralPath $ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Release directories must not traverse junctions or symbolic links.' }
+    }
 }
 if ($candidateRoot.Equals($publishRoot, [StringComparison]::OrdinalIgnoreCase) -or
     $candidateRoot.StartsWith($publishRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
@@ -37,14 +48,16 @@ foreach ($required in @('StealthWorkspace.exe', 'StealthWorkspace.dll', 'Stealth
     'StealthWorkspace.runtimeconfig.json', 'StealthWorkspace.pri', 'Assets\AppIcon.ico', 'Assets\AppIcon.png')) {
     if (!(Test-Path -LiteralPath (Join-Path $candidateRoot $required) -PathType Leaf)) { throw "Incomplete candidate: $required" }
 }
+& (Join-Path $PSScriptRoot 'Test-PackageStartup.ps1') -AppDirectory $candidateRoot -OutputDirectory (Join-Path $runRoot 'before-update')
 
 # Copy only the candidate's program files. Never mirror, clean, move or remove
 # the installed folder, which can contain the user's portable WorkspaceData.
 $files = @(Get-ChildItem -LiteralPath $candidateRoot -File -Recurse -Force | Sort-Object FullName)
 $entries = foreach ($file in $files) {
     $relative = $file.FullName.Substring($candidateRoot.Length + 1)
-    if ($relative -match '(^|[\\/])(WorkspaceData|MediaVault|IsolatedDownloads|Stealth_WebProfile_[^\\/]*|StealthVault_Store)([\\/]|$)' -or
-        $relative -match '(^|[\\/])(system_catalog\.dat|settings\.dat|app\.log)(\.|$)') { throw "Candidate contains user data: $relative" }
+    if ($relative -match '(^|[\\/])(WorkspaceData|MediaVault|BrowserSessions|IsolatedDownloads[^\\/]*|Stealth_WebProfile_[^\\/]*|StealthVault_Store)([\\/]|$)' -or
+        $relative -match '(^|[\\/])(system_catalog\.dat|settings\.dat|remove\.dat|rotate\.dat|app\.log|crash\.log)(\.|$)' -or
+        $file.Extension -in '.svault','.swbackup','.svbackup','.dmp','.key','.pfx') { throw "Candidate contains private data: $relative" }
     $target = [IO.Path]::GetFullPath((Join-Path $publishRoot $relative))
     if (!$target.StartsWith($publishRoot + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid release file path.' }
     # Check every existing ancestor, not just the top-level destination.
@@ -62,6 +75,7 @@ $entries = foreach ($file in $files) {
         PreviousSHA256 = $(if (Test-Path -LiteralPath $target -PathType Leaf) { (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash } else { $null }) }
 }
 
+$entries = @($entries | Where-Object { !$_.Existed -or $_.SHA256 -ne $_.PreviousSHA256 })
 $backupRoot = Join-Path $projectRoot ('artifacts\release-backups\' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
 $backupAncestor = $backupRoot
 while ($backupAncestor.StartsWith($workspacePrefix, [StringComparison]::OrdinalIgnoreCase)) {
@@ -88,6 +102,7 @@ try {
         Copy-Item -LiteralPath $entry.Source -Destination $entry.Target -Force
         if ((Get-FileHash -LiteralPath $entry.Target -Algorithm SHA256).Hash -ne $entry.SHA256) { throw "Copy verification failed: $($entry.Relative)" }
     }
+    & (Join-Path $PSScriptRoot 'Test-PackageStartup.ps1') -AppDirectory $publishRoot -OutputDirectory (Join-Path $runRoot 'after-update')
 } catch {
     $failure = $_
     $rollbackFailures = [Collections.Generic.List[string]]::new()
@@ -108,7 +123,8 @@ try {
     if ($rollbackFailures.Count) { throw "Update and rollback failed. Keep the app closed; restore program files from $backupRoot. $failure Rollback: $($rollbackFailures -join ' | ')" }
     throw "Update failed; overwritten program files restored from $backupRoot. $failure"
 }
-[pscustomobject]@{ InstalledDirectory = $publishRoot; BackupDirectory = $backupRoot; VerifiedProgramFiles = $entries.Count; PreservedDataDirectory = (Join-Path $publishRoot 'WorkspaceData') }
+if (!$SkipShortcuts) { & (Join-Path $PSScriptRoot 'Install-Shortcuts.ps1') -PublishDirectory $publishRoot }
+[pscustomobject]@{ InstalledDirectory = $publishRoot; BackupDirectory = $backupRoot; VerifiedProgramFiles = $files.Count; ChangedProgramFiles = $entries.Count; PreservedDataDirectory = (Join-Path $publishRoot 'WorkspaceData') }
 } finally {
     $updateLease.ReleaseMutex()
     $updateLease.Dispose()

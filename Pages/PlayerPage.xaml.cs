@@ -35,6 +35,7 @@ public sealed partial class PlayerPage : Page
     private bool _showingImage;
     private bool _fullScreen;
     private bool _deleting;
+    private bool _preserveErrorBanner;
     private double _volume = 1;
     private bool _userMuted;
     private double _speed = 1;
@@ -66,6 +67,15 @@ public sealed partial class PlayerPage : Page
     {
         InitializeComponent();
         PlayerElement.AddHandler(DoubleTappedEvent, new DoubleTappedEventHandler(PlayerElement_DoubleTapped), true);
+        PlayerElement.RegisterPropertyChangedCallback(MediaPlayerElement.IsFullWindowProperty, (_, _) =>
+        {
+            if (!PlayerElement.IsFullWindow) return;
+            PlayerElement.IsFullWindow = false;
+            if (CanUseControls && CurrentItem?.MediaType == "Video")
+            {
+                SetPlayerFullScreen(!_fullScreen);
+            }
+        });
 
         _loadingDelay.Tick += (_, _) =>
         {
@@ -124,6 +134,8 @@ public sealed partial class PlayerPage : Page
     private MediaPlayer CreateMediaPlayer()
     {
         var player = new MediaPlayer { Volume = _volume, IsMuted = _userMuted };
+        try { player.CommandManager.IsEnabled = false; } catch { }
+        try { player.SystemMediaTransportControls.IsEnabled = false; } catch { }
         player.MediaFailed += OnMediaFailed;
         player.MediaOpened += OnMediaOpened;
         _mediaPlayer = player;
@@ -148,6 +160,8 @@ public sealed partial class PlayerPage : Page
     private void ReleaseImage()
     {
         StopImageDrag();
+        _webpPlayback?.Cancel();
+        if (ImageViewer.Source is Microsoft.UI.Xaml.Media.Imaging.BitmapImage animation) animation.Stop();
         var previous = ImageViewer.Source as IDisposable;
         ImageViewer.Source = null;
         previous?.Dispose();
@@ -158,6 +172,7 @@ public sealed partial class PlayerPage : Page
         PlayerEmptyNotice.Visibility = Visibility.Collapsed;
         _imageLoad?.Cancel();
         int version = ++_loadVersion;
+        _preserveErrorBanner = false;
         ReleasePlayer();
         _lastItemId = item.Id;
         ImageRotation.Angle = 0;
@@ -192,11 +207,43 @@ public sealed partial class PlayerPage : Page
             {
                 using var imageLoad = new CancellationTokenSource();
                 _imageLoad = imageLoad;
-                VaultImageDecoder.DecodedImage bitmap;
+                VaultImageDecoder.DecodedImage? bitmap = null;
+                Microsoft.UI.Xaml.Media.Imaging.BitmapImage? animatedBitmap = null;
+                bool animateWebp = false;
+                int animatedWidth = 0;
+                int animatedHeight = 0;
                 try
                 {
                     await _loadGate.WaitAsync(imageLoad.Token);
-                    try { bitmap = await VaultImageDecoder.DecodeAsync(item, 16384, imageLoad.Token); }
+                    try
+                    {
+                        string ext = (item.FileExtension ?? string.Empty).ToLowerInvariant();
+                        if (ext is ".gif" or ".webp")
+                        {
+                            using Stream decrypted = await Task.Run(() => VaultService.Instance.OpenDecryptedStream(item), imageLoad.Token);
+                            using IRandomAccessStream random = decrypted.AsRandomAccessStream();
+                            var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(random).AsTask(imageLoad.Token);
+                            animateWebp = ext == ".webp" && decoder.FrameCount > 1;
+                            if (ext == ".gif" && decoder.FrameCount > 1)
+                            {
+                                random.Seek(0);
+                                var size = VaultImageDecoder.GetDecodeSize(decoder.OrientedPixelWidth, decoder.OrientedPixelHeight, 16384, 16 * 1024 * 1024);
+                                var anim = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage
+                                {
+                                    AutoPlay = true, DecodePixelWidth = (int)size.Width, DecodePixelHeight = (int)size.Height
+                                };
+                                await anim.SetSourceAsync(random).AsTask(imageLoad.Token);
+                                animatedBitmap = anim;
+                                animatedWidth = (int)size.Width;
+                                animatedHeight = (int)size.Height;
+                            }
+                        }
+
+                        if (animatedBitmap == null)
+                        {
+                            bitmap = await VaultImageDecoder.DecodeAsync(item, 16384, imageLoad.Token);
+                        }
+                    }
                     finally { _loadGate.Release(); }
                 }
                 finally
@@ -205,13 +252,15 @@ public sealed partial class PlayerPage : Page
                 }
                 if (_cleanedUp || version != _loadVersion || imageLoad.IsCancellationRequested || !VaultService.Instance.IsUnlocked)
                 {
-                    bitmap.Source.Dispose();
+                    animatedBitmap?.Stop();
+                    bitmap?.Source.Dispose();
                     return;
                 }
-                _imagePixelWidth = bitmap.Width;
-                _imagePixelHeight = bitmap.Height;
-                _imageWidthMode = _preferredWidthMode ?? bitmap.Height >= bitmap.Width * 2.0;
-                ImageViewer.Source = bitmap.Source;
+                _imagePixelWidth = animatedBitmap != null ? animatedWidth : bitmap!.Value.Width;
+                _imagePixelHeight = animatedBitmap != null ? animatedHeight : bitmap!.Value.Height;
+                _imageWidthMode = _preferredWidthMode ?? _imagePixelHeight >= _imagePixelWidth * 2.0;
+                ImageViewer.Source = (ImageSource?)animatedBitmap ?? bitmap!.Value.Source;
+                if (animateWebp) _ = PlayWebpAsync(item, version, (uint)_imagePixelWidth, (uint)_imagePixelHeight);
                 RotateButton.IsEnabled = true;
                 ApplyImageLayout(resetViewport: true);
                 if (direction == 0 && XamlRoot is { } root &&
@@ -287,7 +336,10 @@ public sealed partial class PlayerPage : Page
                 catch (Exception ex) { AppLog.Warn("恢复倍速失败", ex); }
             }
             SpeedButton.IsEnabled = true;
-            PlaybackInfoBar.IsOpen = false;
+            if (!_preserveErrorBanner)
+            {
+                PlaybackInfoBar.IsOpen = false;
+            }
             EndLoadingFeedback();
         });
     }
@@ -399,6 +451,7 @@ public sealed partial class PlayerPage : Page
             if (released && CurrentItem == item && VaultService.Instance.VisibleItems.Contains(item)) await LoadMediaAsync(item);
             if (_cleanedUp) return;
             AppLog.Error("删除媒体失败", ex);
+            _preserveErrorBanner = true;
             PlaybackInfoBar.Title = "无法删除";
             ShowPlaybackError(ex.Message);
         }
@@ -453,6 +506,7 @@ public sealed partial class PlayerPage : Page
 
     internal bool HandlePlaybackKey(VirtualKey key)
     {
+        if (key == VirtualKey.Escape && PlayerElement.IsFullWindow) { PlayerElement.IsFullWindow = false; return true; }
         if (key == VirtualKey.Escape && _fullScreen) { SetPlayerFullScreen(false); return true; }
         if (key == VirtualKey.F && CurrentItem?.MediaType == "Video") { SetPlayerFullScreen(!_fullScreen); return true; }
         if (_mediaPlayer is not { } player || !IsMediaReady) return false;
@@ -479,8 +533,15 @@ public sealed partial class PlayerPage : Page
         return false;
     }
 
+    internal void ExitAnyFullWindow()
+    {
+        try { if (PlayerElement.IsFullWindow) PlayerElement.IsFullWindow = false; } catch { }
+        if (_fullScreen) SetPlayerFullScreen(false);
+    }
+
     private void SetPlayerFullScreen(bool enable)
     {
+        try { if (!enable && PlayerElement.IsFullWindow) PlayerElement.IsFullWindow = false; } catch { }
         if (_fullScreen == enable || MainWindow.Current is not { } window) return;
         window.SetFullScreenMode(enable);
         _fullScreen = window.AppWindow.Presenter.Kind == Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen;
@@ -600,7 +661,8 @@ public sealed partial class PlayerPage : Page
     {
         if (!CanUseControls) return;
         args.Handled = true;
-        if (_fullScreen) SetPlayerFullScreen(false);
+        if (PlayerElement.IsFullWindow) PlayerElement.IsFullWindow = false;
+        else if (_fullScreen) SetPlayerFullScreen(false);
         else BackBtn_Click(sender, new RoutedEventArgs());
     }
 
@@ -609,7 +671,8 @@ public sealed partial class PlayerPage : Page
         if (!CanUseControls) return;
         if (e.Key == VirtualKey.Escape)
         {
-            if (_fullScreen) SetPlayerFullScreen(false);
+            if (PlayerElement.IsFullWindow) PlayerElement.IsFullWindow = false;
+            else if (_fullScreen) SetPlayerFullScreen(false);
             else BackBtn_Click(sender, new RoutedEventArgs());
             e.Handled = true;
         }
@@ -671,6 +734,7 @@ public sealed partial class PlayerPage : Page
     {
         IsMediaReady = false;
         SpeedButton.IsEnabled = false;
+        try { if (PlayerElement.IsFullWindow) PlayerElement.IsFullWindow = false; } catch { }
 
         // Detach the player from the XAML element *before* disposing it: disposing a
         // MediaPlayer that a live MediaPlayerElement still references can fail-fast in

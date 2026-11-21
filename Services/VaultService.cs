@@ -566,7 +566,20 @@ public partial class VaultService
         }
         finally
         {
-            TryDelete(tempTarget);
+            if (File.Exists(tempTarget))
+            {
+                try
+                {
+                    if (!CryptoService.ShredFile(tempTarget, 1))
+                    {
+                        TryDelete(tempTarget);
+                    }
+                }
+                catch
+                {
+                    TryDelete(tempTarget);
+                }
+            }
             CryptographicOperations.ZeroMemory(key);
         }
     }
@@ -626,6 +639,7 @@ public partial class VaultService
         long epoch = CaptureUnlockEpoch();
         using var operation = await EnterMutationAsync(token, allowPendingRemoval: true);
         RemovalJournal journal;
+        List<string> files;
         lock (_sync)
         {
             token.ThrowIfCancellationRequested();
@@ -636,10 +650,10 @@ public partial class VaultService
                 if (items.Count == 1) return;
                 throw new InvalidOperationException("选中项已改变，请重新选择。");
             }
-            var files = items.Select(item => item.StoredFileName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            files = items.Select(item => item.StoredFileName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             journal = BeginRemoval(_isDecoyMode ? "decoy-item" : "real-item", files);
         }
-        await ExecuteRemovalAsync(journal, progress);
+        await ExecuteRemovalAsync(journal, progress, files);
     }
 
     #endregion

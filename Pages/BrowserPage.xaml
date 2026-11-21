@@ -47,6 +47,7 @@
                 <KeyboardAccelerator Key="F3" Modifiers="Shift" Invoked="FindAccelerator_Invoked" />
                 <KeyboardAccelerator Key="D" Modifiers="Control" Invoked="BookmarkAccelerator_Invoked" />
                 <KeyboardAccelerator Key="H" Modifiers="Control" Invoked="HistoryAccelerator_Invoked" />
+                <KeyboardAccelerator Key="J" Modifiers="Control" Invoked="DownloadsAccelerator_Invoked" />
                 <KeyboardAccelerator Key="W" Modifiers="Control" Invoked="CloseTabAccelerator_Invoked" />
                 <KeyboardAccelerator Key="W" Modifiers="Control,Shift" Invoked="BurnAllTabsAccelerator_Invoked" />
             </TabView.KeyboardAccelerators>

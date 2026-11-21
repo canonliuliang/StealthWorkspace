@@ -505,13 +505,30 @@ public sealed partial class VaultPage : Page
         if (_busy || VaultWork.IsBusy) return;
         if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
 
+        var session = SettingsService.Instance.ActiveBookmarkSession;
+        List<string> paths;
         var deferral = e.GetDeferral();
         try
         {
             var items = await e.DataView.GetStorageItemsAsync();
-            var paths = items.OfType<StorageFile>().Select(f => f.Path)
+            paths = items.OfType<StorageFile>().Select(f => f.Path)
                 .Where(p => !string.IsNullOrEmpty(p)).ToList();
-            if (paths.Count > 0)
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("拖拽读取文件失败", ex);
+            StatusText.Text = "拖拽导入失败：" + ex.Message;
+            return;
+        }
+        finally
+        {
+            // Complete the OLE drag deferral before showing dialogs or encrypting files so File Explorer never freezes.
+            deferral.Complete();
+        }
+
+        try
+        {
+            if (paths.Count > 0 && IsLoaded && session != null && ReferenceEquals(session, SettingsService.Instance.ActiveBookmarkSession))
             {
                 await ImportFilesAsync(paths);
             }
@@ -522,7 +539,6 @@ public sealed partial class VaultPage : Page
             AppLog.Error("拖拽导入失败", ex);
             StatusText.Text = "拖拽导入失败：" + ex.Message;
         }
-        finally { deferral.Complete(); }
     }
 
     #endregion
@@ -670,6 +686,7 @@ public sealed partial class VaultPage : Page
 
     private void FlyoutPlay_Click(object sender, RoutedEventArgs e)
     {
+        if (_busy || VaultWork.IsBusy) return;
         VaultItem? item = FindItemById((sender as FrameworkElement)?.Tag as string);
         if (item != null) MainWindow.Current?.NavigateToPlayer(item);
     }

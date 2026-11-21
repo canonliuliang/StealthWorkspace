@@ -189,7 +189,71 @@ public static class AppPaths
     public static string SettingsPath => Path.Combine(DataRoot, "settings.dat");
     public static string VaultConfigPath => Path.Combine(DataRoot, "system_catalog.dat");
     public static string VaultConfigBackupPath => VaultConfigPath + ".bak";
-    public static string IsolatedDownloadsRoot => Path.Combine(DataRoot, "IsolatedDownloads");
+    public static string IsolatedDownloadsRoot => SettingsService.Instance.ActiveBookmarkSession?.DownloadDirectoryName is { } name
+        ? Path.Combine(DecoyIsolatedDownloadsRoot, name)
+        : Path.Combine(DataRoot, "IsolatedDownloads");
+    internal static string DecoyIsolatedDownloadsRoot => Path.Combine(DataRoot, "IsolatedDownloadsDecoy");
+
+    internal static async Task FinishBrowserSessionAsync(Task released, string? decoyDirectoryName)
+    {
+        try { await released.ConfigureAwait(false); }
+        finally
+        {
+            if (decoyDirectoryName != null)
+            {
+                string path = Path.Combine(DecoyIsolatedDownloadsRoot, decoyDirectoryName);
+                await Task.Run(() => ClearDownloadDirectory(path)).ConfigureAwait(false);
+                if (Directory.Exists(path))
+                {
+                    await Task.Delay(400).ConfigureAwait(false);
+                    await Task.Run(() => ClearDownloadDirectory(path)).ConfigureAwait(false);
+                }
+            }
+        }
+    }
+
+    internal static void SweepDecoyDownloads()
+    {
+        string root = DecoyIsolatedDownloadsRoot;
+        if (!Directory.Exists(root) || !SafeFileSystem.IsPlainPath(root)) return;
+        try
+        {
+            foreach (string directory in Directory.EnumerateDirectories(root, "session-*"))
+            {
+                var parts = Path.GetFileName(directory).Split('-');
+                if (parts.Length != 3 || !int.TryParse(parts[1], out int pid) || pid <= 0 ||
+                    !Guid.TryParseExact(parts[2], "N", out _)) continue;
+                try { using var process = System.Diagnostics.Process.GetProcessById(pid); if (!process.HasExited) continue; }
+                catch (ArgumentException) { } // The process that owned these downloads has finished.
+                catch (System.ComponentModel.Win32Exception) { continue; }
+                ClearDownloadDirectory(directory);
+            }
+        }
+        catch (Exception ex) { AppLog.Warn("检查过期临时下载失败：" + ex.GetType().Name); }
+    }
+
+    private static void ClearDownloadDirectory(string dir)
+    {
+        try
+        {
+            if (!Directory.Exists(dir) || !SafeFileSystem.IsPlainPath(dir)) return;
+            foreach (string file in SafeFileSystem.EnumerateFiles(dir, false, out _))
+            {
+                try
+                {
+                    SafeFileSystem.DeleteReadOnlyFile(file);
+                }
+                catch (Exception ex) { AppLog.Warn("临时下载尚未移除：" + ex.GetType().Name); }
+            }
+            try
+            {
+                if (!Directory.EnumerateFileSystemEntries(dir).Any())
+                    Directory.Delete(dir, false);
+            }
+            catch { }
+        }
+        catch { }
+    }
 
     /// <summary>Ensures the root exists and is hidden+system attributed. Best effort.</summary>
     public static string EnsureDataRoot()

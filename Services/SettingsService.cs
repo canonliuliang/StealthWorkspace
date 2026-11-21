@@ -90,11 +90,13 @@ public class SettingsService
     internal sealed class BookmarkSession(bool temporary)
     {
         internal bool Temporary { get; } = temporary;
+        internal string? DownloadDirectoryName { get; } = temporary ? $"session-{Environment.ProcessId}-{Guid.NewGuid():N}" : null;
         internal volatile ImmutableList<BookmarkItem> Items = [];
     }
     // Services opened directly against an isolated settings file work with its
     // persistent data. The application's shared instance starts locked.
     private volatile BookmarkSession? _bookmarkSession = new(false);
+    private AppSettingsData? _realDataBeforeDecoy;
     internal BookmarkSession? ActiveBookmarkSession => _bookmarkSession;
     internal BookmarkSession? PersonalBookmarkSession => _bookmarkSession is { Temporary: false } current ? current : null;
     internal ImmutableList<BookmarkItem> CurrentBookmarks => BookmarksFor(_bookmarkSession);
@@ -104,8 +106,22 @@ public class SettingsService
 
     internal void SetBookmarkWorkspace(bool? decoy)
     {
-        if (_bookmarkSession?.Temporary == decoy) return;
-        _bookmarkSession = decoy.HasValue ? new(decoy.Value) : null;
+        lock (_saveGate)
+        {
+            if (_bookmarkSession?.Temporary == true && decoy != true && _realDataBeforeDecoy != null)
+            {
+                Data = _realDataBeforeDecoy;
+                _realDataBeforeDecoy = null;
+            }
+            else if (decoy == true && _bookmarkSession?.Temporary != true)
+            {
+                _realDataBeforeDecoy = Data;
+                Data = Data.WithBookmarks([]);
+            }
+
+            if (_bookmarkSession?.Temporary == decoy) return;
+            _bookmarkSession = decoy.HasValue ? new(decoy.Value) : null;
+        }
     }
 
     public AppSettingsData Data { get; private set; }
@@ -274,6 +290,13 @@ public class SettingsService
         lock (_saveGate)
         {
             if (ReadDeferred) return false;
+            if (_bookmarkSession?.Temporary == true)
+            {
+                // Decoy sessions must never overwrite the real workspace's persisted settings on disk.
+                Normalize(Data);
+                NotifySettingsChanged();
+                return true;
+            }
             try
             {
                 var snapshot = bookmarkChange == null ? Data : Data.WithBookmarks(bookmarkChange);

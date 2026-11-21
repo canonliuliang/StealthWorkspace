@@ -65,13 +65,28 @@ public partial class VaultService
         if (!IsDefinitelyMissing(RemovalJournalPath))
         {
             var existing = ReadRemovalJournal();
-            // Clear-decoy retries may now have fewer items after a partial success.
-            if (existing.Operation != operation || operation != "clear-decoy" &&
-                !existing.Files.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(files) &&
-                !existing.Files.Where(name => !IsDefinitelyMissing(Path.Combine(_mediaFolder, name)))
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(files))
-                throw new InvalidOperationException("请先重试尚未完成的删除操作，再进行其他删除。");
             ValidateRemovalJournal(existing);
+            var remaining = existing.Files
+                .Where(name => !IsDefinitelyMissing(Path.Combine(_mediaFolder, name)))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            if (existing.Operation == "decoy-item" && operation == "clear-decoy")
+            {
+                existing.Operation = "clear-decoy";
+                existing.Files = files;
+                ValidateRemovalJournal(existing);
+                WriteRemovalJournal(existing);
+                return existing;
+            }
+
+            // Clear-decoy retries or subset retries of previously authorized items may proceed.
+            bool matchesExisting = existing.Operation == operation &&
+                (operation == "clear-decoy"
+                 || existing.Files.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(files)
+                 || remaining.SetEquals(files)
+                 || (files.Count > 0 && files.All(remaining.Contains)));
+            if (!matchesExisting)
+                throw new InvalidOperationException("请先重试尚未完成的删除操作，再进行其他删除。");
             return existing;
         }
         RemovalJournal journal;
@@ -105,24 +120,26 @@ public partial class VaultService
         }
     }
 
-    private async Task ExecuteRemovalAsync(RemovalJournal journal, IProgress<double>? progress = null)
+    private async Task ExecuteRemovalAsync(RemovalJournal journal, IProgress<double>? progress = null, IReadOnlyList<string>? requested = null)
     {
         ValidateRemovalJournal(journal);
+        var files = requested ?? journal.Files;
         await Task.Run(() =>
         {
-            for (int i = 0; i < journal.Files.Count; i++)
+            for (int i = 0; i < files.Count; i++)
             {
-                string path = Path.Combine(_mediaFolder, journal.Files[i]);
+                string path = Path.Combine(_mediaFolder, files[i]);
                 // Failure is retained in the index, even if another item succeeded.
                 if (!IsDefinitelyMissing(path) && !CryptoService.ShredFile(path, 1))
                     AppLog.Warn("保险箱删除未完成，已保留索引和重试记录");
-                progress?.Report((i + 1.0) / journal.Files.Count);
+                progress?.Report((i + 1.0) / files.Count);
             }
         });
         bool complete;
         try { complete = FinalizeRemovalIndex(journal); }
         finally { RefreshVisibleItems(); }
-        if (!complete) throw new IOException("部分文件未能移除，记录仍保留。请关闭占用的播放器或预览后，重试本次删除。");
+        if (!complete && files.Any(name => !IsDefinitelyMissing(Path.Combine(_mediaFolder, name))))
+            throw new IOException("部分文件未能移除，记录仍保留。请关闭占用的播放器或预览后，重试本次删除。");
     }
 
     private bool FinalizeRemovalIndex(RemovalJournal journal)

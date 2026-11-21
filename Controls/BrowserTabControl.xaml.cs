@@ -43,6 +43,8 @@ public sealed partial class BrowserTabControl : UserControl
     private readonly List<CookieDisplayItem> _allCookies = new();
     private readonly ObservableRangeCollection<CookieDisplayItem> _filteredCookies = new();
     private readonly BrowserTabPermissions _tabPermissions = new();
+    private readonly SettingsService.BookmarkSession? _workspace = SettingsService.Instance.ActiveBookmarkSession;
+    private bool CanAccessDownloads => !_isDisposed && BrowserDownloadPath.IsCurrentWorkspace(_workspace);
     private int _cookieLoadVersion;
     private string? _permissionPanelOrigin;
     private readonly ObservableCollection<HistorySessionItem> _sessionHistory = BrowserSessionHistory.Items;
@@ -52,6 +54,8 @@ public sealed partial class BrowserTabControl : UserControl
     private Task? _initializationTask;
     private TaskCompletionSource<bool>? _initializationCompletion;
     private CoreWebView2? _hookedCore;
+    private Windows.Foundation.TypedEventHandler<CoreWebView2, CoreWebView2DownloadStartingEventArgs>? _downloadStartingHandler;
+    private Windows.Foundation.TypedEventHandler<CoreWebView2, CoreWebView2PermissionRequestedEventArgs>? _permissionRequestedHandler;
     private WebView2? _browserControl;
     private readonly HashSet<CoreWebView2DownloadOperation> _activeDownloads = new();
     private readonly Dictionary<CoreWebView2DownloadOperation, BrowserDownloadPath> _downloadPaths = new();
@@ -82,9 +86,9 @@ public sealed partial class BrowserTabControl : UserControl
     private string? _pendingNavigationUrl;
     private string? _lastRequestedUrl;
     private string? _downloadNavigationUrl;
-    private string? _addressAtNavigationStart;
     private ulong? _activeNavigationId;
     private bool _documentReady;
+    private bool _hadReadyDocumentBeforeNav;
     private bool _historyRecorded;
     private bool _focusPageAfterNavigation;
     private bool _navigationFailed;
@@ -492,6 +496,7 @@ public sealed partial class BrowserTabControl : UserControl
                 try { download.Cancel(); } catch { }
                 DetachDownloadStateHandler(download);
             }
+            if (_downloadsFlyout?.Content is DownloadListControl downloadList) downloadList.Detach();
             _downloadsFlyout?.Hide();
             _downloadsFlyout = null;
             BrowserDownloads.PendingCountChanged -= UpdateDownloadBadge;
@@ -755,7 +760,7 @@ public sealed partial class BrowserTabControl : UserControl
         return _browserControl = browser;
     }
 
-    private static void ConfigureCoreWebView2(CoreWebView2 core)
+    private void ConfigureCoreWebView2(CoreWebView2 core)
     {
         try
         {
@@ -766,9 +771,11 @@ public sealed partial class BrowserTabControl : UserControl
             ApplyBrowserColorScheme(core);
             // Resolve a writable local folder before a download starts. The system
             // Downloads folder may be redirected to an unavailable network share.
-            Directory.CreateDirectory(AppPaths.IsolatedDownloadsRoot);
-            AppPaths.Hide(AppPaths.IsolatedDownloadsRoot);
-            core.Profile.DefaultDownloadFolderPath = AppPaths.IsolatedDownloadsRoot;
+            if (!CanAccessDownloads) return;
+            string folder = AppPaths.IsolatedDownloadsRoot;
+            Directory.CreateDirectory(folder);
+            AppPaths.Hide(folder);
+            core.Profile.DefaultDownloadFolderPath = folder;
         }
         catch (Exception ex)
         {
@@ -923,9 +930,11 @@ public sealed partial class BrowserTabControl : UserControl
 
         try
         {
-            core.PermissionRequested += CoreWebView2_PermissionRequested;
+            _permissionRequestedHandler = (_, args) => CoreWebView2_PermissionRequested(core, args);
+            core.PermissionRequested += _permissionRequestedHandler;
             core.IsDocumentPlayingAudioChanged += CoreWebView2_IsDocumentPlayingAudioChanged;
-            core.DownloadStarting += CoreWebView2_DownloadStarting;
+            _downloadStartingHandler = (_, args) => CoreWebView2_DownloadStarting(core, args);
+            core.DownloadStarting += _downloadStartingHandler;
             core.ContainsFullScreenElementChanged += CoreWebView2_ContainsFullScreenElementChanged;
             core.NewWindowRequested += CoreWebView2_NewWindowRequested;
             core.ContextMenuRequested += CoreWebView2_ContextMenuRequested;
@@ -962,9 +971,11 @@ public sealed partial class BrowserTabControl : UserControl
 
         try
         {
-            core.PermissionRequested -= CoreWebView2_PermissionRequested;
+            if (_permissionRequestedHandler != null) core.PermissionRequested -= _permissionRequestedHandler;
+            _permissionRequestedHandler = null;
             core.IsDocumentPlayingAudioChanged -= CoreWebView2_IsDocumentPlayingAudioChanged;
-            core.DownloadStarting -= CoreWebView2_DownloadStarting;
+            if (_downloadStartingHandler != null) core.DownloadStarting -= _downloadStartingHandler;
+            _downloadStartingHandler = null;
             core.ContainsFullScreenElementChanged -= CoreWebView2_ContainsFullScreenElementChanged;
             core.NewWindowRequested -= CoreWebView2_NewWindowRequested;
             core.ContextMenuRequested -= CoreWebView2_ContextMenuRequested;
@@ -1003,6 +1014,7 @@ public sealed partial class BrowserTabControl : UserControl
         _isInitialized = !browserExited;
         _navigationFailed = false;
         _documentReady = false;
+        _hadReadyDocumentBeforeNav = false;
         _isPlayingAudio = false;
         _isBrowserFullScreen = false;
         if (browserExited)
@@ -1176,7 +1188,7 @@ public sealed partial class BrowserTabControl : UserControl
 
     #region Permissions (CoreWebView2)
 
-    private void CoreWebView2_PermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
+    private async void CoreWebView2_PermissionRequested(CoreWebView2 core, CoreWebView2PermissionRequestedEventArgs e)
     {
         // By default WebView2 may cache the decision and bypass our handler on
         // the next request, even after the user changes this switch.
@@ -1187,9 +1199,32 @@ public sealed partial class BrowserTabControl : UserControl
             AppLog.Warn("WebView2 request-scoped permissions unavailable: " + ex.GetType().Name);
             return;
         }
-        _tabPermissions.SetDocument(_hookedCore?.Source);
-        if (!_isDisposed && !_retainedForDownloads &&
-            !_tabPermissions.Blocks(e.PermissionKind, e.Uri, SettingsService.Instance.Data)) return;
+        if (!CanAccessDownloads || _retainedForDownloads || !ReferenceEquals(core, _hookedCore))
+        {
+            e.State = CoreWebView2PermissionState.Deny;
+            e.Handled = true;
+            return;
+        }
+        _tabPermissions.SetDocument(core.Source);
+        if (IsForegroundTab && IsLoaded && _tabPermissions.CanAskForFilePermission(e.PermissionKind, e.Uri))
+        {
+            var deferral = e.GetDeferral();
+            e.State = CoreWebView2PermissionState.Deny;
+            e.Handled = true;
+            try
+            {
+                if (await ConfirmFilePermissionAsync(core, e.PermissionKind, e.Uri))
+                    e.State = CoreWebView2PermissionState.Allow;
+            }
+            catch (Exception ex) { AppLog.Warn("Confirm site permission: " + ex.GetType().Name); }
+            finally
+            {
+                try { deferral.Complete(); }
+                catch (Exception ex) { AppLog.Warn("Complete site permission: " + ex.GetType().Name); }
+            }
+            return;
+        }
+        if (!_tabPermissions.Blocks(e.PermissionKind, e.Uri, SettingsService.Instance.Data)) return;
 
         e.State = CoreWebView2PermissionState.Deny;
         e.Handled = true;
@@ -1198,8 +1233,36 @@ public sealed partial class BrowserTabControl : UserControl
         _blockedCounter++;
         UiMotion.SetVisible(ShieldBlockedBadge, true, MotionCue.Fade);
         ShieldBlockedCountText.Text = _blockedCounter.ToString(CultureInfo.InvariantCulture);
-        SetHubStatus($"此标签页已阻止 {_blockedCounter} 次权限请求");
+        SetHubStatus($"此标签页已阻止 {_blockedCounter} 次权限请求（{DescribePermissionKind(e.PermissionKind)}）");
     }
+
+    private async Task<bool> ConfirmFilePermissionAsync(CoreWebView2 core, CoreWebView2PermissionKind kind, string requester)
+    {
+        if (!CanAccessDownloads || _retainedForDownloads || !_tabPermissions.CanAskForFilePermission(kind, requester)) return false;
+        string origin = _tabPermissions.Origin!;
+        ulong document = _imageDocumentId;
+        bool files = kind == CoreWebView2PermissionKind.FileReadWrite;
+        bool accepted = await ConfirmForCurrentTabAsync(core, files ? "允许本地文件读写？" : "允许连续下载多个文件？",
+            files ? $"{origin} 请求读写你通过文件选择器选定的文件或文件夹。" : $"{origin} 请求在本次操作中连续下载多个文件。",
+            "允许本次请求");
+        return accepted && CanAccessDownloads && !_retainedForDownloads && document == _imageDocumentId && origin == _tabPermissions.Origin;
+    }
+
+    private static string DescribePermissionKind(CoreWebView2PermissionKind kind) => kind switch
+    {
+        CoreWebView2PermissionKind.Camera => "摄像头",
+        CoreWebView2PermissionKind.Microphone => "麦克风",
+        CoreWebView2PermissionKind.Geolocation => "位置信息",
+        CoreWebView2PermissionKind.Notifications => "通知",
+        CoreWebView2PermissionKind.ClipboardRead => "读取剪贴板",
+        CoreWebView2PermissionKind.MultipleAutomaticDownloads => "多文件连续下载",
+        CoreWebView2PermissionKind.FileReadWrite => "本地文件读写",
+        CoreWebView2PermissionKind.Autoplay => "自动播放",
+        CoreWebView2PermissionKind.LocalFonts => "本地字体枚举",
+        CoreWebView2PermissionKind.MidiSystemExclusiveMessages => "MIDI 设备",
+        CoreWebView2PermissionKind.WindowManagement => "多屏幕窗口管理",
+        _ => kind.ToString()
+    };
 
     private static void ApplyBrowserColorScheme(CoreWebView2 core)
     {
@@ -1320,7 +1383,7 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void CoreWebView2_DownloadStarting(object? sender, CoreWebView2DownloadStartingEventArgs e)
     {
-        if (_isDisposed || _retainedForDownloads)
+        if (!CanAccessDownloads || _retainedForDownloads || !ReferenceEquals(sender, _hookedCore))
         {
             e.Cancel = true;
             e.Handled = true;
@@ -1348,10 +1411,11 @@ public sealed partial class BrowserTabControl : UserControl
             // a blank one. Suppress the separate per-WebView native popup.
             e.Handled = true;
             _downloadNavigationUrl = operation.Uri;
-            if (string.Equals(_downloadNavigationUrl, _lastRequestedUrl, StringComparison.Ordinal))
+            if (SameDownloadUrl(_downloadNavigationUrl, _lastRequestedUrl))
             {
                 BrowserErrorBar.IsOpen = false;
                 _navigationFailed = false;
+                if (_activeNavigationId == null) RestoreDocumentAfterDownload();
             }
 
             string displayName = Path.GetFileName(targetPath);
@@ -1520,7 +1584,8 @@ public sealed partial class BrowserTabControl : UserControl
 
     private async void StoreDownload_Click(object sender, RoutedEventArgs args)
     {
-        if (DownloadVaultActions.DataContext is BrowserDownloadItem item) await item.StoreInVaultAsync();
+        if (CanAccessDownloads && DownloadVaultActions.DataContext is BrowserDownloadItem item &&
+            BrowserDownloads.Items.Contains(item)) await item.StoreInVaultAsync();
     }
 
     private void ShowDownloadToast(string glyph, string title, string description, BrowserDownloadItem? completed = null)
@@ -1539,6 +1604,8 @@ public sealed partial class BrowserTabControl : UserControl
     {
         UiMotion.SetOverlayVisible(DownloadToast, false, MotionCue.FromBelow);
     }
+
+    internal void OpenDownloadsFromShortcut() => ShowDownloads_Click(this, new RoutedEventArgs());
 
     #endregion
 
@@ -2058,13 +2125,16 @@ public sealed partial class BrowserTabControl : UserControl
         }
     }
 
-    private async Task<bool> ConfirmSessionDataClearAsync(CoreWebView2 core, string title, string detail)
+    private Task<bool> ConfirmSessionDataClearAsync(CoreWebView2 core, string title, string detail) =>
+        ConfirmForCurrentTabAsync(core, title, detail, "确认清除");
+
+    private async Task<bool> ConfirmForCurrentTabAsync(CoreWebView2 core, string title, string detail, string primary)
     {
         if (!IsLoaded || !IsForegroundTab || _isDisposed || core != _hookedCore) return false;
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot, Title = title, Content = detail,
-            PrimaryButtonText = "确认清除", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close
+            PrimaryButtonText = primary, CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close
         };
         var choice = await WorkspaceDialogs.ShowAsync(dialog);
         return choice == ContentDialogResult.Primary && !_isDisposed && IsLoaded && IsForegroundTab && core == _hookedCore;
@@ -2204,11 +2274,14 @@ public sealed partial class BrowserTabControl : UserControl
     private async void OpenDownloadsFolder_Click(object sender, RoutedEventArgs e)
     {
         MoreActionsFlyout.Hide();
+        if (!CanAccessDownloads) return;
         try
         {
-            Directory.CreateDirectory(AppPaths.IsolatedDownloadsRoot);
-            AppPaths.Hide(AppPaths.IsolatedDownloadsRoot);
-            var folder = await Windows.Storage.StorageFolder.GetFolderFromPathAsync(AppPaths.IsolatedDownloadsRoot);
+            string directory = AppPaths.IsolatedDownloadsRoot;
+            Directory.CreateDirectory(directory);
+            AppPaths.Hide(directory);
+            var folder = await Windows.Storage.StorageFolder.GetFolderFromPathAsync(directory);
+            if (!CanAccessDownloads) return;
             if (!await Launcher.LaunchFolderAsync(folder)) ShowBrowserError("无法打开下载文件夹", "请稍后重试。");
         }
         catch (Exception ex)
@@ -2220,7 +2293,7 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void ShowDownloads_Click(object sender, RoutedEventArgs e)
     {
-        if (_isDisposed) return;
+        if (!CanAccessDownloads) return;
         CancelInitialAddressFocus();
         try
         {
@@ -2249,12 +2322,13 @@ public sealed partial class BrowserTabControl : UserControl
         if (_isDisposed) return;
         BackBtn.IsEnabled = sender.CanGoBack;
         ForwardBtn.IsEnabled = sender.CanGoForward;
-        if (UrlTextBox.FocusState == FocusState.Unfocused) UrlTextBox.Text = DisplayAddress(sender.Source);
+        if (!IsEditingAddress) UrlTextBox.Text = DisplayAddress(sender.Source);
     }
 
     private void CoreWebView2_SourceChanged(CoreWebView2 sender, CoreWebView2SourceChangedEventArgs args)
     {
         if (_isDisposed) return;
+        if (args.IsNewDocument) _hadReadyDocumentBeforeNav = false;
         DocumentAddressChanged?.Invoke();
         _tabPermissions.SetDocument(sender.Source);
         UpdatePopupButton();
@@ -2262,11 +2336,7 @@ public sealed partial class BrowserTabControl : UserControl
         ClearCookieRows();
         // Commit the real address on redirects/SPA navigation without waiting for
         // slow images or ads. Preserve an address the user has started editing.
-        if (UrlTextBox.FocusState == FocusState.Unfocused || UrlTextBox.Text == _addressAtNavigationStart)
-        {
-            UrlTextBox.Text = DisplayAddress(sender.Source);
-            _addressAtNavigationStart = UrlTextBox.Text;
-        }
+        if (!IsEditingAddress) UrlTextBox.Text = DisplayAddress(sender.Source);
         UpdateBookmarkStarState();
         if (!args.IsNewDocument && _documentReady) AddSessionHistory(sender.DocumentTitle, sender.Source);
     }
@@ -2396,11 +2466,7 @@ public sealed partial class BrowserTabControl : UserControl
         // a real navigation has begun (notably a fast local or cached page).
         _focusAddressOnLoad = false;
 
-        if (!string.Equals(_lastRequestedUrl, uri.AbsoluteUri, StringComparison.Ordinal) ||
-            UrlTextBox.FocusState == FocusState.Unfocused)
-        {
-            UrlTextBox.Text = uri.AbsoluteUri;
-        }
+        if (!IsEditingAddress) UrlTextBox.Text = uri.AbsoluteUri;
 
         _lastRequestedUrl = uri.AbsoluteUri;
         CoreWebView2? core = _browserControl?.CoreWebView2;
@@ -2558,11 +2624,13 @@ public sealed partial class BrowserTabControl : UserControl
             _blockedPopupUrls.Clear();
             _blockedPopupCount = 0;
             UpdatePopupButton();
-            _addressAtNavigationStart = UrlTextBox.Text;
             _activeNavigationId = args.NavigationId;
         }
         if (_privacyCoverActive) ScheduleBackgroundSleep();
         else _backgroundTimer?.Stop();
+        // Redirects and a second navigation can start before the previous one commits.
+        // SourceChanged clears this flag when WebView2 actually replaces the old page.
+        _hadReadyDocumentBeforeNav |= _documentReady && !IsBlankDocumentUrl(_hookedCore?.Source);
         _documentReady = false;
         _historyRecorded = false;
         if (TryCreateWebUri(args.Uri, out Uri? target)) _lastRequestedUrl = target!.AbsoluteUri;
@@ -2572,6 +2640,30 @@ public sealed partial class BrowserTabControl : UserControl
         BrowserProgressBar.Visibility = Visibility.Visible;
         BeginFaviconNavigation(args.Uri);
         UpdateNavigationVisuals();
+    }
+
+    private static bool SameDownloadUrl(string? a, string? b)
+    {
+        if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+        if (string.Equals(a, b, StringComparison.Ordinal)) return true;
+        if (Uri.TryCreate(a, UriKind.Absolute, out Uri? ua) && Uri.TryCreate(b, UriKind.Absolute, out Uri? ub))
+        {
+            // WebView2 may escape literal brackets when handing off to its
+            // downloader. Keep encoded separators such as %2F and %26 distinct.
+            static string RequestUrl(Uri uri) => uri.GetComponents(UriComponents.HttpRequestUrl, UriFormat.UriEscaped)
+                .Replace("%5B", "[", StringComparison.OrdinalIgnoreCase).Replace("%5D", "]", StringComparison.OrdinalIgnoreCase);
+            return RequestUrl(ua) == RequestUrl(ub);
+        }
+        return false;
+    }
+
+    private bool RestoreDocumentAfterDownload()
+    {
+        if (!_hadReadyDocumentBeforeNav || _hookedCore is not { } core || IsBlankDocumentUrl(core.Source)) return false;
+        _documentReady = true;
+        if (_favicon == null) CoreWebView2_FaviconChanged(core, EventArgs.Empty);
+        NavigationVisualChanged?.Invoke();
+        return true;
     }
 
     private void BrowserControl_NavigationCompleted(WebView2 sender, CoreWebView2NavigationCompletedEventArgs args)
@@ -2605,9 +2697,17 @@ public sealed partial class BrowserTabControl : UserControl
              args.WebErrorStatus == CoreWebView2WebErrorStatus.ValidAuthenticationCredentialsRequired);
         if (!args.IsSuccess && !serverResponse)
         {
-            if (args.WebErrorStatus == CoreWebView2WebErrorStatus.ConnectionAborted &&
-                string.Equals(_downloadNavigationUrl, _lastRequestedUrl, StringComparison.Ordinal) && _downloadNavigationUrl != null) return;
-            if (args.WebErrorStatus == CoreWebView2WebErrorStatus.OperationCanceled) return;
+            bool downloadAborted = args.WebErrorStatus == CoreWebView2WebErrorStatus.ConnectionAborted &&
+                _downloadNavigationUrl != null && SameDownloadUrl(_downloadNavigationUrl, _lastRequestedUrl);
+            if (downloadAborted || args.WebErrorStatus == CoreWebView2WebErrorStatus.OperationCanceled)
+            {
+                if (!RestoreDocumentAfterDownload() && args.WebErrorStatus == CoreWebView2WebErrorStatus.OperationCanceled && IsBlankDocumentUrl(core?.Source))
+                {
+                    // Initial load stopped before commit: mark so Reload retries _lastRequestedUrl instead of about:blank.
+                    _navigationFailed = true;
+                }
+                return;
+            }
             _navigationFailed = true;
             string reason = args.WebErrorStatus.ToString();
             var failure = BrowserNavigationFailure.Describe(args.WebErrorStatus);
@@ -2616,10 +2716,12 @@ public sealed partial class BrowserTabControl : UserControl
             return;
         }
 
+        _documentReady = true;
+        _hadReadyDocumentBeforeNav = false;
         string url = core?.Source ?? string.Empty;
         if (IsBlankDocumentUrl(url))
         {
-            if (UrlTextBox.FocusState == FocusState.Unfocused || UrlTextBox.Text == _addressAtNavigationStart)
+            if (!IsEditingAddress)
                 UrlTextBox.Text = DisplayAddress(url);
             string? documentTitle = core?.DocumentTitle;
             CurrentTitle = !string.IsNullOrWhiteSpace(documentTitle) && !IsBlankDocumentUrl(documentTitle)
@@ -2629,8 +2731,7 @@ public sealed partial class BrowserTabControl : UserControl
             return;
         }
 
-        if (UrlTextBox.FocusState == FocusState.Unfocused ||
-            string.Equals(UrlTextBox.Text, _addressAtNavigationStart, StringComparison.Ordinal))
+        if (!IsEditingAddress)
         {
             UrlTextBox.Text = url;
         }

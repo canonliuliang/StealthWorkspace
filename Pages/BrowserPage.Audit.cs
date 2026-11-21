@@ -232,6 +232,7 @@ public sealed partial class BrowserPage
         var blank = (BrowserTabControl)blankItem.Content;
         AuditRequire(await blank.OpenDownloadsAuditAsync() && !blank.HasBrowserControl,
             "new blank tab shows shared downloads without starting a WebView");
+        await blank.CheckDownloadShortcutAuditAsync();
         AuditRequire(blank.HasPendingDownloadBadge, "new tab displays pending count for the closed tab's download");
         record.TogglePauseResume();
         await WaitAuditAsync(() => record.CanResume);
