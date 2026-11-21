@@ -29,10 +29,15 @@ public sealed partial class BrowserTabControl
             !uri.IsLoopback || uri.Scheme != Uri.UriSchemeHttp)))
             throw new InvalidOperationException("Edge verification requires the isolated menu audit and its local test page.");
 
-        async Task OpenMenuAsync()
+        async Task OpenMenuAsync(bool reopen = false)
         {
+            if (reopen)
+            {
+                if (MoreActionsFlyout.IsOpen) MoreActionsFlyout.Hide();
+                for (int i = 0; i < 80 && action.IsLoaded; i++) await Task.Delay(20);
+            }
             if (!MoreActionsFlyout.IsOpen) MediaAcceptance.Invoke(BrowserMenuBtn);
-            for (int i = 0; i < 100 && !action.IsLoaded; i++) await Task.Delay(25);
+            for (int i = 0; i < 100 && (!action.IsLoaded || !MoreActionsFlyout.IsOpen); i++) await Task.Delay(25);
             if (!action.IsLoaded || !action.IsEnabled || action.Visibility != Visibility.Visible)
                 throw new InvalidOperationException("Edge menu action unavailable.");
         }
@@ -48,12 +53,13 @@ public sealed partial class BrowserTabControl
             DataPackage? copied = null;
             int writes = 0;
             bool privateOptions = false;
+            bool allowWrite = false;
             _shareLinkWriter = (data, options) =>
             {
                 writes++;
                 copied = data;
                 privateOptions = !options.IsAllowedInHistory && !options.IsRoamable;
-                return true;
+                return allowWrite;
             };
             try
             {
@@ -62,16 +68,19 @@ public sealed partial class BrowserTabControl
                 if (writes != 0) throw new InvalidOperationException("An unconfirmed action copied the URL.");
                 if (expectedPage != null)
                 {
-                    await OpenMenuAsync();
+                    await OpenMenuAsync(reopen: true);
                     MediaAcceptance.Invoke(action);
+                    await ChooseEdgeGuidanceAsync("PrimaryButton", "复制当前网页地址", expectedPage);
+                    if (writes != 1) throw new InvalidOperationException("The first clipboard attempt did not reach the writer.");
+                    allowWrite = true;
                     await ChooseEdgeGuidanceAsync("PrimaryButton", "复制当前网页地址");
                     for (int i = 0; i < 100 && (writes == 0 || BrowserErrorBar.Title != "已复制网页地址"); i++) await Task.Delay(25);
-                    if (writes != 1 || !privateOptions || copied == null || await copied.GetView().GetTextAsync() != expectedPage ||
+                    if (writes != 2 || !privateOptions || copied == null || await copied.GetView().GetTextAsync() != expectedPage ||
                         BrowserErrorBar.Title != "已复制网页地址" || GetCurrentDocumentUrl() != expectedPage)
                         throw new InvalidOperationException("Private handoff did not copy the exact URL with the confirmed options.");
                 }
                 SmokeTest.Report("menu UI: restricted Edge InPrivate guidance verified for " + kind +
-                    (expectedPage == null ? "; close copied nothing" : "; cancel copied nothing; confirmed the exact URL without clipboard history or roaming"));
+                    (expectedPage == null ? "; close copied nothing" : "; cancel copied nothing; rejected clipboard kept the full address selected; confirmed the exact URL without clipboard history or roaming"));
             }
             finally
             {
@@ -91,29 +100,51 @@ public sealed partial class BrowserTabControl
         if (restoreMenu) await OpenMenuAsync();
     }
 
-    private async Task ChooseEdgeGuidanceAsync(string name, string expectedLabel)
+    private async Task ChooseEdgeGuidanceAsync(string name, string expectedLabel, string? rejectedAddress = null)
     {
+        string observed = "no popup";
         for (int i = 0; i < 120; i++)
         {
             await Task.Delay(25);
             foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(XamlRoot))
             {
-                if (FindFixtureButton(popup.Child, name) is not { } answer || answer.Content?.ToString() != expectedLabel) continue;
+                if (FindFixtureButton(popup.Child, name) is not { } answer) continue;
+                observed = answer.Content?.ToString() ?? "no label";
+                if (observed != expectedLabel) continue;
                 if (!ContainsDirections(popup.Child)) throw new InvalidOperationException("The Edge handoff steps were not visible.");
                 MediaAcceptance.Invoke(answer);
+                if (rejectedAddress != null)
+                {
+                    for (int j = 0; j < 100; j++)
+                    {
+                        await Task.Delay(25);
+                        var field = FindEdgeAuditVisual<TextBox>(popup.Child, b => b.Name == "EdgeHandoffAddress");
+                        var error = FindEdgeAuditVisual<TextBlock>(popup.Child, b => b.Visibility == Visibility.Visible && b.Text.Contains("Windows 未允许自动复制"));
+                        if (field is { IsLoaded: true, IsReadOnly: true, SelectionStart: 0 } &&
+                            field.Text == rejectedAddress && field.SelectedText == rejectedAddress && error != null && answer.IsEnabled)
+                            return;
+                    }
+                    throw new InvalidOperationException("Rejected clipboard writing must keep the complete address visible, selected and available for retry.");
+                }
                 for (int j = 0; j < 120 && VisualTreeHelper.GetOpenPopupsForXamlRoot(XamlRoot).Any(p => ContainsDirections(p.Child)); j++) await Task.Delay(25);
+                // After the popup leaves the visual tree, ShowAsync can still be
+                // completing its native close transition.
+                await Task.Delay(350);
                 return;
             }
         }
-        throw new InvalidOperationException("The handoff button was not available: " + expectedLabel);
+        throw new InvalidOperationException("The handoff button was not available: " + expectedLabel + "; observed " + observed);
     }
 
     private static bool ContainsDirections(DependencyObject? node)
+        => FindEdgeAuditVisual<TextBlock>(node, text => text.Text.Contains("Ctrl+Shift+N") && text.Text.Contains("InPrivate")) != null;
+
+    private static T? FindEdgeAuditVisual<T>(DependencyObject? node, Func<T, bool> predicate) where T : DependencyObject
     {
-        if (node == null) return false;
-        if (node is TextBlock text && text.Text.Contains("Ctrl+Shift+N") && text.Text.Contains("InPrivate")) return true;
+        if (node == null) return null;
+        if (node is T wanted && predicate(wanted)) return wanted;
         for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++)
-            if (ContainsDirections(VisualTreeHelper.GetChild(node, i))) return true;
-        return false;
+            if (FindEdgeAuditVisual(VisualTreeHelper.GetChild(node, i), predicate) is { } found) return found;
+        return null;
     }
 }

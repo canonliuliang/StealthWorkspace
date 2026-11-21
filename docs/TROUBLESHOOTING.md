@@ -16,7 +16,7 @@ SmartScreen 与代码签名属于发布信任问题，不能用关闭保护或�
 
 在 Stealth 的新标签页或已经打开的网页点击右上角「…」，选择「在 Edge 隐私窗口打开」。在新标签页操作会打开空白的 InPrivate 窗口。在网页操作会使用当前网址，外部窗口有自己的登录状态。
 
-如果看到 Windows 权限受限的提示，切换到 Edge，按 Ctrl+Shift+N。也可以右键任务栏上的 Edge 图标，选择「新建 InPrivate 窗口」。在 Stealth 点击「复制当前网页地址」，再到带有 InPrivate 标记的窗口粘贴。关闭 Stealth 后还可继续使用这个窗口。如果组织策略关闭了 InPrivate，Stealth 会显示相应提示。[Edge 键盘快捷键](https://support.microsoft.com/en-us/edge/keyboard-shortcuts-in-microsoft-edge)
+如果看到 Windows 权限受限的提示，切换到 Edge，按 Ctrl+Shift+N。也可以右键任务栏上的 Edge 图标，选择「新建 InPrivate 窗口」。在 Stealth 点击「复制当前网页地址」，再到带有 InPrivate 标记的窗口粘贴。如果 Windows 拒绝自动复制，提示框会保留当前完整网址供选择。关闭 Stealth 后还可继续使用这个窗口。如果组织策略关闭了 InPrivate，Stealth 会显示相应提示。[Edge 键盘快捷键](https://support.microsoft.com/en-us/edge/keyboard-shortcuts-in-microsoft-edge)
 
 ## 媒体导入或播放失败
 

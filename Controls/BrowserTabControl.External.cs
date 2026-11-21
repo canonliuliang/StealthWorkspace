@@ -91,20 +91,20 @@ public sealed partial class BrowserTabControl
             if (!TryCreateWebUri(address, out var uri)) uri = null;
             if (uri != null && !string.IsNullOrEmpty(uri.UserInfo))
             {
-                ShowBrowserError("网址含有账号信息", "为保护账号，请先打开不含用户名和密码的网址，再交给 Edge。");
+                ShowExternalActionStatus(InfoBarSeverity.Warning, "网址含有账号信息", "请先打开不含用户名和密码的网址，再交给 Edge。");
                 return;
             }
             const string policy = @"SOFTWARE\Policies\Microsoft\Edge";
             if (Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\" + policy, "InPrivateModeAvailability", null) is 1 ||
                 Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\" + policy, "InPrivateModeAvailability", null) is 1)
             {
-                ShowBrowserError("Edge 隐私窗口不可用", "此电脑的 Edge 策略已关闭 InPrivate，未向 Edge 传送网址。");
+                ShowExternalActionStatus(InfoBarSeverity.Warning, "Edge 隐私窗口不可用", "此电脑的 Edge 策略已关闭 InPrivate，未向 Edge 传送网址。");
                 return;
             }
             string? executable = new[] { Environment.SpecialFolder.ProgramFilesX86, Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.LocalApplicationData }
                 .Select(folder => System.IO.Path.Combine(Environment.GetFolderPath(folder), "Microsoft", "Edge", "Application", "msedge.exe"))
                 .FirstOrDefault(System.IO.File.Exists);
-            if (executable == null) { ShowBrowserError("未找到 Microsoft Edge", "请确认本机已安装 Edge。"); return; }
+            if (executable == null) { ShowExternalActionStatus(InfoBarSeverity.Warning, "未找到 Microsoft Edge", "请确认本机已安装 Edge。"); return; }
             if (CleanerAccess.IsRestricted)
             {
                 await ShowEdgeInPrivateInstructionsAsync(uri);
@@ -128,19 +128,41 @@ public sealed partial class BrowserTabControl
     {
         ulong document = _imageDocumentId;
         const string directions = "当前 Windows 权限限制了 Stealth 直接打开 Edge。请在 Edge 中按 Ctrl+Shift+N，或右键任务栏的 Edge 图标，选择「新建 InPrivate 窗口」。";
+        string steps = address == null ? directions : directions + "\n\n选择下方按钮复制当前网页地址，到 InPrivate 窗口按 Ctrl+L，再粘贴并打开。";
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = "在 Edge 隐私窗口打开",
-            Content = address == null ? directions : directions + "\n\n选择下方按钮复制当前网页地址，到 InPrivate 窗口按 Ctrl+L，再粘贴并打开。",
+            Content = steps,
             PrimaryButtonText = address == null ? string.Empty : "复制当前网页地址",
             CloseButtonText = address == null ? "知道了" : "取消",
             DefaultButton = ContentDialogButton.Close
         };
-        if (await WorkspaceDialogs.ShowAsync(dialog) != ContentDialogResult.Primary || address == null ||
-            _isDisposed || !IsForegroundTab || document != _imageDocumentId || !BrowserDownloadPath.IsCurrentWorkspace(_workspace)) return;
-        bool copied = BrowserShareLink.TryWritePrivateClipboard(address.AbsoluteUri, _shareLinkWriter);
-        if (copied) ShowExternalActionStatus(InfoBarSeverity.Success, "已复制网页地址", "打开 Edge 的 InPrivate 窗口，在地址栏粘贴即可。请单独关闭该窗口。");
-        else ShowExternalActionStatus(InfoBarSeverity.Warning, "Windows 未允许复制网址", "可在 Stealth 地址栏选择并复制网址，然后在 Edge 的 InPrivate 窗口粘贴。");
+        bool copied = false;
+        bool IsCurrent() => !_isDisposed && IsForegroundTab && document == _imageDocumentId && BrowserDownloadPath.IsCurrentWorkspace(_workspace);
+        if (address != null)
+        {
+            var instructions = new TextBlock { Text = steps, TextWrapping = TextWrapping.Wrap };
+            var addressBox = new TextBox { Name = "EdgeHandoffAddress", Header = "当前网页地址", IsReadOnly = true, Text = address.AbsoluteUri };
+            var error = new TextBlock { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+            var panel = new StackPanel { Spacing = 10 };
+            panel.Children.Add(instructions);
+            panel.Children.Add(addressBox);
+            panel.Children.Add(error);
+            dialog.Content = panel;
+            dialog.PrimaryButtonClick += (_, args) =>
+            {
+                if (!IsCurrent()) return;
+                copied = BrowserShareLink.TryWritePrivateClipboard(address.AbsoluteUri, _shareLinkWriter);
+                if (copied) return;
+                args.Cancel = true;
+                error.Text = "Windows 未允许自动复制。网址已选中，可按 Ctrl+C 尝试复制，或在 Edge 地址栏输入。";
+                error.Visibility = Visibility.Visible;
+                addressBox.Focus(FocusState.Programmatic);
+                addressBox.SelectAll();
+            };
+        }
+        if (await WorkspaceDialogs.ShowAsync(dialog) == ContentDialogResult.Primary && copied && IsCurrent())
+            ShowExternalActionStatus(InfoBarSeverity.Success, "已复制网页地址", "打开 Edge 的 InPrivate 窗口，在地址栏粘贴即可。请单独关闭该窗口。");
     }
 }
