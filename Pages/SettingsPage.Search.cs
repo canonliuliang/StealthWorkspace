@@ -29,7 +29,6 @@ public sealed partial class SettingsPage
             var cards = new List<SettingCard>();
             foreach (var card in group.Children.OfType<Border>())
             {
-                if (card == BookmarkTransferSection && decoy) continue;
                 card.Visibility = Visibility.Visible;
                 cards.Add(new(card, heading + " " + ReadControlText(card)));
             }

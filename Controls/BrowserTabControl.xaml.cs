@@ -135,7 +135,7 @@ public sealed partial class BrowserTabControl : UserControl
     internal UIElement NavigationChrome => TopNavBar;
     internal bool IsPageFullScreen => _isBrowserFullScreen;
     internal bool HasPrivacyUi => PrivacyContent != null;
-    internal bool HasAuxiliaryUi => PrivacyContent != null || BookmarksContent != null || MoreActionsContent != null;
+    internal bool HasAuxiliaryUi => PrivacyContent != null || _railManager != null || MoreActionsContent != null;
     internal bool IsSmokeSuspended => _hookedCore?.IsSuspended == true;
     internal bool IsSmokeBrowserAwake => _hookedCore is { IsSuspended: false };
     internal bool IsAudioMuted => _hookedCore?.IsMuted == true;
@@ -152,6 +152,7 @@ public sealed partial class BrowserTabControl : UserControl
         RegisterLiveTab(this);
 
         Loaded += BrowserTabControl_Loaded;
+        SizeChanged += (_, _) => RefreshBookmarkBar();
         Unloaded += BrowserTabControl_Unloaded;
         PreviewKeyDown += BrowserTabControl_PreviewKeyDown;
 
@@ -173,7 +174,7 @@ public sealed partial class BrowserTabControl : UserControl
         LoadPermissionSettings();
         UpdateEmptyNotices();
         UpdateBookmarkStarState();
-        RefreshStartBookmarks();
+        RefreshBookmarkBar();
         QueueInitialAddressFocus();
     }
 
@@ -198,6 +199,7 @@ public sealed partial class BrowserTabControl : UserControl
     {
         if (_isDisposed || _isSelected == selected) return;
         _isSelected = selected;
+        if (selected) RefreshBookmarkBar();
         if (!selected) ExitPageFullScreen();
         if (!selected) HideZoomPanel();
         UpdateBrowserVisibility();
@@ -1392,8 +1394,7 @@ public sealed partial class BrowserTabControl : UserControl
         {
             LoadPermissionSettings();
             UpdateBookmarkStarState();
-            RefreshStartBookmarks();
-            RefreshBookmarkList();
+            RefreshBookmarkBar();
             return;
         }
 
@@ -1402,8 +1403,7 @@ public sealed partial class BrowserTabControl : UserControl
             if (_isDisposed) return;
             LoadPermissionSettings();
             UpdateBookmarkStarState();
-            RefreshStartBookmarks();
-            RefreshBookmarkList();
+            RefreshBookmarkBar();
         });
     }
 
@@ -1664,7 +1664,7 @@ public sealed partial class BrowserTabControl : UserControl
 
         if (plainCtrl && e.Key == VirtualKey.D)
         {
-            BookmarkStarBtn_Click(this, new RoutedEventArgs());
+            ToggleBookmarkFromShortcut();
             e.Handled = true;
         }
         else if (e.Key == VirtualKey.Escape && FindBar.Visibility == Visibility.Visible)
@@ -1707,30 +1707,6 @@ public sealed partial class BrowserTabControl : UserControl
                 e.Key is (VirtualKey)189 or VirtualKey.Subtract ? (ushort)0xBD : (ushort)0x30;
             _ = SendNativeZoomAsync(key);
             e.Handled = true;
-        }
-    }
-
-    #endregion
-
-    #region Bookmarks
-
-    private void BookmarksFlyout_Opening(object? sender, object e)
-    {
-        if (_isDisposed) return;
-        CancelInitialAddressFocus();
-        if (BookmarksContent == null) FindName(nameof(BookmarksContent));
-        _bookmarkFilter = new();
-        BookmarkSearchBox.Text = "";
-        RefreshBookmarkList();
-    }
-
-    private void BookmarkItem_Click(object sender, RoutedEventArgs e)
-    {
-        if ((sender as FrameworkElement)?.Tag is BookmarkItem bookmark && !string.IsNullOrEmpty(bookmark.Url))
-        {
-            if (IsKeyPressed(VirtualKey.Control)) NewTabRequested?.Invoke(bookmark.Url, !IsKeyPressed(VirtualKey.Shift));
-            else NavigateToText(bookmark.Url);
-            BookmarksFlyout.Hide();
         }
     }
 
@@ -1878,7 +1854,7 @@ public sealed partial class BrowserTabControl : UserControl
     internal async Task<bool> CheckSmokeDeferredPrivacyAsync()
     {
         bool lazy = !HasPrivacyUi;
-        bool menusDeferred = BookmarksContent == null && MoreActionsContent == null;
+        bool menusDeferred = MoreActionsContent == null;
         var cfg = SettingsService.Instance.Data;
         var policy = (cfg.BlockCamera, cfg.BlockMicrophone, cfg.BlockGeolocation, cfg.BlockNotifications);
         EnsurePrivacyContent();
@@ -1957,34 +1933,15 @@ public sealed partial class BrowserTabControl : UserControl
                 }
             }
         }
-        async Task<(bool Loaded, bool FocusStable)> CheckBookmarkMenuAsync(string name)
-        {
-            // Prove that XAML projects a nonempty immutable source, including
-            // its first row. The smoke fixture never needs to persist this item.
-            var original = cfg.Bookmarks;
-            var marker = new BookmarkItem { Title = "Fixture bookmark", Url = "https://bookmarks.invalid/check" };
-            cfg.Bookmarks = original.Insert(0, marker);
-            try
-            {
-                return await CheckMenuAsync(name, BookmarksFlyout, FavoritesBtn, () => BookmarksContent?.IsLoaded == true &&
-                    BookmarksListView.Items.Count == cfg.Bookmarks.Count && ReferenceEquals(BookmarksListView.Items[0], marker));
-            }
-            finally { cfg.Bookmarks = original; }
-        }
-        var bookmarkProbe = await CheckBookmarkMenuAsync("bookmarks");
-        var bookmarks = BookmarksContent;
-        bool bookmarksLoaded = bookmarkProbe.Loaded && BookmarksListView.ItemsSource == null && _bookmarkFilter == null;
         var actionsProbe = await CheckMenuAsync("actions", MoreActionsFlyout, BrowserMenuBtn, () => MoreActionsContent?.IsLoaded == true);
         var actions = MoreActionsContent;
         bool actionsLoaded = actionsProbe.Loaded && AudioMuteBtn != null && ZoomResetBtn != null;
-        var bookmarkReuse = await CheckBookmarkMenuAsync("bookmarks-reuse");
-        bool reusedBookmarks = bookmarkReuse.Loaded && ReferenceEquals(bookmarks, BookmarksContent);
         var actionsReuse = await CheckMenuAsync("actions-reuse", MoreActionsFlyout, BrowserMenuBtn, () => MoreActionsContent?.IsLoaded == true);
         bool reusedActions = actionsReuse.Loaded && ReferenceEquals(actions, MoreActionsContent);
-        bool menusOk = menusDeferred && bookmarksLoaded && actionsLoaded && reusedBookmarks && reusedActions;
-        SmokeTest.Report("browser: deferred bookmark/actions flyouts open, bind and reuse controls=" + menusOk);
-        bool focusOk = bookmarkProbe.FocusStable && actionsProbe.FocusStable && bookmarkReuse.FocusStable && actionsReuse.FocusStable;
-        SmokeTest.Report("browser: bookmark/actions commands cancel deferred address focus=" + focusOk);
+        bool menusOk = menusDeferred && actionsLoaded && reusedActions;
+        SmokeTest.Report("browser: deferred actions flyouts open, bind and reuse controls=" + menusOk);
+        bool focusOk = actionsProbe.FocusStable && actionsReuse.FocusStable;
+        SmokeTest.Report("browser: actions commands cancel deferred address focus=" + focusOk);
         return ok && menusOk && focusOk;
     }
 
@@ -2229,18 +2186,6 @@ public sealed partial class BrowserTabControl : UserControl
 
     #region Navigation & Omnibox
 
-    private void RefreshStartBookmarks()
-    {
-        if (_isDisposed || StartSurface.Visibility != Visibility.Visible) return;
-        StartImportButton.Visibility = SettingsService.Instance.PersonalBookmarkSession != null ? Visibility.Visible : Visibility.Collapsed;
-        var bookmarks = SettingsService.Instance.CurrentBookmarks.Where(item => !item.ContainsLoginInfo).Take(12).ToArray();
-        // Loaded is raised again when returning to a tab. Retain the existing
-        // controls and focus if the displayed bookmarks have not changed.
-        if (StartBookmarks.ItemsSource is IReadOnlyList<BookmarkItem> existing && existing.SequenceEqual(bookmarks)) return;
-        StartBookmarks.ItemsSource = bookmarks;
-        StartBookmarksEmpty.Visibility = bookmarks.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
-    }
-
     private void MoreActionsFlyout_Opening(object? sender, object e)
     {
         if (_isDisposed) return;
@@ -2259,7 +2204,6 @@ public sealed partial class BrowserTabControl : UserControl
         _ = RefreshNativeZoomAsync();
     }
 
-    private void ShowFavorites_Click(object sender, RoutedEventArgs e) => BookmarksFlyout.ShowAt(FavoritesBtn);
 
     private void ShowHistory_Click(object sender, RoutedEventArgs e)
     {

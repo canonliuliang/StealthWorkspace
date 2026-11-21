@@ -1,16 +1,14 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Input;
 using StealthWorkspace.Services;
-using Windows.System;
 
 namespace StealthWorkspace.Controls;
 
 public sealed partial class BrowserTabControl
 {
-    private BookmarkItem? _bookmarkToRename;
+    private bool CanBookmarkCurrentPage { get; set; }
     private ContentDialog? _bookmarkDialog;
-    private BookmarkFilter? _bookmarkFilter;
+
     private bool _savingBookmark;
 
     private void UpdateBookmarkStarState()
@@ -20,14 +18,12 @@ public sealed partial class BrowserTabControl
         bool valid = TryCreateWebUri(url, out var address) && SettingsService.Instance.ActiveBookmarkSession != null;
         bool bookmarked = valid && SettingsService.Instance.IsBookmarked(url);
         bool privateAddress = valid && address!.UserInfo.Length != 0 && !bookmarked;
-        BookmarkStarBtn.IsEnabled = valid && !privateAddress && !_savingBookmark;
+        CanBookmarkCurrentPage = valid && !privateAddress && !_savingBookmark;
         string action = _savingBookmark ? "正在保存收藏" : bookmarked ? (SettingsService.Instance.HasBookmarkFolders ? "编辑收藏" : "取消收藏") : privateAddress ? "无法收藏含登录信息的网址" : "收藏本页";
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(BookmarkStarBtn, action);
-        ToolTipService.SetToolTip(BookmarkStarBtn, action + " (Ctrl+D)");
-        VisualStateManager.GoToState(this, bookmarked ? "Bookmarked" : "NotBookmarked", false);
+        _railManager?.SetCurrentPageStatus(CanBookmarkCurrentPage, bookmarked ? "编辑本页收藏" : action);
     }
 
-    private async void BookmarkStarBtn_Click(object sender, RoutedEventArgs args)
+    internal async void ToggleBookmarkFromShortcut()
     {
         if (_isDisposed || _savingBookmark) return;
         string url = GetCurrentDocumentUrl();
@@ -39,12 +35,15 @@ public sealed partial class BrowserTabControl
         var library = settings.GetBookmarkLibrary();
         if (library.Folders.Count != 0 && settings.ActiveBookmarkSession is { } current)
         {
-            await SaveToBookmarkFolderAsync(title, address!, current, library);
+            CancelInitialAddressFocus();
+            current.RailExpanded = true;
+            RefreshBookmarkBar();
+            var existing = settings.FirstBookmark(library.Items, address!, _railManager?.CurrentFolderId);
+            _railManager?.EditPage(existing, existing?.Title ?? title, url);
             return;
         }
-        bool saved = await SaveBookmarkEditAsync(settings.ActiveBookmarkSession, session => bookmarked ?
+        await SaveBookmarkEditAsync(settings.ActiveBookmarkSession, session => bookmarked ?
             settings.RemoveBookmark(url, session) : settings.AddBookmark(title, url, session));
-        if (saved && !_isDisposed && GetCurrentDocumentUrl() == url) UiMotion.Reveal(BookmarkStarIcon, MotionCue.Fade);
     }
 
     private async void BookmarkDelete_Click(object sender, RoutedEventArgs args)
@@ -58,13 +57,12 @@ public sealed partial class BrowserTabControl
     {
         if (session == null || _isDisposed || _savingBookmark) return false;
         _savingBookmark = true;
-        if (BookmarksListView != null) BookmarksListView.IsEnabled = false;
         UpdateBookmarkStarState();
         try
         {
             bool saved = await Task.Run(() => change(session));
             if (_isDisposed || !ReferenceEquals(session, SettingsService.Instance.ActiveBookmarkSession)) return false;
-            if (!saved) { BookmarksFlyout.Hide(); ShowBookmarkSaveError(); }
+            if (!saved) ShowBookmarkSaveError();
             return saved;
         }
         catch (Exception ex)
@@ -76,76 +74,8 @@ public sealed partial class BrowserTabControl
         finally
         {
             _savingBookmark = false;
-            if (!_isDisposed && BookmarksListView != null) BookmarksListView.IsEnabled = true;
             UpdateBookmarkStarState();
         }
-    }
-
-    private void BookmarkSearch_Changed(object sender, TextChangedEventArgs args) => RefreshBookmarkList();
-
-    private void RefreshBookmarkList()
-    {
-        RefreshBookmarkBar();
-        if (_isDisposed || _bookmarkFilter == null || BookmarksListView == null || BookmarkSearchBox == null) return;
-        string query = BookmarkSearchBox.Text.Trim();
-        var matches = _bookmarkFilter.Filter(SettingsService.Instance.CurrentBookmarks, query);
-        if (ReferenceEquals(BookmarksListView.ItemsSource, matches)) return;
-        BookmarksListView.ItemsSource = matches;
-        BookmarksEmptyText.Text = query.Length == 0 ? "还没有收藏的网页" : "没有找到匹配的收藏";
-        UiMotion.SetVisible(BookmarksEmptyText, matches.Count == 0, MotionCue.Fade);
-    }
-
-    private void BookmarkItem_PointerPressed(object sender, PointerRoutedEventArgs args)
-    {
-        if (sender is not FrameworkElement { Tag: BookmarkItem item } target ||
-            !args.GetCurrentPoint(target).Properties.IsMiddleButtonPressed) return;
-        args.Handled = true;
-        NewTabRequested?.Invoke(item.Url, !IsKeyPressed(VirtualKey.Shift));
-        BookmarksFlyout.Hide();
-    }
-
-    private void BookmarkOptions_Click(object sender, RoutedEventArgs args)
-    {
-        if (sender is not FrameworkElement { Tag: BookmarkItem item } target) return;
-        var menu = new MenuFlyout();
-        var open = new MenuFlyoutItem { Text = "在新标签页打开" };
-        open.Click += (_, _) => { BookmarksFlyout.Hide(); NewTabRequested?.Invoke(item.Url, false); };
-        var rename = new MenuFlyoutItem { Text = "重命名" };
-        rename.Click += (_, _) => { _bookmarkToRename = item; BookmarksFlyout.Hide(); };
-        var remove = new MenuFlyoutItem { Text = "删除收藏", Tag = item };
-        remove.Click += BookmarkDelete_Click;
-        menu.Items.Add(open); menu.Items.Add(rename); menu.Items.Add(new MenuFlyoutSeparator()); menu.Items.Add(remove);
-        menu.ShowAt(target);
-    }
-
-    private async void BookmarksFlyout_Closed(object sender, object args)
-    {
-        ReleaseBookmarkList();
-        var item = _bookmarkToRename;
-        _bookmarkToRename = null;
-        var session = SettingsService.Instance.ActiveBookmarkSession;
-        if (item == null || session == null || _isDisposed || !IsLoaded || !VaultService.Instance.IsUnlocked || _bookmarkDialog != null) return;
-        var name = new TextBox { Header = "名称", Text = item.Title, MaxLength = 200, MinWidth = 280 };
-        var content = new StackPanel { Spacing = 12 };
-        content.Children.Add(name);
-        content.Children.Add(new TextBlock { Text = item.Url, TextWrapping = TextWrapping.Wrap, MaxWidth = 360 });
-        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "重命名收藏", Content = content,
-            PrimaryButtonText = "保存", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Primary,
-            IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(name.Text) };
-        name.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(name.Text);
-        dialog.Opened += (_, _) => { name.Focus(FocusState.Programmatic); name.SelectAll(); };
-        _bookmarkDialog = dialog;
-        try
-        {
-            if (await WorkspaceDialogs.ShowAsync(dialog) == ContentDialogResult.Primary && !_isDisposed && VaultService.Instance.IsUnlocked &&
-                ReferenceEquals(SettingsService.Instance.ActiveBookmarkSession, session))
-            {
-                string title = name.Text;
-                await SaveBookmarkEditAsync(session, current => SettingsService.Instance.EditBookmark(current, item, title, item.Url, item.FolderId));
-            }
-        }
-        catch (Exception ex) { AppLog.Warn("Rename bookmark: " + ex.GetType().Name); }
-        finally { _bookmarkDialog = null; }
     }
 
     private void ShowBookmarkSaveError() => ShowBrowserError("收藏未保存", "无法写入收藏数据，原来的收藏已保留。请检查磁盘空间或文件占用后重试。");
@@ -159,11 +89,11 @@ public sealed partial class BrowserTabControl
         string url = GetCurrentDocumentUrl();
         if (url != address || SettingsService.Instance.IsBookmarked(url)) throw new InvalidOperationException("Bookmark fixture URL mismatch");
         ToggleBookmarkFromShortcut();
-        bool disabledWhileSaving = _savingBookmark && !BookmarkStarBtn.IsEnabled;
+        bool disabledWhileSaving = _savingBookmark && !CanBookmarkCurrentPage;
         ToggleBookmarkFromShortcut();
         await WaitForSaveAsync();
         var saved = SettingsService.Instance.CurrentBookmarks.Single(b => b.Url == url);
-        if (!disabledWhileSaving || !BookmarkStarBtn.IsEnabled || !await Task.Run(() => new SettingsService().IsBookmarked(url)))
+        if (!disabledWhileSaving || !CanBookmarkCurrentPage || !await Task.Run(() => new SettingsService().IsBookmarked(url)))
             throw new InvalidOperationException("Bookmark command failed to commit exactly once");
 
         BookmarkDelete_Click(new MenuFlyoutItem { Tag = saved }, new RoutedEventArgs());
@@ -182,18 +112,7 @@ public sealed partial class BrowserTabControl
     private void DetachBookmarkUi()
     {
         _bookmarkImport?.Cancel();
-        _barSnapshot = null;
-        BookmarkBarEntries.Children.Clear();
-        _bookmarkToRename = null;
+        ClearBookmarkRail();
         _bookmarkDialog?.Hide();
-        BookmarksFlyout.Hide();
-        ReleaseBookmarkList();
-    }
-
-    private void ReleaseBookmarkList()
-    {
-        _bookmarkFilter = null;
-        if (BookmarksListView != null) BookmarksListView.ItemsSource = null;
-        if (BookmarkSearchBox != null) BookmarkSearchBox.Text = "";
     }
 }

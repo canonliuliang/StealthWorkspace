@@ -147,6 +147,11 @@ internal static class BookmarkHtmlSelfTest
         var otherTab = new BookmarkLibrary(large.Items, large.Folders);
         var movedSnapshot = large with { Folders = large.Folders.Replace(nested, nested with { ParentId = photos.Id }) };
         var duplicateAddress = new Uri("https://video.example/watch?v=7");
+        report(new[] { library.Items, large.Items }.All(items =>
+                settings.FirstBookmark(items, duplicateAddress, nested.Id)?.Title == "第七集" &&
+                settings.FirstBookmark(items, duplicateAddress, "")?.Title == "片段入口" &&
+                ReferenceEquals(settings.FirstBookmark(items, duplicateAddress, photos.Id), settings.FirstBookmark(items, duplicateAddress))),
+            "Small and indexed libraries choose the duplicate in the current folder and fall back when that folder has no copy", "");
         report(ReferenceEquals(settings.FirstBookmark(large.Items, duplicateAddress), large.Items.First(b => b.Url == duplicateAddress.AbsoluteUri)) &&
             settings.FirstBookmark(large.Items, new Uri("https://example.test/absent")) == null &&
             ReferenceEquals(large.Children(nested.Id), otherTab.Children(nested.Id)) &&
@@ -167,6 +172,7 @@ internal static class BookmarkHtmlSelfTest
             .SequenceEqual(library.Items.Select(b => (b.Title,b.Url,Path:library.PathName(b.FolderId))).OrderBy(b=>b.Title)) &&
             importedAgain.Folders.Select(f=>importedAgain.PathName(f.Id)).Order().SequenceEqual(library.Folders.Select(f=>library.PathName(f.Id)).Order()),
             "Exported Chrome HTML preserves folder paths including empty folders and duplicates in separate folders", "");
+        CheckConcurrentFolderChanges(clone, importedAgain, report);
         var clip = library.Items.Single(b => b.Title == "第七集");
         bool edited = settings.EditBookmark(session,clip,"片段重命名",clip.Url,photos.Id) &&
             settings.EditBookmarkFolder(session,photos.Id,folder.Id,"图像") &&
@@ -187,5 +193,33 @@ internal static class BookmarkHtmlSelfTest
         settings.SetBookmarkWorkspace(false);
         report(isolated && !settings.GetBookmarkLibrary().Folders.Any(f=>f.Name is "临时" or "过期") &&
             settings.GetBookmarkLibrary().Folders.Any(f=>f.Name=="视频"), "Decoy folders expire on lock and revoked bookmark sessions cannot import or change the real library", "");
+    }
+
+    private static void CheckConcurrentFolderChanges(SettingsService settings, BookmarkLibrary original, Action<bool,string,string> report)
+    {
+        var session = settings.PersonalBookmarkSession!;
+        var video = original.Folders.Single(f => f.Name == "视频");
+        var clips = original.Folders.Single(f => f.Name == "片段");
+        bool renamed = settings.EditBookmarkFolder(session, clips.Id, video.Id, "剪辑", clips);
+        bool staleMove = settings.EditBookmarkFolder(session, clips.Id, "", "旧窗口的名称", clips);
+        var afterRename = settings.GetBookmarkLibrary();
+        report(renamed && !staleMove && afterRename.PathName(clips.Id) == "视频 › 剪辑",
+            "An older tab cannot overwrite or move a folder renamed by another tab", "");
+        report(!settings.RemoveBookmarkEntry(session, video, original) && settings.GetBookmarkLibrary().Folders.Any(f => f.Id == clips.Id && f.Name == "剪辑"),
+            "A descendant rename invalidates its parent's pending delete confirmation", "");
+
+        const string addedUrl = "https://video.example/watch?v=8";
+        bool added = settings.EditBookmark(session, null, "第八集", addedUrl, clips.Id);
+        bool staleDelete = settings.RemoveBookmarkEntry(session, video, afterRename);
+        var afterAdd = settings.GetBookmarkLibrary();
+        report(added && !staleDelete && afterAdd.Items.Any(item => item.Url == addedUrl && item.FolderId == clips.Id),
+            "A link saved in a nested folder after delete confirmation survives the stale delete", "");
+        const string outsideUrl = "https://news.example/today";
+        bool outsideAdded = settings.EditBookmark(session, null, "今日新闻", outsideUrl, "");
+        bool removed = settings.RemoveBookmarkEntry(session, video, afterAdd);
+        var final = settings.GetBookmarkLibrary();
+        report(outsideAdded && removed && !final.Folders.Any(f => f.Id == video.Id || f.Id == clips.Id) &&
+            !final.Items.Any(item => item.Url == addedUrl) && final.Items.Any(item => item.Url == outsideUrl),
+            "A fresh confirmation removes the intended subtree while preserving independent changes in another folder", "");
     }
 }

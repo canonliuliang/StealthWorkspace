@@ -75,7 +75,7 @@ public partial class SettingsService
         return true;
     }
 
-    internal bool EditBookmarkFolder(BookmarkSession session, string? id, string parentId, string title)
+    internal bool EditBookmarkFolder(BookmarkSession session, string? id, string parentId, string title, BookmarkFolder? expected = null)
     {
         title = title.Trim();
         if (title.Length is 0 or > 200) return false;
@@ -84,7 +84,7 @@ public partial class SettingsService
             if (!ReferenceEquals(session, _bookmarkSession)) return false;
             var library = GetBookmarkLibrary();
             var existing = id == null ? null : library.Folders.Find(f => f.Id == id);
-            if ((id != null && existing == null) || (parentId != "" && !library.Folders.Exists(f => f.Id == parentId))
+            if ((expected != null && existing != expected) || (id != null && existing == null) || (parentId != "" && !library.Folders.Exists(f => f.Id == parentId))
                 || (id != null && library.IsDescendant(parentId, id))
                 || (id == BookmarkFolder.Other && (parentId != "" || title != existing!.Name))
                 || library.Folders.Exists(f => f.Id != id && f.ParentId == parentId && string.Equals(f.Name, title, StringComparison.OrdinalIgnoreCase))) return false;
@@ -108,7 +108,7 @@ public partial class SettingsService
         }
     }
 
-    internal bool RemoveBookmarkEntry(BookmarkSession session, object row)
+    internal bool RemoveBookmarkEntry(BookmarkSession session, object row, BookmarkLibrary? confirmed = null)
     {
         lock (_saveGate)
         {
@@ -118,6 +118,13 @@ public partial class SettingsService
                 return SaveLibrary(session, library with { Items = library.Items.Remove(item) });
             if (row is not BookmarkFolder folder || !library.Folders.Contains(folder)) return false;
             var ids = library.Folders.Where(f => library.IsDescendant(f.Id, folder.Id)).Select(f => f.Id).ToHashSet();
+            // A second tab may have moved or added items since the user saw the warning.
+            if (confirmed != null && !Equals(confirmed, library))
+            {
+                var priorFolders = confirmed.Folders.Where(f => confirmed.IsDescendant(f.Id, folder.Id)).ToHashSet();
+                if (!priorFolders.SetEquals(library.Folders.Where(f => ids.Contains(f.Id))) ||
+                    !confirmed.Items.Where(b => ids.Contains(b.FolderId)).ToHashSet().SetEquals(library.Items.Where(b => ids.Contains(b.FolderId)))) return false;
+            }
             return SaveLibrary(session, new(library.Items.RemoveAll(b => ids.Contains(b.FolderId)), library.Folders.RemoveAll(f => ids.Contains(f.Id))));
         }
     }

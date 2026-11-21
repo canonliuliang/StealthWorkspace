@@ -36,12 +36,15 @@
         </ResourceDictionary>
     </UserControl.Resources>
     <Viewbox Stretch="Uniform">
-        <Canvas Width="48" Height="48">
+        <Grid Width="48" Height="48">
+            <Path x:Name="Outline" Visibility="Collapsed" Stroke="{ThemeResource TextFillColorSecondaryBrush}" StrokeThickness="3.4" StrokeLineJoin="Round" Data="M24,4 C30,7 36,8 41,9 L41,21 C41,31 35,38 24,44 C13,38 7,31 7,21 L7,9 C12,8 18,7 24,4 Z M16,23 L22,29 L33,17" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+            <Canvas x:Name="Artwork" Width="48" Height="48">
             <Path x:Name="Base" Fill="{ThemeResource ShieldBase}" Stroke="{ThemeResource ShieldRim}" StrokeThickness="2" StrokeLineJoin="Round" Data="M22.35,2.48 C23.43,2.2 24.56,2.2 25.65,2.48 L42.63,6.72 C44.06,7.09 45,8.38 45,9.85 L45,21.71 C45,31.14 38.34,39.65 26.06,45.59 C24.75,46.24 23.25,46.24 21.94,45.59 C9.7,39.64 3,31.13 3,21.71 L3,9.85 C3,8.38 3.95,7.09 5.37,6.72 Z"/>
             <Path x:Name="Fold" Fill="{ThemeResource ShieldFold}"
                   Data="M22.35,2.48 C23.43,2.2 24.56,2.2 25.65,2.48 L42.63,6.72 C44.06,7.09 45,8.38 45,9.85 L45,16.25 C44.08,22.58 37.37,28.31 31.13,33.04 C24.65,37.94 19.48,42.21 22.48,45.86 L21.94,45.59 C9.7,39.64 3,31.13 3,21.71 L3,9.85 C3,8.38 3.95,7.09 5.37,6.72 Z"/>
             <Path x:Name="Face" Fill="{ThemeResource ShieldFace}"
                   Data="M22.35,2.48 C23.14,2.27 23.72,2.23 24.1,2.27 C29.34,3.12 31.08,8.53 29.25,13.15 C27.12,18.52 21.18,22.61 16.09,26.91 C11.76,30.57 9.36,34.36 11.18,38.06 C5.91,33.32 3,27.74 3,21.71 L3,9.85 C3,8.38 3.95,7.09 5.37,6.72 Z"/>
         </Canvas>
+        </Grid>
     </Viewbox>
 </UserControl>

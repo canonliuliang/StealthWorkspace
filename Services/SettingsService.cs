@@ -96,6 +96,9 @@ public partial class SettingsService
     internal sealed class BookmarkSession(bool temporary)
     {
         internal bool Temporary { get; } = temporary;
+        // Layout preference only, scoped to the unlocked workspace.
+        internal bool? RailExpanded { get; set; }
+        internal string RailFolderId { get; set; } = string.Empty;
         internal string? DownloadDirectoryName { get; } = temporary ? $"session-{Environment.ProcessId}-{Guid.NewGuid():N}" : null;
         internal volatile ImmutableList<BookmarkItem> Items = [];
         internal volatile ImmutableList<BookmarkFolder> Folders = [];
@@ -436,9 +439,23 @@ public partial class SettingsService
         return bookmarks.Any(b => BrowserAddress.SamePage(b.Url, url));
     }
 
-    internal BookmarkItem? FirstBookmark(ImmutableList<BookmarkItem> bookmarks, Uri address) =>
-        bookmarks.Count < 32 ? bookmarks.Find(item => BrowserAddress.SamePage(address, item.Url)) :
-        FindIndexedBookmark(bookmarks, BrowserAddress.PageKey.From(address), out var match) ? match.First : null;
+    internal BookmarkItem? FirstBookmark(ImmutableList<BookmarkItem> bookmarks, Uri address, string? preferredFolder = null)
+    {
+        if (bookmarks.Count >= 32)
+        {
+            if (!FindIndexedBookmark(bookmarks, BrowserAddress.PageKey.From(address), out var match)) return null;
+            if (!match.Multiple || preferredFolder == null || match.First?.FolderId == preferredFolder) return match.First;
+            return bookmarks.Find(item => item.FolderId == preferredFolder && BrowserAddress.SamePage(address, item.Url)) ?? match.First;
+        }
+        BookmarkItem? first = null;
+        foreach (var item in bookmarks)
+        {
+            if (!BrowserAddress.SamePage(address, item.Url)) continue;
+            if (preferredFolder == null || item.FolderId == preferredFolder) return item;
+            first ??= item;
+        }
+        return first;
+    }
 
     private bool FindIndexedBookmark(ImmutableList<BookmarkItem> bookmarks, BrowserAddress.PageKey key, out IndexedBookmark match)
     {

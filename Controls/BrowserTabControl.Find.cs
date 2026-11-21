@@ -27,7 +27,6 @@ public sealed partial class BrowserTabControl
         if (advance) _ = RunFindAsync(backwards, advance: true);
     }
 
-    internal void ToggleBookmarkFromShortcut() => BookmarkStarBtn_Click(this, new RoutedEventArgs());
     private CoreWebView2Find? _nativeFind;
     private bool _nativeFindUnavailable;
     private string _findTerm = "";
