@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:local="using:StealthWorkspace"
+    xmlns:controls="using:StealthWorkspace.Controls"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     Title="StealthWorkspace"
     mc:Ignorable="d">
@@ -53,8 +54,10 @@
                         AutomationProperties.Name="工作区状态，打开痕迹清理"
                         ToolTipService.ToolTip="查看工作区状态与痕迹清理">
                     <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                        <FontIcon x:Name="StatusIcon" Glyph="&#xEA18;" FontSize="14" Foreground="{ThemeResource StealthBrandBrush}" />
-                        <ProgressRing x:Name="StatusProgress" Width="14" Height="14" IsActive="False" Visibility="Collapsed" />
+                        <Grid Width="20" Height="20">
+                            <controls:PrivacyShield x:Name="StatusShield" />
+                            <ProgressRing x:Name="StatusProgress" Width="15" Height="15" IsActive="False" Visibility="Collapsed" />
+                        </Grid>
                         <TextBlock x:Name="StatusBadgeText" Text="隐私清理" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium" />
                     </StackPanel>
                 </Button>

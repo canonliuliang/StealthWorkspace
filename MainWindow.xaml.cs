@@ -233,6 +233,12 @@ public sealed partial class MainWindow : Window
             OnUnlocked();
             await Task.Delay(500);
 
+            if (SmokeTest.ShieldVisualAudit)
+            {
+                await CapturePrivacyShieldsAsync();
+                return;
+            }
+
             if (SmokeTest.ShutdownAudit)
             {
                 NavigateToPage(typeof(BrowserPage), null, "browser", force: true);
@@ -648,7 +654,7 @@ public sealed partial class MainWindow : Window
         if (_shutdownStarted || _windowClosed) return;
         var work = VaultWork.Current;
         bool busy = work != null && !_isLocked;
-        StatusIcon.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
+        StatusShield.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
         StatusProgress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         StatusProgress.IsActive = busy;
         StatusBadge.IsEnabled = !_pageNavigationBlocked && !busy;

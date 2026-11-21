@@ -554,7 +554,7 @@ public sealed partial class BrowserPage : Page
         _isBurningAll = true;
         CloseTabSearch();
         _tabOpeners.Clear();
-        EndSessionBtn.IsEnabled = false;
+        EndSessionBtn.IsEnabled = TabStripEndSession.IsEnabled = false;
         BrowserTabView.IsAddTabButtonVisible = false;
         SessionNotice.Title = "正在结束会话";
         SessionNotice.Message = "正在关闭标签并清除本次浏览数据。";
@@ -603,7 +603,7 @@ public sealed partial class BrowserPage : Page
                 MainWindow.Current?.SetFullScreenMode(false);
             }
             _isBurningAll = false;
-            EndSessionBtn.IsEnabled = true;
+            EndSessionBtn.IsEnabled = TabStripEndSession.IsEnabled = true;
             BrowserTabView.IsAddTabButtonVisible = true;
             EnsureTabExists();
         }

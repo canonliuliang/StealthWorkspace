@@ -90,6 +90,14 @@
                 </Button>
             </TabView.TabStripHeader>
 
+            <TabView.TabStripFooter>
+                <Button x:Name="TabStripEndSession" Click="BurnAllTabs_Click" Style="{ThemeResource SubtleButtonStyle}"
+                        Margin="4,0,4,0" Padding="8,0" Height="{ThemeResource TabViewItemMinHeight}" VerticalAlignment="Bottom"
+                        AutomationProperties.Name="结束本次会话" ToolTipService.ToolTip="关闭本次标签并清除浏览记录 (Ctrl+Shift+W)">
+                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center"><FontIcon Glyph="&#xE74D;" FontSize="14"/><TextBlock Text="结束会话"/></StackPanel>
+                </Button>
+            </TabView.TabStripFooter>
+
         </TabView>
         <Grid x:Name="DownloadHosts" Grid.Row="1" Visibility="Collapsed" IsHitTestVisible="False" />
     </Grid>

@@ -27,8 +27,16 @@ public partial class App : Application
             // Set before the last window closes; changing it inside Closed is too late.
             // MainWindow exits explicitly after asynchronous privacy cleanup completes.
             DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
-            MainWindowInstance.Activate();
-            SmokeTest.Report("MainWindow 已激活");
+            if (SmokeTest.ShieldVisualAudit)
+            {
+                MainWindowInstance.AppWindow.Show(activateWindow: false);
+                SmokeTest.Report("shield fixture window shown without activating");
+            }
+            else
+            {
+                MainWindowInstance.Activate();
+                SmokeTest.Report("MainWindow 已激活");
+            }
 
             SingleInstance.StartActivationListener(() =>
             {

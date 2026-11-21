@@ -685,6 +685,7 @@ public static class SmokeTest
     public static int BrowserSoakMinutes { get; private set; }
     public static bool ReopenMedia { get; private set; }
     public static bool ExperienceTest { get; private set; }
+    public static bool ShieldVisualAudit { get; private set; }
     public static bool ShutdownAudit { get; private set; }
     public static bool ShutdownDuringInitialization { get; private set; }
     public static bool BrowserAudit { get; private set; }
@@ -697,6 +698,7 @@ public static class SmokeTest
     {
         Enabled = true;
         UiSmoke = SelfTest.IsUiSmokeRequested(args);
+        ShieldVisualAudit = UiSmoke && args.Contains("--shield-visual-audit");
         Interactive = args.Contains("--ui-interactive");
         InteractiveFixture = UiSmoke && Interactive && args.Contains("--ui-fixture");
         ReduceMotion = UiSmoke && args.Contains("--ui-reduced-motion");
@@ -794,7 +796,9 @@ public static class SmokeTest
             }
 
             bool ok = ready && !anyUnhandled && pagesOk && webViewOk && (!UiSmoke || completed);
-            if (LoginRetentionAcceptance.Requested)
+            if (ShieldVisualAudit)
+                builder.AppendLine("SHIELD VISUAL AUDIT: " + (!anyUnhandled && Lines.Any(l => l.Contains("shield visual audit complete")) ? "OK" : "FAILED"));
+            else if (LoginRetentionAcceptance.Requested)
             {
                 bool passed = !anyUnhandled &&
                     Lines.Any(l => l.Contains("login retention phase passed: " + LoginRetentionAcceptance.Phase, StringComparison.Ordinal)) &&

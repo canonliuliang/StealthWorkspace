@@ -1,0 +1,47 @@
+<UserControl
+    x:Class="StealthWorkspace.Controls.PrivacyShield"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    IsHitTestVisible="False" IsTabStop="False"
+    AutomationProperties.AccessibilityView="Raw">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Default">
+                    <LinearGradientBrush x:Key="ShieldBase" StartPoint="0.95,0.12" EndPoint="0.35,0.96">
+                        <GradientStop Color="#2758F5" Offset="0" />
+                        <GradientStop Color="#1545DA" Offset="0.62" />
+                        <GradientStop Color="#1236AD" Offset="1" />
+                    </LinearGradientBrush>
+                    <LinearGradientBrush x:Key="ShieldFold" StartPoint="0.98,0.02" EndPoint="0.19,0.96">
+                        <GradientStop Color="#21BCFA" Offset="0" />
+                        <GradientStop Color="#168BF7" Offset="0.48" />
+                        <GradientStop Color="#0861C9" Offset="0.76" />
+                        <GradientStop Color="#39A8FC" Offset="1" />
+                    </LinearGradientBrush>
+                    <LinearGradientBrush x:Key="ShieldFace" StartPoint="0.95,0.10" EndPoint="0.09,0.88">
+                        <GradientStop Color="#6AF3FF" Offset="0" />
+                        <GradientStop Color="#32D5FB" Offset="0.42" />
+                        <GradientStop Color="#1CB4F6" Offset="1" />
+                    </LinearGradientBrush>
+                    <SolidColorBrush x:Key="ShieldRim" Color="#282B91E9" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="HighContrast">
+                    <SolidColorBrush x:Key="ShieldBase" Color="{ThemeResource SystemColorButtonTextColor}" />
+                    <SolidColorBrush x:Key="ShieldFold" Color="{ThemeResource SystemColorButtonFaceColor}" />
+                    <SolidColorBrush x:Key="ShieldFace" Color="{ThemeResource SystemColorButtonTextColor}" />
+                    <SolidColorBrush x:Key="ShieldRim" Color="{ThemeResource SystemColorButtonTextColor}" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+    <Viewbox Stretch="Uniform">
+        <Canvas Width="48" Height="48">
+            <Path x:Name="Base" Fill="{ThemeResource ShieldBase}" Stroke="{ThemeResource ShieldRim}" StrokeThickness="2" StrokeLineJoin="Round" Data="M22.35,2.48 C23.43,2.2 24.56,2.2 25.65,2.48 L42.63,6.72 C44.06,7.09 45,8.38 45,9.85 L45,21.71 C45,31.14 38.34,39.65 26.06,45.59 C24.75,46.24 23.25,46.24 21.94,45.59 C9.7,39.64 3,31.13 3,21.71 L3,9.85 C3,8.38 3.95,7.09 5.37,6.72 Z"/>
+            <Path x:Name="Fold" Fill="{ThemeResource ShieldFold}"
+                  Data="M22.35,2.48 C23.43,2.2 24.56,2.2 25.65,2.48 L42.63,6.72 C44.06,7.09 45,8.38 45,9.85 L45,16.25 C44.08,22.58 37.37,28.31 31.13,33.04 C24.65,37.94 19.48,42.21 22.48,45.86 L21.94,45.59 C9.7,39.64 3,31.13 3,21.71 L3,9.85 C3,8.38 3.95,7.09 5.37,6.72 Z"/>
+            <Path x:Name="Face" Fill="{ThemeResource ShieldFace}"
+                  Data="M22.35,2.48 C23.14,2.27 23.72,2.23 24.1,2.27 C29.34,3.12 31.08,8.53 29.25,13.15 C27.12,18.52 21.18,22.61 16.09,26.91 C11.76,30.57 9.36,34.36 11.18,38.06 C5.91,33.32 3,27.74 3,21.71 L3,9.85 C3,8.38 3.95,7.09 5.37,6.72 Z"/>
+        </Canvas>
+    </Viewbox>
+</UserControl>
