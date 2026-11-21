@@ -57,7 +57,7 @@
                         VerticalContentAlignment="Center" Style="{ThemeResource SubtleButtonStyle}" AutomationProperties.Name="搜索标签页" ToolTipService.ToolTip="搜索标签页 (Ctrl+Shift+A)">
                     <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center"><FontIcon Glyph="&#xE70D;" FontSize="12" VerticalAlignment="Center" /><TextBlock x:Name="TabCountText" Text="1" FontSize="{ThemeResource TabViewItemHeaderFontSize}" VerticalAlignment="Center" /></StackPanel>
                     <Button.Flyout><Flyout x:Name="TabListFlyout" Opening="TabListFlyout_Opening" Opened="TabListFlyout_Opened" Closed="TabListFlyout_Closed">
-                        <Grid Width="340" MaxHeight="480" RowSpacing="10">
+                        <Grid x:Name="TabSearchContent" Width="320" MaxHeight="460" RowSpacing="8" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <SelectorBar x:Name="TabSearchScope" SelectionChanged="TabSearchScope_SelectionChanged" AutomationProperties.Name="标签页范围">
                                 <SelectorBarItem x:Name="OpenTabsSection" Text="已打开" IsSelected="True" />
@@ -65,11 +65,11 @@
                             </SelectorBar>
                             <TextBox x:Name="TabSearchBox" Grid.Row="1" PlaceholderText="搜索标签标题或网址" AutomationProperties.Name="搜索标签标题或网址" TextChanged="TabSearchBox_TextChanged" KeyDown="TabSearchBox_KeyDown" />
                             <ListView x:Name="TabSearchResults" Grid.Row="2" MaxHeight="350" SelectionMode="Single" IsItemClickEnabled="True" ItemClick="TabSearchResults_ItemClick" HorizontalContentAlignment="Stretch" AutomationProperties.Name="打开的标签页">
-                                <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="8,4" /></Style></ListView.ItemContainerStyle>
+                                <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="6,5" /><Setter Property="CornerRadius" Value="6" /></Style></ListView.ItemContainerStyle>
                                 <ListView.ItemTemplate><DataTemplate x:DataType="models:BrowserTabSearchItem">
                                     <Grid ColumnSpacing="10" MinHeight="44">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <IconSourceElement IconSource="{x:Bind Icon}" Width="16" Height="16" />
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <Viewbox Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center"><IconSourceElement IconSource="{x:Bind Icon}" Width="24" Height="24" /></Viewbox>
                                         <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center" ToolTipService.ToolTip="{x:Bind Address}">
                                             <TextBlock Text="{x:Bind Title}" FontSize="14" TextTrimming="CharacterEllipsis" />
                                             <TextBlock Text="{x:Bind Address}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
@@ -78,24 +78,18 @@
                                     </Grid>
                                 </DataTemplate></ListView.ItemTemplate>
                             </ListView>
-                            <TextBlock x:Name="TabSearchEmpty" Grid.Row="3" Text="没有匹配的标签页" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Visibility="Collapsed" Margin="8" />
+                            <TextBlock x:Name="TabSearchEmpty" Grid.Row="2" Text="没有匹配的标签页" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Visibility="Collapsed" Margin="8" />
+                            <Border Grid.Row="3" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" Padding="0,6,0,0">
+                                <Button x:Name="EndSessionBtn" Click="BurnAllTabs_Click" Style="{ThemeResource SubtleButtonStyle}"
+                                        AutomationProperties.Name="结束并清除会话" ToolTipService.ToolTip="关闭全部标签页并清除本次浏览数据 (Ctrl+Shift+W)">
+                                    <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE74D;" FontSize="14"/><TextBlock Text="结束本次会话"/></StackPanel>
+                                </Button>
+                            </Border>
                         </Grid>
                     </Flyout></Button.Flyout>
                 </Button>
             </TabView.TabStripHeader>
-            <TabView.TabStripFooter>
-                <Button x:Name="EndSessionBtn" Click="BurnAllTabs_Click"
-                        Style="{ThemeResource SubtleButtonStyle}"
-                        Height="{ThemeResource TabViewItemMinHeight}" Padding="10,0" Margin="4,0,8,0" VerticalAlignment="Bottom"
-                        HorizontalAlignment="Left" VerticalContentAlignment="Center"
-                        AutomationProperties.Name="结束并清除会话"
-                        ToolTipService.ToolTip="关闭所有标签页并清除本次浏览数据 (Ctrl + Shift + W)">
-                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                        <FontIcon Glyph="&#xE74D;" FontSize="14" VerticalAlignment="Center" />
-                        <TextBlock Text="结束会话" FontSize="{ThemeResource TabViewItemHeaderFontSize}" VerticalAlignment="Center" />
-                    </StackPanel>
-                </Button>
-            </TabView.TabStripFooter>
+
         </TabView>
         <Grid x:Name="DownloadHosts" Grid.Row="1" Visibility="Collapsed" IsHitTestVisible="False" />
     </Grid>

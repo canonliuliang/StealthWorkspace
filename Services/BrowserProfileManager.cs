@@ -9,25 +9,12 @@ using Microsoft.Web.WebView2.Core;
 namespace StealthWorkspace.Services;
 
 /// <summary>
-/// Owns the single, per-process volatile WebView2 user data directory.
-///
-/// Design rules:
-/// <list type="bullet">
-/// <item>Every process gets its own unique <c>%TEMP%\Stealth_WebProfile_&lt;guid&gt;</c>
-/// directory, opened with <c>ExclusiveUserDataFolderAccess</c>, so two running
-/// instances can never share (or delete) each other's data.</item>
-/// <item>Nothing is deleted from the process-exit handler: at that point the
-/// WebView2 browser process still owns the files, so deletion is guaranteed to
-/// fail and a blind sweep could kill another instance's live directory.</item>
-/// <item>Deletion is explicit: callers dispose every tab first
-/// (<c>BrowserTabControl.ShutdownAllAsync()</c>) and then call
-/// <see cref="ShutdownAsync"/>, which waits for the environment leases to drain
-/// and retries the directory removal while the browser process exits.</item>
-/// <item>Startup cleanup only removes profiles older than 24 hours and never the
-/// directory owned by the current process.</item>
-/// </list>
+/// Binds an exclusive WebView2 environment to the current unlock session.
+/// Personal vaults retain their own native site-account directory and clear
+/// history at the session boundaries. Decoy sessions use disposable profiles.
+/// The aged-profile sweep only recognizes the private, marked disposable format.
 /// </summary>
-public static class BrowserProfileManager
+public static partial class BrowserProfileManager
 {
     private const string ProfileDirectoryPrefix = "Stealth_WebProfile_";
     private const string OwnerMarkerName = ".stealth-session-owner";
@@ -72,20 +59,29 @@ public static class BrowserProfileManager
     }
 
     /// <summary>
-    /// Creates (once per process) and returns the shared WebView2 environment.
-    /// The user data directory is unique to this process and volatile.
+    /// Returns the shared environment owned by the current unlock session.
     /// </summary>
-    public static async Task<CoreWebView2Environment> GetSharedEnvironmentAsync()
+    public static Task<CoreWebView2Environment> GetSharedEnvironmentAsync() =>
+        GetSharedEnvironmentAsync(SettingsService.Instance.ActiveBookmarkSession);
+
+    internal static async Task<CoreWebView2Environment> GetSharedEnvironmentAsync(SettingsService.BookmarkSession? workspace)
     {
         if (Volatile.Read(ref _sessionEnding) is { } ending) await ending.Task;
-
-        CoreWebView2Environment? existing = _sharedEnvironment;
-        if (existing != null) return existing;
+        RequireCurrentWorkspace(workspace);
+        // Disposal may have exceeded a previous deadline and released its
+        // final controller later. Retry teardown before a different unlock
+        // session attaches; never hand it the previous environment.
+        if (_sharedEnvironment != null && !ReferenceEquals(workspace,_environmentWorkspace)) await ShutdownAsync();
 
         await EnvironmentCreationLock.WaitAsync();
         try
         {
-            if (_sharedEnvironment != null) return _sharedEnvironment;
+            RequireCurrentWorkspace(workspace);
+            if (_sharedEnvironment != null)
+            {
+                if (!ReferenceEquals(workspace, _environmentWorkspace)) throw new InvalidOperationException("上一个浏览空间尚未关闭，请稍后重试。");
+                return _sharedEnvironment;
+            }
 
             LastInitializationError = string.Empty;
 
@@ -100,22 +96,35 @@ public static class BrowserProfileManager
                     "--disable-features=Translate,OptimizationHints,MediaRouter --no-first-run",
                 IsCustomCrashReportingEnabled = true,
                 ExclusiveUserDataFolderAccess = true,
+                EnableTrackingPrevention = true,
             };
 
             Exception? lastError = null;
             int candidateIndex = 0;
-            foreach (string directory in EnumerateProfileDirectoryCandidates())
+            bool personal = !workspace!.Temporary;
+            string vaultRoot = AppPaths.DataRoot;
+            string identity = personal ? VaultService.Instance.GetWebsiteAccountIdentity() : "";
+            IEnumerable<string> candidates = personal ? [BrowserAccountDirectory.ForVault(vaultRoot, identity)] : EnumerateProfileDirectoryCandidates();
+            foreach (string directory in candidates)
             {
                 candidateIndex++;
                 FileStream? ownerLease = null;
                 string phase = "create-directory";
                 try
                 {
-                    Directory.CreateDirectory(directory);
-                    AppPaths.Hide(directory);
-                    phase = "create-owner-lease";
-                    ownerLease = new FileStream(Path.Combine(directory, OwnerMarkerName), FileMode.OpenOrCreate,
-                        FileAccess.ReadWrite, FileShare.None);
+                    if (personal)
+                    {
+                        await WaitForPreviousHistoryOperationAsync(directory);
+                        ownerLease = BrowserAccountDirectory.Acquire(vaultRoot,directory,identity);
+                    }
+                    else
+                    {
+                        Directory.CreateDirectory(directory);
+                        AppPaths.Hide(directory);
+                        phase = "create-owner-lease";
+                        ownerLease = new FileStream(Path.Combine(directory, OwnerMarkerName), FileMode.OpenOrCreate,
+                            FileAccess.ReadWrite, FileShare.None);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -125,17 +134,21 @@ public static class BrowserProfileManager
                     continue;
                 }
 
-                // A directory can be writable by the host but inaccessible to the
-                // browser process. Only select it after the environment starts;
-                // otherwise try the remaining locations with a fresh profile.
+                // Disposable profiles may try another location. Persistent
+                // accounts have exactly one path and must never silently move.
                 try
                 {
                     CoreWebView2Environment created = await CoreWebView2Environment.CreateWithOptionsAsync(
                         string.Empty, directory, options);
+                    RequireCurrentWorkspace(workspace);
+                    if (_sessionEnding != null) throw new OperationCanceledException("浏览会话已结束。");
+                    if (!IsSameDirectory(created.UserDataFolder,directory)) throw new IOException("WebView2 实际使用的账户目录与本空间不符。");
                     _sharedEnvironment = created;
                     _sharedUserDataDirectory = directory;
                     _profileOwnerLease = ownerLease;
-                    AppLog.Info("BrowserProfileManager: 已创建本进程唯一的 WebView2 易失性用户数据目录");
+                    _environmentWorkspace = workspace;
+                    _ownerDispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+                    AppLog.Info(personal ? "WebView2 已连接当前保险箱的网站账户目录" : "WebView2 已创建临时网站账户目录");
                     return created;
                 }
                 catch (Exception ex)
@@ -145,7 +158,7 @@ public static class BrowserProfileManager
                 }
 
                 ownerLease?.Dispose();
-                AddPendingDeletion(directory);
+                if (!personal) AddPendingDeletion(directory);
             }
 
             LastInitializationError = DescribeRuntimeProblem(lastError);
@@ -496,7 +509,8 @@ public static class BrowserProfileManager
                 int remainingUsers = Volatile.Read(ref _environmentUsers);
                 if (remainingUsers > 0)
                 {
-                    AppLog.Warn($"ShutdownAsync: 仍有 {remainingUsers} 个标签持有浏览器环境，目录删除将重试");
+                    AppLog.Warn($"ShutdownAsync: 仍有 {remainingUsers} 个标签，保留所有权并等待下一次清理");
+                    return false;
                 }
 
                 // 2) Drop the static environment reference so the browser process can exit.
@@ -504,9 +518,17 @@ public static class BrowserProfileManager
                 await EnvironmentCreationLock.WaitAsync().ConfigureAwait(false);
                 try
                 {
-                    ownedDirectory = _sharedUserDataDirectory;
+                    if (_environmentWorkspace is { Temporary: false } && _sharedEnvironment is { } personalEnvironment)
+                    {
+                        bool cleared = await FinishHistoryWithinDeadlineAsync(personalEnvironment, _sharedUserDataDirectory!).ConfigureAwait(false);
+                        LastPersonalHistoryCleanupSucceeded = cleared;
+                    }
+                    else ownedDirectory = _sharedUserDataDirectory;
                     _sharedEnvironment = null;
                     _sharedUserDataDirectory = null;
+                    _environmentWorkspace = null;
+                    _entryCleanup = null;
+                    _ownerDispatcher = null;
                     _profileOwnerLease?.Dispose();
                     _profileOwnerLease = null;
                 }
@@ -557,7 +579,7 @@ public static class BrowserProfileManager
             {
                 ShutdownLock.Release();
             }
-            return SnapshotPendingDeletion().Length == 0;
+            return SnapshotPendingDeletion().Length == 0 && LastPersonalHistoryCleanupSucceeded;
         }
         catch (Exception ex)
         {

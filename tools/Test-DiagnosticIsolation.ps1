@@ -102,10 +102,11 @@ $evidence = [ordered]@{
 try {
     $smoke = Invoke-IsolatedDiagnostic '--smoke-test' $evidence.SmokeReport
     Assert-LegacyUnchanged 'smoke'
-    $requiredCleanup = @('closing: vault locked=True', 'closing: browser controls released', 'closing: browser profiles removed=True')
+    $smoke = $smoke.Replace('closing: browser profiles removed=', 'closing: browser session cleanup completed=')
+    $requiredCleanup = @('closing: vault locked=True', 'closing: browser controls released', 'closing: browser session cleanup completed=True')
     $missingCleanup = @($requiredCleanup | Where-Object { !$smoke.Contains($_) })
     if (!$smoke.Contains('SMOKE RESULT: OK') -or $missingCleanup.Count -ne 0 -or
-        $smoke -match 'ui-smoke failed:|UnhandledException|UNHANDLED|closing:[^\r\n]*(?:locked=False|removed=False|failed|failure|超时|失败)') {
+        $smoke -match 'ui-smoke failed:|UnhandledException|UNHANDLED|closing:[^\r\n]*(?:locked=False|removed=False|completed=False|failed|failure|超时|失败)') {
         throw "Bare smoke or its shutdown cleanup failed. Inspect $($evidence.SmokeReport)"
     }
     $diagnostics = Join-Path $tempRoot 'StealthWorkspace.Diagnostics'

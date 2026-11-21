@@ -21,14 +21,15 @@ public partial class VaultService
         return Task.Run(() => CreateBackupCoreAsync(destination, epoch, progress, cancellationToken), cancellationToken);
     }
 
-    internal Task<int> ExportBookmarksAsync(string destination, IReadOnlyList<BookmarkItem> bookmarks, CancellationToken token)
+    internal Task<int> ExportBookmarksAsync(string destination, IReadOnlyList<BookmarkItem> bookmarks, CancellationToken token,
+        IReadOnlyList<BookmarkFolder>? folders = null)
     {
         long epoch = CaptureUnlockEpoch();
         return Task.Run(() =>
         {
             string target = Path.GetFullPath(destination);
             ValidatePersonalExport(target, epoch, token);
-            return BookmarkHtml.Write(target, bookmarks, token, (temp, final) => CommitPersonalExport(temp, final, epoch, token));
+            return BookmarkHtml.Write(target, bookmarks, token, (temp, final) => CommitPersonalExport(temp, final, epoch, token), folders);
         }, token);
     }
 
@@ -149,7 +150,8 @@ public partial class VaultService
         bool committed = false;
         try
         {
-            int count = await ReadBackupAsync(source, staging, token, verifiedMedia: media);
+            string? identity = null;
+            int count = await ReadBackupAsync(source, staging, token, verifiedMedia: media, websiteIdentity: value => identity = value);
             foreach (string existing in Directory.EnumerateFileSystemEntries(_mediaFolder))
             {
                 string name = Path.GetFileName(existing);
@@ -166,6 +168,7 @@ public partial class VaultService
                     throw new InvalidDataException("已有媒体与备份中的同名文件不同，原文件已保留。");
             }
             token.ThrowIfCancellationRequested();
+            await BrowserAccountDirectory.RemoveForReplacementAsync(_vaultRoot, identity ?? throw new InvalidDataException("无法辨识备份的网站账户。"));
             lock (_sync)
             {
                 EnsureRestoreTargetHasNoCatalog();
@@ -211,7 +214,7 @@ public partial class VaultService
     }
 
     private static Task<int> ReadBackupAsync(string path, string? staging, CancellationToken token, Action<double>? reportProgress = null,
-        Dictionary<string, BackupEntry>? verifiedMedia = null) => Task.Run(async () =>
+        Dictionary<string, BackupEntry>? verifiedMedia = null, Action<string>? websiteIdentity = null) => Task.Run(async () =>
     {
         using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         using var archive = new ZipArchive(input, ZipArchiveMode.Read);
@@ -274,7 +277,13 @@ public partial class VaultService
                 byte[] plain;
                 try { plain = ProtectedData.Unprotect(encrypted, null, DataProtectionScope.CurrentUser); }
                 catch (CryptographicException) { throw new InvalidDataException("此备份只能由原 Windows 用户恢复，或备份索引已经损坏。"); }
-                try { items = ReadBackupItems(JsonSerializer.Deserialize<VaultConfig>(plain)); }
+                try
+                {
+                    var config = JsonSerializer.Deserialize<VaultConfig>(plain);
+                    items = ReadBackupItems(config);
+                    string identity = WebsiteIdentityFor(config!);
+                    websiteIdentity?.Invoke(identity);
+                }
                 finally { CryptographicOperations.ZeroMemory(plain); }
                 if (!names.SetEquals(items.Keys.Append("system_catalog.dat"))) throw new InvalidDataException("媒体文件与保险箱索引不匹配。");
                 if (target != null) await File.WriteAllBytesAsync(target, encrypted, token);

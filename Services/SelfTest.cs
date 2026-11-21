@@ -136,6 +136,7 @@ public static class SelfTest
             await AppLog.FlushAsync(TimeSpan.FromSeconds(5));
             Report(AppLog.ReadAll().Contains("Logging recovered after sharing violation"), "Diagnostic writer recovers after a locked file");
             BrowserProfileSafetyTests.Run(testRoot, Report);
+            await BrowserProfileSafetyTests.CheckAccountsAsync(testRoot, Report);
             Report(VaultImageDecoder.GetDecodeSize(800, 12000, 16384, 16 * 1024 * 1024) == (800u, 12000u),
                 "Long image preserves original readable width");
             var hugeImageSize = VaultImageDecoder.GetDecodeSize(40000, 30000, 16384, 16 * 1024 * 1024);
@@ -780,7 +781,16 @@ public static class SmokeTest
             }
 
             bool ok = ready && !anyUnhandled && pagesOk && webViewOk && (!UiSmoke || completed);
-            builder.AppendLine(ShutdownAudit ? "SHUTDOWN AUDIT: " + (Lines.Any(l => (l.Contains("shutdown audit: live WebView", StringComparison.Ordinal) || l.Contains("shutdown audit: initializing WebView", StringComparison.Ordinal))) && Lines.Any(l => l.Contains("closing: vault locked=True", StringComparison.Ordinal)) && Lines.Any(l => l.Contains("closing: browser profiles removed=True", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : RenderAudit ? "RENDER AUDIT: " + (Lines.Any(l => l.Contains("render audit complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserAudit ? "AUDIT RESULT: " + (Lines.Any(l => l.Contains("audit complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : ExperienceTest ? "EXPERIENCE RESULT: " + (Lines.Any(l => l.Contains("experience complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserSoakMinutes > 0 ? "SOAK RESULT: " + (Lines.Any(l => l.Contains("soak complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserProbeUrl != null ? "NETWORK PROBE: completed; inspect metrics separately" : Interactive ? "MANUAL SESSION: completed; inspect UI evidence separately" : "SMOKE RESULT: " + (ok ? "OK" : "FAILED"));
+            if (LoginRetentionAcceptance.Requested)
+            {
+                bool passed = !anyUnhandled &&
+                    Lines.Any(l => l.Contains("login retention phase passed: " + LoginRetentionAcceptance.Phase, StringComparison.Ordinal)) &&
+                    Lines.Any(l => l.Contains("closing: vault locked=True", StringComparison.Ordinal)) &&
+                    Lines.Any(l => l.Contains("closing: browser session cleanup completed=True", StringComparison.Ordinal));
+                builder.AppendLine("LOGIN RETENTION: " + (passed ? "OK" : "FAILED"));
+            }
+            else
+                builder.AppendLine(ShutdownAudit ? "SHUTDOWN AUDIT: " + (Lines.Any(l => (l.Contains("shutdown audit: live WebView", StringComparison.Ordinal) || l.Contains("shutdown audit: initializing WebView", StringComparison.Ordinal))) && Lines.Any(l => l.Contains("closing: vault locked=True", StringComparison.Ordinal)) && Lines.Any(l => l.Contains("closing: browser session cleanup completed=True", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : RenderAudit ? "RENDER AUDIT: " + (Lines.Any(l => l.Contains("render audit complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserAudit ? "AUDIT RESULT: " + (Lines.Any(l => l.Contains("audit complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : ExperienceTest ? "EXPERIENCE RESULT: " + (Lines.Any(l => l.Contains("experience complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserSoakMinutes > 0 ? "SOAK RESULT: " + (Lines.Any(l => l.Contains("soak complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserProbeUrl != null ? "NETWORK PROBE: completed; inspect metrics separately" : Interactive ? "MANUAL SESSION: completed; inspect UI evidence separately" : "SMOKE RESULT: " + (ok ? "OK" : "FAILED"));
             string? dir = Path.GetDirectoryName(OutputPath);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
             File.WriteAllText(OutputPath, builder.ToString(), Encoding.UTF8);

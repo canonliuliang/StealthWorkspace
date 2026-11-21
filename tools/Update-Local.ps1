@@ -55,7 +55,7 @@ foreach ($required in @('StealthWorkspace.exe', 'StealthWorkspace.dll', 'Stealth
 $files = @(Get-ChildItem -LiteralPath $candidateRoot -File -Recurse -Force | Sort-Object FullName)
 $entries = foreach ($file in $files) {
     $relative = $file.FullName.Substring($candidateRoot.Length + 1)
-    if ($relative -match '(^|[\\/])(WorkspaceData|MediaVault|BrowserSessions|IsolatedDownloads[^\\/]*|Stealth_WebProfile_[^\\/]*|StealthVault_Store)([\\/]|$)' -or
+    if ($relative -match '(^|[\\/])(WorkspaceData|MediaVault|BrowserSessions|BrowserAccounts|IsolatedDownloads[^\\/]*|Stealth_WebProfile_[^\\/]*|StealthVault_Store)([\\/]|$)' -or
         $relative -match '(^|[\\/])(system_catalog\.dat|settings\.dat|remove\.dat|rotate\.dat|app\.log|crash\.log)(\.|$)' -or
         $file.Extension -in '.svault','.swbackup','.svbackup','.dmp','.key','.pfx') { throw "Candidate contains private data: $relative" }
     $target = [IO.Path]::GetFullPath((Join-Path $publishRoot $relative))

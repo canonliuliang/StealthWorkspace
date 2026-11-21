@@ -156,7 +156,8 @@ public sealed partial class MainWindow : Window
             SmokeTest.Report($"motion: custom animations={UiMotion.AnimationsEnabled}, scale={RootGrid.XamlRoot.RasterizationScale:0.##}");
             if (SmokeTest.UiSmoke)
             {
-                if (SmokeTest.InteractiveFixture) _ = OpenInteractiveFixtureAsync();
+                if (LoginRetentionAcceptance.Requested) _ = RunLoginRetentionAcceptanceAsync();
+                else if (SmokeTest.InteractiveFixture) _ = OpenInteractiveFixtureAsync();
                 else if (!SmokeTest.Interactive) _ = RunUiSmokeWalkAsync();
             }
             else
@@ -388,6 +389,7 @@ public sealed partial class MainWindow : Window
 
             NavigateToPage(typeof(CleanerPage), null, "cleaner", force: true);
             await Task.Delay(3500);
+            await ((CleanerPage)NavFrame.Content).VerifySyntheticCleanAsync();
 
             NavigateToPage(typeof(SettingsPage), null, null, force: true);
             await Task.Delay(600);
@@ -643,7 +645,7 @@ public sealed partial class MainWindow : Window
         StatusProgress.IsActive = busy;
         StatusBadge.IsEnabled = !_pageNavigationBlocked && !busy;
 
-        (string label, string hint) = ("就绪", "打开痕迹清理");
+        (string label, string hint) = ("隐私清理", "查看可清理的本地文件与上次清理结果");
         if (busy && work != null)
         {
             string taskName = SettingsService.Instance.Data.CamouflageIndex > 0 ? "处理中" : work.Label;
@@ -654,7 +656,7 @@ public sealed partial class MainWindow : Window
         else if (SettingsService.Instance.ReadDeferred)
             (label, hint) = ("设置暂时只读", "设置文件暂不可访问。解除占用后重启，即可读取并保存最新设置。");
         else if (_pendingResidueCount > 0)
-            (label, hint) = ("发现系统残留", $"检测到 {_pendingResidueCount} 个资源管理器缩略图缓存文件，点击前往清理。");
+            (label, hint) = ("系统缩略图缓存", $"Windows 资源管理器有 {_pendingResidueCount} 个缩略图缓存文件。点击查看清理选项。");
         else if (!BossKeyService.Instance.IsBossKeyEnabled && SettingsService.Instance.Data.BossKeyEnabled)
             (label, hint) = ("老板键未注册", BossKeyService.Instance.LastBossKeyError);
         else if (SettingsService.Instance.LoadFailed)
@@ -1342,13 +1344,13 @@ public sealed partial class MainWindow : Window
             if (finishingVaultWork != null) await finishingVaultWork;
             try
             {
-                bool cleaned = await BrowserProfileManager.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8));
-                SmokeTest.Report("closing: browser profiles removed=" + cleaned);
+                bool cleaned = await BrowserProfileManager.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(16));
+                SmokeTest.Report("closing: browser session cleanup completed=" + cleaned);
             }
             catch (Exception ex)
             {
                 AppLog.Warn("关闭浏览器沙箱超时/失败: " + ex.GetType().Name);
-                SmokeTest.Report("closing: browser profiles removed=False, " + ex.GetType().Name);
+                SmokeTest.Report("closing: browser session cleanup completed=False, " + ex.GetType().Name);
             }
             try
             {

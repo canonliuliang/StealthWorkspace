@@ -22,8 +22,9 @@ try {
         throw "Startup check timed out: $report"
     }
     $result = if (Test-Path -LiteralPath $report) { Get-Content -LiteralPath $report -Raw -Encoding UTF8 } else { '' }
+    $result = $result.Replace('closing: browser profiles removed=', 'closing: browser session cleanup completed=')
     if ($child.ExitCode -ne 0 -or $result -notmatch 'UI ready: page=LockPage[^\r\n]*lockPageVisible=True' -or
-        $result -notmatch 'SMOKE RESULT: OK' -or $result -notmatch 'closing: browser profiles removed=True' -or
+        $result -notmatch 'SMOKE RESULT: OK' -or $result -notmatch 'closing: browser session cleanup completed=True' -or
         $result -match 'launch-failed:|unhandled-ui-exception:') {
         throw "The packaged WinUI lock page did not open and exit cleanly (exit $($child.ExitCode)): $report"
     }

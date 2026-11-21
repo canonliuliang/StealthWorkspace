@@ -334,7 +334,8 @@ internal static class RemovalSelfTest
                 throw new InvalidOperationException("Export unexpectedly committed");
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
-            Require(File.ReadAllText(target) == "keep" && !Directory.EnumerateFiles(folder, "*.part").Any());
+            if (File.ReadAllText(target) != "keep") throw new InvalidOperationException("A canceled export replaced the destination.");
+            if (Directory.EnumerateFiles(folder, "*.part").Any()) throw new InvalidOperationException("A canceled export left its temporary file behind.");
             vault.Lock();
         });
         await Check("Removal: journal write failure leaves ciphertext and index untouched", async () =>

@@ -25,6 +25,10 @@ public sealed partial class BrowserTabControl
             await Task.Delay(180);
             PrivacySections.SelectedItem = HistorySection;
             PrivacySections.SelectedItem = CookiesSection;
+            await Task.Delay(180);
+            if (!AccountModeDescription.Text.Contains("登录") || string.IsNullOrWhiteSpace(DefaultProtectionText.Text))
+                throw new InvalidOperationException("Missing login and history explanation in the privacy panel");
+            await UiCapture.SaveAsync(PrivacyContent, $"privacy-login-{theme.ToString().ToLowerInvariant()}.png");
             PrivacySections.SelectedItem = PermissionsSection;
             if (PanelFirewall.Visibility != Visibility.Visible || PrivacyPanels.Children.Count(p => p.Visibility == Visibility.Visible) != 1)
                 throw new InvalidOperationException("Rapid section changes left the wrong privacy panel visible");

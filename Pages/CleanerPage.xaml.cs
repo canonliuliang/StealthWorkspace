@@ -31,11 +31,18 @@ public sealed partial class CleanerPage : Page
         {
             _isPageLoaded = true;
             CleanerListView.ItemsSource = Items;
+            AccessPanel.Visibility = CleanerAccess.IsRestricted ? Visibility.Visible : Visibility.Collapsed;
 
             if (Items.Count > 0) return;
 
             foreach (CleanerItem category in CleanerService.Instance.GetDefaultCategories())
             {
+                if (category.Category == CleanerCategory.ThumbnailCache)
+                    RestartExplorerCheck.IsEnabled = category.CanClean;
+                category.PropertyChanged += (_, args) =>
+                {
+                    if (args.PropertyName == nameof(CleanerItem.IsSelected)) UpdateCleanAction();
+                };
                 Items.Add(category);
             }
 
@@ -88,7 +95,7 @@ public sealed partial class CleanerPage : Page
     private void PresetPrivacyBtn_Click(object sender, RoutedEventArgs e)
     {
         if (_isBusy) return;
-        ApplySelection(item => item.Category != CleanerCategory.IsolatedDownloads);
+        ApplySelection(item => item.Category == CleanerCategory.TempFiles);
     }
 
     private void SelectAllBtn_Click(object sender, RoutedEventArgs e)
@@ -107,7 +114,7 @@ public sealed partial class CleanerPage : Page
     {
         foreach (CleanerItem item in Items)
         {
-            item.IsSelected = predicate(item);
+            item.IsSelected = item.CanClean && predicate(item);
         }
     }
 
@@ -159,7 +166,7 @@ public sealed partial class CleanerPage : Page
         if (_isBusy || !_isPageLoaded || !VaultService.Instance.IsUnlocked) return;
 
         List<CleanerItem> snapshot = Items.ToList();
-        List<CleanerItem> selected = snapshot.Where(item => item.IsSelected).ToList();
+        List<CleanerItem> selected = snapshot.Where(item => item.CanClean && item.IsSelected).ToList();
         CleanerOptions options = BuildOptions();
 
         if (selected.Count == 0)
@@ -176,6 +183,10 @@ public sealed partial class CleanerPage : Page
 
         try
         {
+            // Recheck the selection before showing irreversible actions. A file held during
+            // the previous run may have become available since the list was last refreshed.
+            selected = await CleanerService.Instance.ScanAsync(selected, options: options, cancellationToken: operation.Token);
+            if (!_isPageLoaded || !VaultService.Instance.IsUnlocked) return;
             bool confirmed = await ShowCleanConfirmationAsync(selected, options);
             if (!confirmed || operation.IsCancellationRequested)
             {
@@ -218,7 +229,7 @@ public sealed partial class CleanerPage : Page
 
             bool hasFailure = cleanResults.Any(r => r.IsSelected && r.Outcome == CleanOutcome.Failed);
             bool hasSkipped = cleanResults.Any(r => r.IsSelected && r.Outcome == CleanOutcome.Skipped);
-            SummaryText.Text = cleanSummary + " 正在刷新统计…";
+            SummaryText.Text = "正在刷新剩余项目…";
             try
             {
                 // Merge selection state from snapshot into refreshed list, while preserving detailed clean status text.
@@ -237,18 +248,20 @@ public sealed partial class CleanerPage : Page
 
                 ApplyResults(refreshed);
                 UpdateStatsBadge(refreshed);
-                SummaryText.Text = cleanSummary;
+                SummaryText.Text = "可以在类别列表中查看各项处理结果。";
                 if (hasFailure)
                 {
                     ShowInfoBar(InfoBarSeverity.Warning, "部分清理未完成", cleanSummary);
                 }
                 else if (hasSkipped)
                 {
-                    ShowInfoBar(InfoBarSeverity.Informational, "清理已完成，部分项目已跳过", cleanSummary);
+                    ShowInfoBar(InfoBarSeverity.Informational, "部分项目已保留", cleanSummary);
                 }
                 else
                 {
-                    ShowInfoBar(InfoBarSeverity.Success, "清理已完成", cleanSummary);
+                    bool noWork = cleanResults.Where(item => item.IsSelected).All(item => item.Outcome == CleanOutcome.NothingToClean);
+                    ShowInfoBar(noWork ? InfoBarSeverity.Informational : InfoBarSeverity.Success,
+                        noWork ? "所选类别没有待清理的项目" : "清理已完成", noWork ? string.Empty : cleanSummary);
                 }
             }
             catch (OperationCanceledException) when (operation.IsCancellationRequested)
@@ -287,7 +300,7 @@ public sealed partial class CleanerPage : Page
         _operation = operation;
         SetBusy(true);
         HideInfoBar();
-        SummaryText.Text = "正在全面扫描系统隐私痕迹…";
+        SummaryText.Text = "正在检查可访问的文件和记录…";
 
         try
         {
@@ -418,15 +431,26 @@ public sealed partial class CleanerPage : Page
     {
         _isBusy = busy;
         ScanBtn.IsEnabled = !busy;
-        CleanBtn.IsEnabled = !busy;
+        UpdateCleanAction();
         PresetPrivacyBtn.IsEnabled = !busy;
         SelectAllBtn.IsEnabled = !busy;
         DeselectAllBtn.IsEnabled = !busy;
-        RestartExplorerCheck.IsEnabled = !busy;
+        RestartExplorerCheck.IsEnabled = !busy && !CleanerAccess.IsRestricted && !AppPaths.HasDataRootOverride;
         DeepTempCheck.IsEnabled = !busy;
         SecureShredCheck.IsEnabled = !busy;
         CleanerListView.IsEnabled = !busy;
         OpProgressRing.IsActive = busy && showProgress;
+    }
+
+    private void UpdateCleanAction() => CleanBtn.IsEnabled = !_isBusy && Items.Any(item => item.CanClean && item.IsSelected);
+
+    private async void OpenStorage_Click(object sender, RoutedEventArgs e)
+    {
+        bool opened = false;
+        try { opened = await Windows.System.Launcher.LaunchUriAsync(new Uri("ms-settings:storagesense")); }
+        catch (Exception ex) { AppLog.Warn("打开 Windows 存储设置失败", ex); }
+        if (!opened && _isPageLoaded)
+            ShowOperationWarning("Windows 存储设置未打开", "请在 Windows 设置中打开「系统 → 存储 → 临时文件」。");
     }
 
     private void ApplyResults(IReadOnlyList<CleanerItem> results)
@@ -443,8 +467,8 @@ public sealed partial class CleanerPage : Page
         int totalCount = results.Sum(r => r.DetectedCount);
         long totalBytes = results.Where(r => r.IsSizeKnown).Sum(r => r.DetectedSizeBytes);
 
-        string label = totalBytes > 0 ? $"发现 {totalCount} 项 · {CleanerService.FormatSize(totalBytes)}"
-            : totalCount > 0 ? $"发现 {totalCount} 条痕迹记录" : "系统干净";
+        string label = totalBytes > 0 ? $"已统计 {totalCount} 项 · {CleanerService.FormatSize(totalBytes)}"
+            : totalCount > 0 ? $"已统计 {totalCount} 项" : "已统计 0 项";
         if (StatsBadgeText.Text == label) return;
         StatsBadgeText.Text = label;
         UiMotion.Reveal(StatsBadgeText, MotionCue.Fade);
@@ -477,30 +501,26 @@ public sealed partial class CleanerPage : Page
 
     private static string BuildScanSummary(IReadOnlyList<CleanerItem> results)
     {
-        int categoriesWithFindings = results.Count(item => item.DetectedCount > 0 || item.DetectedSizeBytes > 0);
-        if (categoriesWithFindings == 0)
-        {
-            return "扫描完成：暂未发现文件或注册表痕迹；剪贴板与 DNS 缓存仍可随时手动清空。";
-        }
-
-        int totalItems = results.Sum(item => item.DetectedCount);
-        long totalSize = results.Where(item => item.IsSizeKnown).Sum(item => item.DetectedSizeBytes);
-        string sizePart = totalSize > 0 ? $"，可释放约 {CleanerService.FormatSize(totalSize)}" : string.Empty;
-        return $"扫描完成：{categoriesWithFindings} 个类别发现可清理内容（共 {totalItems} 项{sizePart}）。可点击“查看明细”预览，确认后点击“清理选中项”。";
+        int count = results.Where(item => item.CanClean).Sum(item => item.DetectedCount);
+        bool partial = results.Any(item => item.CanClean && item.Outcome is CleanOutcome.Failed or CleanOutcome.Skipped);
+        if (partial) return $"已统计 {count} 项。有些内容受限或正被占用，各类别中列出了原因。";
+        return count == 0 ? "可扫描的类别中未发现待处理文件或记录。" :
+            $"已统计 {count} 项。可以在各类别中查看明细，再清理选中项。";
     }
 
-    private static string BuildCleanSummary(IReadOnlyList<CleanerItem> results)
+    internal static string BuildCleanSummary(IReadOnlyList<CleanerItem> results)
     {
+        var selected = results.Where(r => r.IsSelected).ToList();
+        if (selected.Count == 0) return "未选择类别。";
         var parts = new List<string>();
-        foreach (CleanerItem item in results)
+        foreach (var (state, label) in new[] {
+            (CleanOutcome.Complete, "完成"), (CleanOutcome.NothingToClean, "无需处理"),
+            (CleanOutcome.Skipped, "有保留"), (CleanOutcome.Failed, "未完成") })
         {
-            if (!item.IsSelected) continue;
-            parts.Add(string.IsNullOrWhiteSpace(item.Status) ? item.Name : item.Status);
+            int count = selected.Count(item => item.Outcome == state);
+            if (count > 0) parts.Add($"{label} {count} 类");
         }
-
-        return parts.Count == 0
-            ? "本次清理未执行任何删除。"
-            : "本次清理结果：" + string.Join("；", parts) + "。";
+        return string.Join(" · ", parts);
     }
 
     private static string DescribePending(CleanerItem item)

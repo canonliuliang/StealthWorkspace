@@ -12,6 +12,10 @@ namespace StealthWorkspace.Services;
 
 public class BookmarkItem
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string DisplayHost => Uri.TryCreate(Url, UriKind.Absolute, out var uri) ? uri.IdnHost : string.Empty;
+    public string FolderId { get; init; } = "";
+    public int? Position { get; init; }
     internal bool ContainsLoginInfo => Url.Contains('@') && Uri.TryCreate(Url, UriKind.Absolute, out var uri) && uri.UserInfo.Length != 0;
     public override string ToString() => string.IsNullOrWhiteSpace(Title) ? Url : Title;
     public string Title { get; set; } = string.Empty;
@@ -53,6 +57,7 @@ public class AppSettingsData
 
     // Bookmarks (encrypted at rest via DPAPI)
     public ImmutableList<BookmarkItem> Bookmarks { get; set; } = [];
+    public ImmutableList<BookmarkFolder> BookmarkFolders { get; set; } = [];
 
     internal AppSettingsData WithBookmarks(ImmutableList<BookmarkItem> bookmarks)
     {
@@ -62,7 +67,7 @@ public class AppSettingsData
     }
 
     // Cleaner Preferences
-    public bool AutoCheckThumbcacheOnStartup { get; set; } = true;
+    public bool AutoCheckThumbcacheOnStartup { get; set; }
     public bool AutoFlushDnsOnExit { get; set; }
     public bool AutoWipeJumpList { get; set; } = true;
 
@@ -75,7 +80,7 @@ public class AppSettingsData
 /// last known good file is kept, so a crash while saving can never silently reset the
 /// user's configuration.
 /// </summary>
-public class SettingsService
+public partial class SettingsService
 {
     private static readonly Lazy<SettingsService> Shared = new(() => new SettingsService { _bookmarkSession = null });
     public static SettingsService Instance => Shared.Value;
@@ -92,6 +97,7 @@ public class SettingsService
         internal bool Temporary { get; } = temporary;
         internal string? DownloadDirectoryName { get; } = temporary ? $"session-{Environment.ProcessId}-{Guid.NewGuid():N}" : null;
         internal volatile ImmutableList<BookmarkItem> Items = [];
+        internal volatile ImmutableList<BookmarkFolder> Folders = [];
     }
     // Services opened directly against an isolated settings file work with its
     // persistent data. The application's shared instance starts locked.
@@ -117,6 +123,7 @@ public class SettingsService
             {
                 _realDataBeforeDecoy = Data;
                 Data = Data.WithBookmarks([]);
+                Data.BookmarkFolders = [];
             }
 
             if (_bookmarkSession?.Temporary == decoy) return;
@@ -285,7 +292,7 @@ public class SettingsService
     /// </summary>
     public bool SaveSettings() => SaveSettings(null);
 
-    private bool SaveSettings(ImmutableList<BookmarkItem>? bookmarkChange, Action? transferIndex = null)
+    private bool SaveSettings(ImmutableList<BookmarkItem>? bookmarkChange, Action? transferIndex = null, ImmutableList<BookmarkFolder>? folderChange = null)
     {
         lock (_saveGate)
         {
@@ -300,6 +307,7 @@ public class SettingsService
             try
             {
                 var snapshot = bookmarkChange == null ? Data : Data.WithBookmarks(bookmarkChange);
+                if (folderChange != null) snapshot.BookmarkFolders = folderChange;
                 Normalize(snapshot);
                 byte[] plaintext = JsonSerializer.SerializeToUtf8Bytes(snapshot);
                 byte[] encrypted;
@@ -333,6 +341,7 @@ public class SettingsService
                 {
                     transferIndex?.Invoke();
                     Data.Bookmarks = snapshot.Bookmarks;
+                    Data.BookmarkFolders = snapshot.BookmarkFolders;
                 }
                 NotifySettingsChanged();
                 return true;
@@ -366,6 +375,7 @@ public class SettingsService
     private static void Normalize(AppSettingsData d)
     {
         d.Bookmarks ??= [];
+        d.BookmarkFolders ??= [];
         if (d.Bookmarks.Any(b => b == null || string.IsNullOrWhiteSpace(b.Url)))
             d.Bookmarks = d.Bookmarks.RemoveAll(b => b == null || string.IsNullOrWhiteSpace(b.Url));
         foreach (var b in d.Bookmarks)
@@ -444,11 +454,11 @@ public class SettingsService
         }
     }
 
-    private static BookmarkItem NewBookmark(string? title, Uri uri, DateTime created)
+    private static BookmarkItem NewBookmark(string? title, Uri uri, DateTime created, string folderId = "", int? position = null)
     {
         string name = string.IsNullOrWhiteSpace(title) ? uri.Host : title.Trim();
         if (name.Length > 200) name = name[..(char.IsHighSurrogate(name[199]) ? 199 : 200)];
-        return new BookmarkItem { Title = name, Url = uri.AbsoluteUri, CreatedAt = created };
+        return new BookmarkItem { Title = name, Url = uri.AbsoluteUri, CreatedAt = created, FolderId = folderId, Position = position };
     }
 
     public bool AddBookmark(string title, string url) => AddBookmark(title, url, _bookmarkSession);
@@ -504,7 +514,7 @@ public class SettingsService
             if (item == null) return false;
             if (item.Title == title) return true;
             if (title.Length > 200) title = title[..(char.IsHighSurrogate(title[199]) ? 199 : 200)];
-            var replacement = new BookmarkItem { Title = title, Url = item.Url, CreatedAt = item.CreatedAt };
+            var replacement = new BookmarkItem { Title = title, Url = item.Url, CreatedAt = item.CreatedAt, FolderId = item.FolderId, Position = item.Position };
             return SaveBookmarks(session, bookmarks.Replace(item, replacement), index => { if (unique != null) index[key] = replacement; });
         }
     }

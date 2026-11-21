@@ -118,6 +118,7 @@ public sealed partial class BrowserTabControl
 
     internal async Task CheckDownloadShortcutAuditAsync()
     {
+        await RequireKeyboardForegroundAsync("download keyboard");
         var flyout = EnsureDownloadsFlyout();
         var editor = FindAddressEditor(UrlTextBox) ?? throw new InvalidOperationException("Missing address editor");
         if (!editor.Focus(Microsoft.UI.Xaml.FocusState.Keyboard) || !IsAddressBarFocused)

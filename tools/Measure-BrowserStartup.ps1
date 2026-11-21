@@ -61,10 +61,11 @@ function Measure-Launch([string]$Build, [int]$Pair) {
             throw "Smoke process timed out. Inspect $testDir"
         }
         $report = Get-Content -LiteralPath $reportPath -Raw -Encoding utf8
+        $report = $report.Replace('closing: browser profiles removed=', 'closing: browser session cleanup completed=')
         $required = @('SMOKE RESULT: OK', 'lockPageVisible=True', 'closing: vault locked=True',
-            'closing: browser controls released', 'closing: browser profiles removed=True')
+            'closing: browser controls released', 'closing: browser session cleanup completed=True')
         if ($process.ExitCode -ne 0 -or @($required | Where-Object { !$report.Contains($_) }).Count -or
-            $report -match 'unhandled-ui-exception|launch-failed|closing:[^\r\n]*(?:locked=False|removed=False|failed|失败|超时)') {
+            $report -match 'unhandled-ui-exception|launch-failed|closing:[^\r\n]*(?:locked=False|removed=False|completed=False|failed|失败|超时)') {
             throw "Startup or shutdown validation failed. Inspect $reportPath"
         }
         $launched = Get-MarkerMilliseconds $report 'OnLaunched:' $started

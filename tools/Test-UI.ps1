@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory)][string]$AppDirectory,
-    [ValidateSet('Smoke','Render','Browser','Experience','Soak','Web')][string]$Mode = 'Smoke',
+    [ValidateSet('Smoke','Render','Browser','Menu','Experience','Soak','Web')][string]$Mode = 'Smoke',
     [string]$OutputDirectory,
     [ValidateSet('Dark','Light')][string]$Theme = 'Dark',
     [ValidateRange(480,2000)][int]$Width = 1100,
@@ -31,6 +31,7 @@ if ($ReducedMotion) { $info.ArgumentList.Add('--ui-reduced-motion') }
 switch ($Mode) {
     'Render' { $info.ArgumentList.Add('--browser-render-audit'); $marker = 'RENDER AUDIT: OK' }
     'Browser' { $info.ArgumentList.Add('--browser-audit'); $marker = 'AUDIT RESULT: OK' }
+    'Menu' { $info.ArgumentList.Add('--browser-audit'); $info.ArgumentList.Add('--menu-actions-only'); $marker = 'menu actions audit complete' }
     'Experience' { $info.ArgumentList.Add('--experience-test'); $marker = 'EXPERIENCE RESULT: OK' }
     'Soak' { $info.ArgumentList.Add('--browser-soak-minutes'); $info.ArgumentList.Add("$SoakMinutes"); $marker = 'SOAK RESULT: OK' }
     'Web' { $info.ArgumentList.Add('--browser-probe-url'); $info.ArgumentList.Add($Url.AbsoluteUri); $marker = 'NETWORK PROBE: completed' }
@@ -38,16 +39,28 @@ switch ($Mode) {
 $process = [Diagnostics.Process]::Start($info)
 $timeout = if ($Mode -eq 'Soak') { ($SoakMinutes + 2) * 60 } else { 240 }
 Write-Output "Running $Mode in isolated test data; PID=$($process.Id)"
-if (!$process.WaitForExit($timeout * 1000)) {
+$deadline = [datetime]::UtcNow.AddSeconds($timeout)
+$lastActivated = ''
+while (!$process.WaitForExit(200) -and [datetime]::UtcNow -lt $deadline) {
+    if ($Mode -notin 'Browser','Menu','Render','Web' -or !(Test-Path -LiteralPath $report)) { continue }
+    $lastLine = Get-Content -LiteralPath $report -Tail 1
+    if (!$lastLine -or $lastLine -eq $lastActivated -or
+        $lastLine -notmatch '(waiting for (real foreground|test-window) activation|awaiting foreground)') { continue }
+    $process.Refresh()
+    if ($process.HasExited -or $process.MainWindowTitle -notlike '*测试窗口*' -or $process.MainWindowHandle -eq 0) { continue }
+    if (& (Join-Path $PSScriptRoot 'Set-UiTestForeground.ps1') -TestProcess $process) { $lastActivated = $lastLine }
+}
+if (!$process.HasExited) {
     $null = $process.CloseMainWindow()
     if (!$process.WaitForExit(5000)) { $process.Kill() }
     throw "UI test exceeded $timeout seconds. Evidence: $output"
 }
 if (!(Test-Path -LiteralPath $report)) { throw "No UI report; exit code $($process.ExitCode)." }
 $result = Get-Content -LiteralPath $report -Raw
-$requiredCleanup = @('closing: vault locked=True', 'closing: browser controls released', 'closing: browser profiles removed=True')
+$result = $result.Replace('closing: browser profiles removed=', 'closing: browser session cleanup completed=')
+$requiredCleanup = @('closing: vault locked=True', 'closing: browser controls released', 'closing: browser session cleanup completed=True')
 $missingCleanup = @($requiredCleanup | Where-Object { !$result.Contains($_) })
-$cleanupFailed = $result -match 'closing:[^\r\n]*(?:locked=False|removed=False|failed|failure|超时|失败)'
+$cleanupFailed = $result -match 'closing:[^\r\n]*(?:locked=False|removed=False|completed=False|failed|failure|超时|失败)'
 if ($process.ExitCode -ne 0 -or !$result.Contains($marker) -or
     $result -match 'ui-smoke failed:|UnhandledException|UNHANDLED' -or $cleanupFailed -or $missingCleanup.Count -ne 0) {
     throw "UI test failed. Inspect $report"

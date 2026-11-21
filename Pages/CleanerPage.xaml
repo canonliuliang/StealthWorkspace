@@ -37,6 +37,14 @@
         <InfoBar x:Name="StatusInfoBar" Grid.Row="1" IsOpen="False" IsClosable="True" Severity="Informational" AutomationProperties.LiveSetting="Polite" />
 
         <StackPanel Grid.Row="2" Spacing="8">
+            <Grid x:Name="AccessPanel" Visibility="Collapsed" ColumnSpacing="12" Padding="12,8"
+                  Background="{ThemeResource StealthBrandSubtleBrush}" CornerRadius="8">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBlock Text="Windows 限制了当前窗口的写入范围。受限的系统类别已停用，系统临时文件也可在 Windows 存储设置中管理。"
+                           TextWrapping="Wrap" VerticalAlignment="Center" Style="{StaticResource StealthCaptionStyle}"/>
+                <Button x:Name="StorageSettingsButton" Grid.Column="1" Content="打开 Windows 存储" Click="OpenStorage_Click"
+                        VerticalAlignment="Center" AutomationProperties.Name="打开 Windows 存储设置"/>
+            </Grid>
             <Grid ColumnSpacing="8">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" Spacing="4">
@@ -76,7 +84,7 @@
                     <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="16">
                         <Grid ColumnSpacing="12">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="36" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                            <CheckBox IsChecked="{x:Bind IsSelected, Mode=TwoWay}" MinWidth="28" VerticalAlignment="Top" AutomationProperties.Name="{x:Bind Name}" />
+                            <CheckBox IsChecked="{x:Bind IsSelected, Mode=TwoWay}" IsEnabled="{x:Bind CanClean}" MinWidth="28" VerticalAlignment="Top" AutomationProperties.Name="{x:Bind Name}" />
                             <Border Grid.Column="1" Width="36" Height="36" CornerRadius="10" Background="{ThemeResource StealthBrandSubtleBrush}" VerticalAlignment="Top">
                                 <FontIcon Glyph="{x:Bind IconGlyph}" FontSize="16" Foreground="{ThemeResource StealthBrandBrush}" />
                             </Border>

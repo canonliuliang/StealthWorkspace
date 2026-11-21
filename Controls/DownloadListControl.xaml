@@ -44,8 +44,8 @@
         </Grid>
         <InfoBar x:Name="ActionError" Grid.Row="2" IsOpen="False" Severity="Warning" />
         <StackPanel Grid.Row="3" Spacing="8">
-            <TextBlock Text="文件保存在应用下载文件夹。结束会话会取消未完成的下载并清除列表，已下载文件仍保留。" FontSize="12" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-            <Button Content="打开下载文件夹" Click="OpenFolder_Click" HorizontalAlignment="Stretch" />
+            <TextBlock x:Name="RetentionNote" Text="结束会话会清除下载列表。已下载文件可在下载文件夹中找到。" FontSize="12" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <Button x:Name="CurrentFolderButton" Content="打开下载文件夹" Click="OpenFolder_Click" HorizontalAlignment="Stretch" />
         </StackPanel>
     </Grid>
 </UserControl>

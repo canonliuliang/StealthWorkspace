@@ -14,6 +14,7 @@ namespace StealthWorkspace.Services;
 
 public class VaultConfig
 {
+    public string WebsiteAccountIdentity { get; set; } = "";
     public int Version { get; set; } = 2;
     public string RealSaltHex { get; set; } = string.Empty;
     public string RealHashHex { get; set; } = string.Empty;
@@ -200,6 +201,7 @@ public partial class VaultService
                 EnsureNewVaultTarget();
                 var candidate = new VaultConfig
                 {
+                    WebsiteAccountIdentity = Guid.NewGuid().ToString("N"),
                     Version = 2,
                     RealSaltHex = Convert.ToHexString(realSalt),
                     RealHashHex = Convert.ToHexString(CryptoService.HashKey(realKey)),
@@ -379,12 +381,12 @@ public partial class VaultService
         ImportPathAsync(sourcePath, shredOriginal, progress, cancellationToken, reportOriginalRemoval);
 
     internal Task<VaultItem> ImportDownloadAsync(string sourcePath, SafeShred.FileIdentity downloadIdentity,
-        IProgress<double> progress, CancellationToken token, Action<bool> reportOriginalRemoval) =>
-        ImportPathAsync(sourcePath, true, progress, token, reportOriginalRemoval, downloadIdentity);
+        SettingsService.BookmarkSession? workspace, bool removeOriginal, IProgress<double>? progress, CancellationToken token, Action<bool>? reportOriginalRemoval = null) =>
+        ImportPathAsync(sourcePath, removeOriginal, progress, token, reportOriginalRemoval, downloadIdentity, workspace);
 
     private async Task<VaultItem> ImportPathAsync(string sourcePath, bool shredOriginal,
         IProgress<double>? progress, CancellationToken cancellationToken, Action<bool>? reportOriginalRemoval,
-        SafeShred.FileIdentity? downloadIdentity = null)
+        SafeShred.FileIdentity? downloadIdentity = null, SettingsService.BookmarkSession? workspace = null)
     {
         long epoch = CaptureUnlockEpoch();
         using var operation = await EnterMutationAsync(cancellationToken);
@@ -395,8 +397,9 @@ public partial class VaultService
         if (!File.Exists(fullSourcePath)) throw new FileNotFoundException("源文件不存在。", fullSourcePath);
         if (downloadIdentity.HasValue)
         {
-            string downloadDirectory = Path.Combine(_vaultRoot, "IsolatedDownloads");
-            if (!string.Equals(Path.GetDirectoryName(fullSourcePath), downloadDirectory, StringComparison.OrdinalIgnoreCase)
+            if (!BrowserDownloadPath.IsCurrentWorkspace(workspace) || !ReferenceEquals(this, Instance)
+                || !BrowserDownloadFolders.Homes().Any(home => string.Equals(Path.GetDirectoryName(fullSourcePath),
+                    BrowserDownloadFolders.PathFor(home, workspace!.DownloadDirectoryName), StringComparison.OrdinalIgnoreCase))
                 || !SafeFileSystem.IsPlainPath(fullSourcePath))
                 throw new InvalidOperationException("下载文件位置已改变。");
         }
@@ -408,7 +411,7 @@ public partial class VaultService
         using (var input = new FileStream(fullSourcePath, FileMode.Open, FileAccess.Read, FileShare.Read,
             bufferSize: 64 * 1024, FileOptions.SequentialScan))
         {
-            if (shredOriginal) identity = SafeShred.CaptureIdentity(input.SafeFileHandle);
+            if (shredOriginal || downloadIdentity.HasValue) identity = SafeShred.CaptureIdentity(input.SafeFileHandle);
             if (downloadIdentity.HasValue && identity != downloadIdentity)
                 throw new IOException("原下载文件已被替换，导入已取消。");
             item = await ImportStreamCoreAsync(input, Path.GetFileName(fullSourcePath), epoch, progress, cancellationToken, digest);
@@ -566,21 +569,23 @@ public partial class VaultService
         }
         finally
         {
+            CryptographicOperations.ZeroMemory(key);
             if (File.Exists(tempTarget))
             {
-                try
+                // A reader can briefly keep the canceled export open on Windows.
+                // Only handle the temporary file allocated by this operation.
+                for (int attempt = 0; ; attempt++)
                 {
-                    if (!CryptoService.ShredFile(tempTarget, 1))
+                    try
                     {
-                        TryDelete(tempTarget);
+                        File.Delete(tempTarget);
+                        if (!File.Exists(tempTarget)) break;
+                        throw new IOException("临时导出文件仍在使用。");
                     }
-                }
-                catch
-                {
-                    TryDelete(tempTarget);
+                    catch (IOException) when (attempt < 5) { await Task.Delay(50 << attempt); }
+                    catch (UnauthorizedAccessException) when (attempt < 5) { await Task.Delay(50 << attempt); }
                 }
             }
-            CryptographicOperations.ZeroMemory(key);
         }
     }
 
@@ -801,6 +806,8 @@ public partial class VaultService
             {
                 string previousSalt = decoy ? config.DecoySaltHex : config.RealSaltHex;
                 string previousHash = decoy ? config.DecoyHashHex : config.RealHashHex;
+                string previousWebsiteIdentity = config.WebsiteAccountIdentity;
+                string nextWebsiteIdentity = decoy ? previousWebsiteIdentity : WebsiteIdentityFor(config);
                 int previousIterations = decoy ? config.DecoyIterations : config.Iterations;
 
                 foreach (var (item, _, newName) in planned)
@@ -816,6 +823,7 @@ public partial class VaultService
                 }
                 else
                 {
+                    config.WebsiteAccountIdentity = nextWebsiteIdentity;
                     config.RealSaltHex = journal.NewSaltHex;
                     config.RealHashHex = journal.NewHashHex;
                     config.Iterations = journal.NewIterations;
@@ -839,6 +847,7 @@ public partial class VaultService
                     }
                     else
                     {
+                        config.WebsiteAccountIdentity = previousWebsiteIdentity;
                         config.RealSaltHex = previousSalt;
                         config.RealHashHex = previousHash;
                         config.Iterations = previousIterations;

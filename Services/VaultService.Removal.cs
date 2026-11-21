@@ -237,6 +237,8 @@ public partial class VaultService
         MarkResetIncomplete();
         try
         {
+            if (WebsiteIdentityForReset() is { } identity)
+                await BrowserAccountDirectory.RemoveForReplacementAsync(_vaultRoot, identity);
             await Task.Run(() =>
             {
                 PersistLegacyImportDisabled();

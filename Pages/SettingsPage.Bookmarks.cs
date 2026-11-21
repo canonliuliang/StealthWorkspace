@@ -39,9 +39,9 @@ public sealed partial class SettingsPage
                 if (result == null) return;
                 token.ThrowIfCancellationRequested();
                 if (!ReferenceEquals(session, settings.PersonalBookmarkSession)) return;
-                var snapshot = settings.CurrentBookmarks;
-                int written = await VaultService.Instance.ExportBookmarksAsync(result.Path, snapshot, token);
-                ReportBookmarkTransfer($"已导出 {written} 条收藏，跳过 {snapshot.Count - written} 条不支持的网址。", token);
+                var snapshot = settings.GetBookmarkLibrary();
+                int written = await VaultService.Instance.ExportBookmarksAsync(result.Path, snapshot.Items, token, snapshot.Folders);
+                ReportBookmarkTransfer($"已导出 {written} 条收藏和 {snapshot.Folders.Count} 个文件夹，跳过 {snapshot.Items.Count - written} 条不支持的网址。", token);
             }
             else
             {
@@ -53,14 +53,14 @@ public sealed partial class SettingsPage
                 token.ThrowIfCancellationRequested();
                 var parsed = await Task.Run(() => BookmarkHtml.ReadAsync(result.Path, token), token);
                 token.ThrowIfCancellationRequested();
-                if (parsed.Items.Count == 0)
+                if (parsed.Items.Count == 0 && parsed.Folders.Count == 0)
                 {
                     ReportBookmarkTransfer("文件中没有可导入的 HTTP 或 HTTPS 网页收藏。", token);
                     return;
                 }
-                int added = await Task.Run(() => settings.ImportBookmarks(parsed.Items, out int count, token, session)
-                    ? count : throw new IOException("无法保存收藏。请检查设置文件能否写入后重试。"), token);
-                ReportBookmarkTransfer($"已导入 {added} 条收藏，已有或重复 {parsed.Items.Count - added} 条，跳过 {parsed.Skipped} 条不支持的网址。", token);
+                var (added, folders) = await Task.Run(() => settings.ImportBookmarkLibrary(parsed, session, token, out int count, out int groups)
+                    ? (count, groups) : throw new IOException("无法保存收藏。请检查设置文件能否写入后重试。"), token);
+                ReportBookmarkTransfer($"已导入 {added} 条收藏和 {folders} 个文件夹，已有或重复 {parsed.Items.Count - added} 条，跳过 {parsed.Skipped} 条不支持的网址。", token);
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }

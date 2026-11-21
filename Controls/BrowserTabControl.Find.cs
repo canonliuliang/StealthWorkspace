@@ -12,6 +12,12 @@ public sealed partial class BrowserTabControl
     internal void FindFromShortcut(bool advance, bool backwards)
     {
         if (_nativeFindDispatching) return;
+        if (FindBar.Visibility == Visibility.Visible)
+        {
+            if (advance) _ = RunFindAsync(backwards, advance: true);
+            else { FindTextBox.Focus(FocusState.Keyboard); FindTextBox.SelectAll(); }
+            return;
+        }
         if (_isInitialized && _hookedCore != null && !_nativeFindUnavailable)
         {
             _ = SendNativeFindAsync(advance, backwards);
@@ -97,7 +103,9 @@ public sealed partial class BrowserTabControl
         }
         if (!_findAfterMenuClose || _isDisposed) return;
         _findAfterMenuClose = false;
-        ToggleFindBar();
+        // Use the visible host find bar for an explicit menu command. The
+        // programmatic Find API searches the document without synthesizing Ctrl+F.
+        if (_documentReady && _hookedCore != null && IsForegroundTab) ShowFallbackFindBar();
     }
 
     private void ToggleFindBar()

@@ -97,8 +97,10 @@ public sealed partial class BrowserPage
                 if (item.Content is not BrowserTabControl tab) continue;
                 string title = item.Header?.ToString() ?? "新标签页";
                 string address = tab.CurrentUrl;
+                bool blank = string.IsNullOrEmpty(address) || address == "about:blank";
                 _tabSearchRows.Add(new BrowserTabSearchItem(item, title,
-                    string.IsNullOrEmpty(address) || address == "about:blank" ? "尚未打开网页" : BrowserTabControl.DisplayAddress(address), item.IconSource));
+                    blank ? "尚未打开网页" : BrowserTabControl.DisplayAddress(address), item.IconSource,
+                    BrowserTabView.TabItems.Count > 1 || !blank || tab.HasBrowserControl));
             }
         }
         FilterTabList();

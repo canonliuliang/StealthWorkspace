@@ -677,7 +677,7 @@ public sealed partial class SettingsPage : Page
         RefreshVaultSecuritySection();
         bool busy = VaultWork.IsBusy || _picking;
         ImportBookmarksButton.IsEnabled = !busy && !SettingsService.Instance.ReadDeferred;
-        ExportBookmarksButton.IsEnabled = !busy && SettingsService.Instance.CurrentBookmarks.Count > 0;
+        ExportBookmarksButton.IsEnabled = !busy && (SettingsService.Instance.CurrentBookmarks.Count > 0 || SettingsService.Instance.HasBookmarkFolders);
         BackupButton.IsEnabled = !busy;
         VerifyBackupButton.IsEnabled = !busy;
         ChangeMasterPwdBtn.IsEnabled = !busy;

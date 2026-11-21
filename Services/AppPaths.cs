@@ -189,10 +189,7 @@ public static class AppPaths
     public static string SettingsPath => Path.Combine(DataRoot, "settings.dat");
     public static string VaultConfigPath => Path.Combine(DataRoot, "system_catalog.dat");
     public static string VaultConfigBackupPath => VaultConfigPath + ".bak";
-    public static string IsolatedDownloadsRoot => SettingsService.Instance.ActiveBookmarkSession?.DownloadDirectoryName is { } name
-        ? Path.Combine(DecoyIsolatedDownloadsRoot, name)
-        : Path.Combine(DataRoot, "IsolatedDownloads");
-    internal static string DecoyIsolatedDownloadsRoot => Path.Combine(DataRoot, "IsolatedDownloadsDecoy");
+    public static string IsolatedDownloadsRoot => BrowserDownloadFolders.Current;
 
     internal static async Task FinishBrowserSessionAsync(Task released, string? decoyDirectoryName)
     {
@@ -201,12 +198,15 @@ public static class AppPaths
         {
             if (decoyDirectoryName != null)
             {
-                string path = Path.Combine(DecoyIsolatedDownloadsRoot, decoyDirectoryName);
-                await Task.Run(() => ClearDownloadDirectory(path)).ConfigureAwait(false);
-                if (Directory.Exists(path))
+                foreach (string home in BrowserDownloadFolders.Homes())
                 {
-                    await Task.Delay(400).ConfigureAwait(false);
+                    string path = BrowserDownloadFolders.PathFor(home, decoyDirectoryName);
                     await Task.Run(() => ClearDownloadDirectory(path)).ConfigureAwait(false);
+                    if (Directory.Exists(path))
+                    {
+                        await Task.Delay(400).ConfigureAwait(false);
+                        await Task.Run(() => ClearDownloadDirectory(path)).ConfigureAwait(false);
+                    }
                 }
             }
         }
@@ -214,7 +214,12 @@ public static class AppPaths
 
     internal static void SweepDecoyDownloads()
     {
-        string root = DecoyIsolatedDownloadsRoot;
+        foreach (string home in BrowserDownloadFolders.Homes())
+            SweepDecoyDownloads(Path.Combine(home, "IsolatedDownloadsDecoy"));
+    }
+
+    private static void SweepDecoyDownloads(string root)
+    {
         if (!Directory.Exists(root) || !SafeFileSystem.IsPlainPath(root)) return;
         try
         {

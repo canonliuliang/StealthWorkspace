@@ -12,6 +12,7 @@ public sealed class BrowserDownloadItem : INotifyPropertyChanged
     private Action? _wakeOwner;
     private long _lastProgressNotification;
     private SafeShred.FileIdentity? _completedIdentity;
+    private readonly SettingsService.BookmarkSession? _workspace = SettingsService.Instance.ActiveBookmarkSession;
     private bool _storing;
     private bool _stored;
     private bool _originalRemoved;
@@ -89,7 +90,7 @@ public sealed class BrowserDownloadItem : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new(string.Empty));
         try
         {
-            await VaultService.Instance.ImportDownloadAsync(FilePath, identity, new Progress<double>(work.Report),
+            await VaultService.Instance.ImportDownloadAsync(FilePath, identity, _workspace, true, new Progress<double>(work.Report),
                 work.Token, removed => _originalRemoved = removed);
             _stored = true;
             Status = _originalRemoved ? "已存入媒体库 · 原下载文件已粉碎" : "已存入媒体库 · 原件未能粉碎";
