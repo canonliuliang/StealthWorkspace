@@ -90,7 +90,10 @@ function Read-Window($browser) {
             if ($node.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern,[ref]$pattern)) { $address = $pattern.Current.Value }
         }
     }
-    [pscustomobject]@{ title=$root.Current.Name; badge=$badge; address=$address; tabs=$tabs; pid=$browser.Id; handle=$browser.MainWindowHandle.ToInt64() }
+    $body = $root.FindFirst([Windows.Automation.TreeScope]::Descendants,
+        [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty,'200 OK'))
+    [pscustomobject]@{ title=$root.Current.Name; badge=$badge; address=$address; tabs=$tabs; fixtureBody=($body -and !$body.Current.IsOffscreen);
+        pid=$browser.Id; handle=$browser.MainWindowHandle.ToInt64() }
 }
 $child = [Diagnostics.Process]::Start($start)
 $testApp = $null
@@ -127,7 +130,7 @@ try {
                         $state.tabs.Count -gt 0 -and !($state.tabs -match '已崩溃|crashed')
                 } else {
                     $correct = ($state.address -eq $request.expectedPage -or ('http://'+$state.address) -eq $request.expectedPage) -and
-                        ($state.tabs -match 'HTTP fixture' -or $state.title -match 'HTTP fixture')
+                        ($state.tabs -match 'HTTP fixture' -or $state.title -match 'HTTP fixture') -and $state.fixtureBody
                 }
                 if ($private -and $correct) { $verified=$true; break }
             }
@@ -138,7 +141,8 @@ try {
         $state | Add-Member -NotePropertyName expectedPage -NotePropertyValue $request.expectedPage
         $state | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out ($kind+'-window.json'))
         if (Get-Command winapp -ErrorAction SilentlyContinue) {
-            & winapp ui screenshot --window $browser.MainWindowHandle.ToInt64() --output (Join-Path $out ($kind+'-inprivate.png')) | Out-Null
+            Start-Sleep -Milliseconds 550
+            & winapp ui screenshot --window $browser.MainWindowHandle.ToInt64() --focus --output (Join-Path $out ($kind+'-inprivate.png')) | Out-Null
         }
         if (!$browser.CloseMainWindow()) { throw 'The isolated Edge window did not accept close.' }
         for ($i=0; $i -lt 40 -and (Find-TestEdge); $i++) { Start-Sleep -Milliseconds 80 }

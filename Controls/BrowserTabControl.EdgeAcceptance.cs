@@ -38,7 +38,8 @@ public sealed partial class BrowserTabControl
             }
             if (!MoreActionsFlyout.IsOpen) MediaAcceptance.Invoke(BrowserMenuBtn);
             for (int i = 0; i < 100 && (!action.IsLoaded || !MoreActionsFlyout.IsOpen); i++) await Task.Delay(25);
-            if (!action.IsLoaded || !action.IsEnabled || action.Visibility != Visibility.Visible)
+            await Task.Delay(130);
+            if (!action.IsLoaded || action.ActualHeight <= 0 || !action.IsEnabled || action.Visibility != Visibility.Visible)
                 throw new InvalidOperationException("Edge menu action unavailable.");
         }
 
@@ -66,10 +67,12 @@ public sealed partial class BrowserTabControl
                 MediaAcceptance.Invoke(action);
                 await ChooseEdgeGuidanceAsync("CloseButton", expectedPage == null ? "知道了" : "取消");
                 if (writes != 0) throw new InvalidOperationException("An unconfirmed action copied the URL.");
+                SmokeTest.Report("menu UI: Edge handoff " + kind + " closed without clipboard access");
                 if (expectedPage != null)
                 {
                     await OpenMenuAsync(reopen: true);
                     MediaAcceptance.Invoke(action);
+                    SmokeTest.Report("menu UI: invoked Edge menu again to exercise clipboard rejection");
                     await ChooseEdgeGuidanceAsync("PrimaryButton", "复制当前网页地址", expectedPage);
                     if (writes != 1) throw new InvalidOperationException("The first clipboard attempt did not reach the writer.");
                     allowWrite = true;
@@ -112,6 +115,7 @@ public sealed partial class BrowserTabControl
                 observed = answer.Content?.ToString() ?? "no label";
                 if (observed != expectedLabel) continue;
                 if (!ContainsDirections(popup.Child)) throw new InvalidOperationException("The Edge handoff steps were not visible.");
+                SmokeTest.Report("menu UI: invoking Edge handoff dialog button " + expectedLabel);
                 MediaAcceptance.Invoke(answer);
                 if (rejectedAddress != null)
                 {
@@ -122,7 +126,10 @@ public sealed partial class BrowserTabControl
                         var error = FindEdgeAuditVisual<TextBlock>(popup.Child, b => b.Visibility == Visibility.Visible && b.Text.Contains("Windows 未允许自动复制"));
                         if (field is { IsLoaded: true, IsReadOnly: true, SelectionStart: 0 } &&
                             field.Text == rejectedAddress && field.SelectedText == rejectedAddress && error != null && answer.IsEnabled)
+                        {
+                            SmokeTest.Report("menu UI: rejected clipboard preserved the open dialog, selected URL and retry button");
                             return;
+                        }
                     }
                     throw new InvalidOperationException("Rejected clipboard writing must keep the complete address visible, selected and available for retry.");
                 }

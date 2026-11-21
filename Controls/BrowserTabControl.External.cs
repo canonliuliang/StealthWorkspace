@@ -11,6 +11,7 @@ namespace StealthWorkspace.Controls;
 public sealed partial class BrowserTabControl
 {
     private Func<DataPackage, ClipboardContentOptions, bool> _shareLinkWriter = Clipboard.SetContentWithOptions;
+    private ulong? _edgeDocumentAfterMenuClose;
 
     private void CopyCleanLink_Click(object sender, RoutedEventArgs e) => CopyCleanLink(_shareLinkWriter);
 
@@ -79,10 +80,15 @@ public sealed partial class BrowserTabControl
         SmokeTest.Report("audit: share-link menu prepared private clipboard data and preserved navigation and address text");
     }
 
-    private async void OpenInEdge_Click(object sender, RoutedEventArgs e)
+    private void OpenInEdge_Click(object sender, RoutedEventArgs e)
     {
+        _edgeDocumentAfterMenuClose = _imageDocumentId;
         MoreActionsFlyout.Hide();
-        if (_isDisposed || !BrowserDownloadPath.IsCurrentWorkspace(_workspace)) return;
+    }
+
+    private async Task OpenInEdgeAsync(ulong document)
+    {
+        if (_isDisposed || !IsLoaded || !IsForegroundTab || document != _imageDocumentId || !BrowserDownloadPath.IsCurrentWorkspace(_workspace)) return;
         try
         {
             // Only hand off a committed or submitted address. Never export text

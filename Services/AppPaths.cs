@@ -164,7 +164,7 @@ public static class AppPaths
 
             // Only expose a complete copy to subsequent starts.
             File.WriteAllText(Path.Combine(stage, ".migrated"), "1");
-            Directory.Move(stage, target);
+            PublishStagedVault(stage, target);
             return true;
         }
         finally
@@ -180,6 +180,27 @@ public static class AppPaths
                     Directory.Delete(stage, false);
                 }
                 catch (Exception ex) { AppLog.Warn("迁移暂存目录清理失败: " + ex.GetType().Name); }
+            }
+        }
+    }
+
+    internal static void PublishStagedVault(string stage, string target)
+    {
+        // Windows can deny a parent directory rename while a reader briefly holds
+        // a copied file without delete sharing. Reuse the completed copy in place.
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                Directory.Move(stage, target);
+                return;
+            }
+            catch (Exception ex) when (attempt < 5 && ex is IOException or UnauthorizedAccessException
+                && (ex.HResult & 0xffff) is 5 or 32 or 33
+                && !Directory.Exists(target) && !File.Exists(target)
+                && SafeFileSystem.IsPlainWorkspacePath(stage))
+            {
+                Thread.Sleep(25 << attempt); // At most 775 ms across all retries.
             }
         }
     }
