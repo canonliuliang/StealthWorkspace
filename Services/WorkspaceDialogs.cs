@@ -13,15 +13,29 @@ internal static class WorkspaceDialogs
         internal double Opacity { get; } = dialog.Opacity;
         internal bool WasHitTestVisible { get; } = dialog.IsHitTestVisible;
         internal bool Dismissed { get; set; }
+        internal bool Closing { get; set; }
+        internal TaskCompletionSource Released { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     // Both presentation and lock handling execute on the window's UI thread.
     private static readonly List<Presentation> Active = new();
+    private static long _privacyGeneration;
 
-    internal static async Task<ContentDialogResult> ShowAsync(ContentDialog dialog)
+    internal static async Task<ContentDialogResult> ShowAsync(ContentDialog dialog, Func<bool>? canShowAfterClosing = null)
     {
-        if (MainWindow.Current?.IsPrivacyCoverVisible == true) return ContentDialogResult.None;
-        if (Active.Any(p => !p.Dismissed)) return ContentDialogResult.None;
+        long generation = _privacyGeneration;
+        bool StillCurrent() => generation == _privacyGeneration && MainWindow.Current?.IsPrivacyCoverVisible != true &&
+            canShowAfterClosing?.Invoke() != false;
+        while (Active.FirstOrDefault(p => !p.Dismissed) is { } previous)
+        {
+            // A closing dialog can already be absent from the visual tree while WinUI
+            // still owns its modal slot. Preserve a new, valid request during that gap.
+            if (canShowAfterClosing == null || !previous.Closing || !StillCurrent())
+                return ContentDialogResult.None;
+            if (SmokeTest.BrowserAudit) SmokeTest.Report("modal transition: waiting for previous native dialog to finish closing");
+            await previous.Released.Task.WaitAsync(TimeSpan.FromSeconds(6));
+        }
+        if (!StillCurrent()) return ContentDialogResult.None;
 
         if (dialog.RequestedTheme == Microsoft.UI.Xaml.ElementTheme.Default &&
             dialog.XamlRoot?.Content is Microsoft.UI.Xaml.FrameworkElement rootElement &&
@@ -31,6 +45,8 @@ internal static class WorkspaceDialogs
         }
 
         var presentation = new Presentation(dialog);
+        void OnClosing(ContentDialog sender, ContentDialogClosingEventArgs args) => presentation.Closing = !args.Cancel;
+        dialog.Closing += OnClosing;
         Active.Add(presentation);
         try
         {
@@ -44,7 +60,9 @@ internal static class WorkspaceDialogs
         }
         finally
         {
+            dialog.Closing -= OnClosing;
             Active.Remove(presentation);
+            presentation.Released.TrySetResult();
             if (presentation.Dismissed)
             {
                 dialog.Opacity = presentation.Opacity;
@@ -55,6 +73,7 @@ internal static class WorkspaceDialogs
 
     internal static void DismissForPrivacy()
     {
+        _privacyGeneration++;
         WorkspaceNativeDialogs.DismissForPrivacy(MainWindow.CurrentHandle);
         foreach (var presentation in Active.ToArray())
         {

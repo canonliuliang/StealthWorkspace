@@ -168,7 +168,7 @@ public sealed partial class BrowserTabControl
                 addressBox.SelectAll();
             };
         }
-        if (await WorkspaceDialogs.ShowAsync(dialog) == ContentDialogResult.Primary && copied && IsCurrent())
+        if (await WorkspaceDialogs.ShowAsync(dialog, IsCurrent) == ContentDialogResult.Primary && copied && IsCurrent())
             ShowExternalActionStatus(InfoBarSeverity.Success, "已复制网页地址", "打开 Edge 的 InPrivate 窗口，在地址栏粘贴即可。请单独关闭该窗口。");
     }
 }

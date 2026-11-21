@@ -151,14 +151,20 @@ try {
         [IO.File]::WriteAllText($mark+'.tmp',$request.nonce)
         [IO.File]::Move($mark+'.tmp',$mark+'.reply')
     }
-    if (!$child.WaitForExit(90000) -or $child.ExitCode -ne 0) { throw 'The synthetic application did not exit successfully.' }
-    $lines=Get-Content $report -Raw
-    if ($lines -notmatch 'AUDIT RESULT: OK') { throw "The complete menu workflow failed. Inspect $report" }
-    if ($Low -and ((Find-TestEdge) -or !$lines.Contains('close copied nothing') -or !$lines.Contains('confirmed the exact URL without clipboard history or roaming'))) {
-        throw 'Restricted handoff did not satisfy the clipboard, confirmation and launch checks.'
+    if ($Low) {
+        for ($i=0; $i -lt 150 -and !$child.HasExited; $i++) {
+            if ((Get-Content $report -Raw).Contains('confirmed the exact URL without clipboard history or roaming')) { break }
+            Start-Sleep -Milliseconds 100
+        }
+        $lines=Get-Content $report -Raw
+        if ((Find-TestEdge) -or !$lines.Contains('close copied nothing') -or !$lines.Contains('confirmed the exact URL without clipboard history or roaming')) {
+            throw 'Restricted handoff did not satisfy the clipboard, confirmation and launch checks.'
+        }
     }
     [pscustomobject]@{ appId=$testApp.Id; appIntegrityRid=$rid; verifiedMode=$(if ($Low) {'manual InPrivate guidance'} else {'external InPrivate browser'}); passed=$true } |
-        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'verified.json')
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'edge-handoff.json')
+    if (!$child.WaitForExit(90000) -or $child.ExitCode -ne 0) { throw 'The synthetic application did not exit successfully.' }
+    if ((Get-Content $report -Raw) -notmatch 'AUDIT RESULT: OK') { throw "The complete menu workflow failed. Inspect $report" }
     Write-Output "Verified both menu entries with app RID $rid. Reports: $out"
 } finally {
     $remaining = Find-TestEdge

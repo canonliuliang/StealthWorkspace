@@ -2275,18 +2275,35 @@ public sealed partial class BrowserTabControl : UserControl
         }
     }
 
-    private async void OpenDownloadsFolder_Click(object sender, RoutedEventArgs e)
+    private async void OpenDownloadsFolder_Click(object sender, RoutedEventArgs e) =>
+        await ShowDownloadsFolderAsync(MoreActionsFlyout);
+
+    private async Task ShowDownloadsFolderAsync(Flyout source)
     {
-        MoreActionsFlyout.Hide();
-        if (!CanAccessDownloads) return;
+        bool CanShow() => CanAccessDownloads && IsForegroundTab && IsLoaded;
+        if (!CanShow()) return;
         try
         {
-            await DownloadFolderDialog.ShowFolderAsync(XamlRoot, _workspace);
+            if (source.IsOpen)
+            {
+                // WinUI is still dismantling the popup inside Closed. Resume on the UI
+                // queue after that native callback returns, including for the More menu.
+                var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                void OnClosed(object? sender, object args) => closed.TrySetResult();
+                source.Closed += OnClosed;
+                try
+                {
+                    source.Hide();
+                    await closed.Task.WaitAsync(TimeSpan.FromSeconds(6));
+                }
+                finally { source.Closed -= OnClosed; }
+            }
+            if (CanShow()) await DownloadFolderDialog.ShowFolderAsync(XamlRoot, _workspace, CanShow);
         }
         catch (Exception ex)
         {
             AppLog.Warn($"Open downloads folder: {ex.GetType().Name} (0x{ex.HResult:X8})");
-            ShowBrowserError("无法打开下载文件夹", BrowserDownloadFolders.FailureMessage(ex));
+            if (CanShow()) ShowBrowserError("无法打开下载文件夹", BrowserDownloadFolders.FailureMessage(ex));
         }
     }
 
@@ -2308,15 +2325,7 @@ public sealed partial class BrowserTabControl : UserControl
         if (_downloadsFlyout != null) return _downloadsFlyout;
         var list = new DownloadListControl();
         var flyout = new Flyout { Content = list, Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight };
-        bool folderRequested = false;
-        list.OpenFolderRequested += () => { folderRequested = true; flyout.Hide(); };
-        flyout.Closed += (_, _) =>
-        {
-            if (!folderRequested) return;
-            folderRequested = false;
-            if (SmokeTest.BrowserAudit) SmokeTest.Report($"downloads folder transition: current={CanAccessDownloads}, foreground={IsForegroundTab}, loaded={IsLoaded}");
-            if (CanAccessDownloads && IsForegroundTab && IsLoaded) OpenDownloadsFolder_Click(this, new RoutedEventArgs());
-        };
+        list.OpenFolderRequested += async () => await ShowDownloadsFolderAsync(flyout);
         return _downloadsFlyout = flyout;
     }
 

@@ -37,8 +37,8 @@ public sealed partial class DownloadFolderDialog : ContentDialog
         Closed += (_, _) => { _lifetime.Cancel(); Files.ItemsSource = null; Locations.ItemsSource = null; };
     }
 
-    internal static Task ShowFolderAsync(XamlRoot root, SettingsService.BookmarkSession? workspace) =>
-        WorkspaceDialogs.ShowAsync(new DownloadFolderDialog(root, workspace));
+    internal static Task ShowFolderAsync(XamlRoot root, SettingsService.BookmarkSession? workspace, Func<bool> canShow) =>
+        WorkspaceDialogs.ShowAsync(new DownloadFolderDialog(root, workspace), canShow);
 
     private async void LocationChanged(object sender, SelectionChangedEventArgs e) => await RefreshAsync();
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();

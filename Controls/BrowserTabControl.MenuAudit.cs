@@ -163,19 +163,22 @@ public sealed partial class BrowserTabControl
                 }
                 else if (Environment.GetCommandLineArgs().Contains("--verify-explorer"))
                     await WaitAsync(() => File.Exists(acknowledgement), "Explorer showed the exact folder for " + button.Name, 14000);
-                dialog.Hide();
+                var close = FindFixtureButton(dialog, "CloseButton") ?? throw new InvalidOperationException("The download folder has no enabled Close button");
+                Click(close);
                 await WaitAsync(() => FolderDialog() == null, "folder dialog closed");
             }
             await MenuAsync();
             var ack = Path.Combine(AppPaths.DataRoot, "explorer-folder-confirmed");
             await CheckFolderAsync(FolderMenuButton, ack, true);
             if (!HasBrowserControl || !CanAccessDownloads) throw new InvalidOperationException("Lost synthetic session");
-            ShowDownloads_Click(this, new RoutedEventArgs());
+            Click(DownloadsBtn);
             var flyout = EnsureDownloadsFlyout();
             await WaitAsync(() => flyout.IsOpen && flyout.Content is DownloadListControl list && list.IsLoaded, "downloads list opened");
-            await Task.Delay(300); // The first frame of the native flyout is still entering.
             var list = (DownloadListControl)flyout.Content;
-            await CheckFolderAsync((Button)list.FindName("CurrentFolderButton"), ack + "-again", false);
+            var openFolder = (Button)list.FindName("CurrentFolderButton");
+            await WaitAsync(() => openFolder.IsLoaded && openFolder.IsEnabled && openFolder.ActualWidth > 0,
+                "download list folder command is ready");
+            await CheckFolderAsync(openFolder, ack + "-again", false);
             flyout.Hide();
         }
     }
