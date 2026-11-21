@@ -36,7 +36,6 @@ public sealed partial class SettingsPage : Page
         {
             VaultWork.Changed -= UpdateActions;
             _isLoaded = false;
-            _bookmarkTransfer?.Cancel();
         };
     }
 
@@ -116,7 +115,6 @@ public sealed partial class SettingsPage : Page
         // In the decoy space the password management UI is hidden: showing "诱饵已设置"
         // would immediately reveal the decoy to anyone who coerced the password.
         bool decoyMode = VaultService.Instance.IsDecoyMode;
-        BookmarkTransferSection.Visibility = decoyMode ? Visibility.Collapsed : Visibility.Visible;
         BackupSection.Visibility = decoyMode ? Visibility.Collapsed : Visibility.Visible;
         VaultSecuritySection.Visibility = decoyMode ? Visibility.Collapsed : Visibility.Visible;
         if (!decoyMode)
@@ -676,8 +674,6 @@ public sealed partial class SettingsPage : Page
     {
         RefreshVaultSecuritySection();
         bool busy = VaultWork.IsBusy || _picking;
-        ImportBookmarksButton.IsEnabled = !busy && !SettingsService.Instance.ReadDeferred;
-        ExportBookmarksButton.IsEnabled = !busy && (SettingsService.Instance.CurrentBookmarks.Count > 0 || SettingsService.Instance.HasBookmarkFolders);
         BackupButton.IsEnabled = !busy;
         VerifyBackupButton.IsEnabled = !busy;
         ChangeMasterPwdBtn.IsEnabled = !busy;

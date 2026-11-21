@@ -23,7 +23,7 @@ public sealed partial class BrowserTabControl
         BookmarkBarEntries.Children.Clear();
         var session = settings.ActiveBookmarkSession;
         var entries = library.Children("").Take(12).ToArray();
-        BookmarkBar.Visibility = session != null && entries.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        BookmarkBar.Visibility = session != null ? Visibility.Visible : Visibility.Collapsed;
         if (session == null) return;
         foreach (object row in entries)
         {
@@ -104,45 +104,61 @@ public sealed partial class BrowserTabControl
         manager.Open(session, folder);
         manager.ClosePane = CloseBookmarkPane;
         manager.Import = ImportBrowserBookmarksAsync;
+        manager.Export = ExportBrowserBookmarksAsync;
         manager.OpenUrl = url =>
         {
             if (ReferenceEquals(settings.ActiveBookmarkSession, session)) NavigateToText(url);
         };
         if (message != null) manager.ShowImportResult(message);
-        BookmarkPane.Content = manager;
-        BookmarkSplit.SizeChanged -= BookmarkSplit_SizeChanged;
-        BookmarkSplit.SizeChanged += BookmarkSplit_SizeChanged;
-        ResizeBookmarkPane();
-        BookmarkSplit.IsPaneOpen = true;
-        HomeBookmarkActions.Visibility = Visibility.Collapsed;
-        manager.FocusSearch();
+        CloseBookmarkPane();
+        manager.Width = Math.Max(180, Math.Min(350, ActualWidth - 70));
+        manager.MaxHeight = Math.Max(180, Math.Min(500, ActualHeight - 100));
+        var flyout = new Flyout { Content = manager, Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight };
+        _barEditor = flyout;
+        flyout.Opened += (_, _) => manager.FocusSearch();
+        flyout.Closed += (_, _) => { if (ReferenceEquals(_barEditor, flyout)) _barEditor = null; };
+        flyout.ShowAt(ManageBarBookmarks);
         return Task.CompletedTask;
     }
 
-    private void BookmarkSplit_SizeChanged(object sender, SizeChangedEventArgs args) => ResizeBookmarkPane();
-
-    private void ResizeBookmarkPane()
-    {
-        BookmarkSplit.OpenPaneLength = Math.Min(352, Math.Max(1, BookmarkSplit.ActualWidth));
-        BookmarkSplit.DisplayMode = BookmarkSplit.ActualWidth < 660 ? SplitViewDisplayMode.Overlay : SplitViewDisplayMode.Inline;
-    }
+    private Flyout? _barEditor;
+    internal BookmarkManager? ActiveBarEditor => _barEditor?.Content as BookmarkManager;
 
     private void StartPageScroller_SizeChanged(object sender, SizeChangedEventArgs args)
     {
         StartContent.MaxWidth = Math.Clamp(args.NewSize.Width - 48, 1, 740);
     }
 
-    private void BookmarkSplit_PaneClosed(SplitView sender, object args)
-    {
-        if (!sender.IsPaneOpen) CloseBookmarkPane();
-    }
-
     private void CloseBookmarkPane()
     {
-        BookmarkSplit.IsPaneOpen = false;
-        BookmarkSplit.SizeChanged -= BookmarkSplit_SizeChanged;
-        BookmarkPane.Content = null;
-        HomeBookmarkActions.Visibility = Visibility.Visible;
+        _barEditor?.Hide();
+        _barEditor = null;
+    }
+
+    private async Task ExportBrowserBookmarksAsync()
+    {
+        var settings = SettingsService.Instance;
+        if (_isDisposed || _bookmarkImport != null || settings.PersonalBookmarkSession is not { } session || MainWindow.Current == null) return;
+        using var lifetime = new CancellationTokenSource();
+        _bookmarkImport = lifetime;
+        CloseBookmarkPane();
+        string? status = null;
+        try
+        {
+            var warning = new ContentDialog { XamlRoot = XamlRoot, Title = "导出明文收藏？", Content = "任何能读取文件的人都能查看网页标题和完整网址。", PrimaryButtonText = "选择保存位置", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close };
+            if (await WorkspaceDialogs.ShowAsync(warning) != ContentDialogResult.Primary || lifetime.IsCancellationRequested || !ReferenceEquals(session, settings.PersonalBookmarkSession)) return;
+            var picker = new FileSavePicker(MainWindow.Current.AppWindow.Id) { SuggestedFileName = "Stealth-bookmarks", DefaultFileExtension = ".html" };
+            picker.FileTypeChoices.Add("HTML", new List<string> { ".html", ".htm" });
+            var result = await WorkspaceNativeDialogs.PickAsync(picker.PickSaveFileAsync);
+            if (result == null || lifetime.IsCancellationRequested || !ReferenceEquals(session, settings.PersonalBookmarkSession)) return;
+            var library = settings.GetBookmarkLibrary();
+            int written = await VaultService.Instance.ExportBookmarksAsync(result.Path, library.Items, lifetime.Token, library.Folders);
+            status = $"已导出 {written} 条收藏。";
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { status = "导出失败，请检查保存位置。"; AppLog.Warn("收藏导出失败: " + ex.GetType().Name); }
+        finally { _bookmarkImport = null; }
+        if (status != null && !lifetime.IsCancellationRequested && ReferenceEquals(session, settings.PersonalBookmarkSession)) await ShowBookmarkManagerAsync("", status);
     }
 
     private async Task ImportBrowserBookmarksAsync()

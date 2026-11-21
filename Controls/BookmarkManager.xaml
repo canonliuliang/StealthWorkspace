@@ -3,7 +3,7 @@
     xmlns:local="using:StealthWorkspace.Controls" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Grid Padding="14,12" RowSpacing="8" BorderThickness="1,0,0,0" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-        <Grid><TextBlock Text="收藏夹" Style="{ThemeResource SubtitleTextBlockStyle}"/><Button HorizontalAlignment="Right" AutomationProperties.Name="关闭收藏夹" ToolTipService.ToolTip="关闭收藏夹" Click="Close_Click" Style="{ThemeResource SubtleButtonStyle}"><FontIcon Glyph="&#xE711;" FontSize="14"/></Button></Grid>
+        <Grid><TextBlock Text="整理收藏夹栏" Style="{ThemeResource SubtitleTextBlockStyle}"/><Button HorizontalAlignment="Right" AutomationProperties.Name="关闭收藏夹" ToolTipService.ToolTip="关闭收藏夹" Click="Close_Click" Style="{ThemeResource SubtleButtonStyle}"><FontIcon Glyph="&#xE711;" FontSize="14"/></Button></Grid>
         <Grid Grid.Row="1" ColumnSpacing="6">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <Button x:Name="Up" Click="Up_Click" AutomationProperties.Name="返回上一级文件夹" ToolTipService.ToolTip="返回上一级" Width="32" Height="32" Padding="0"><FontIcon Glyph="&#xE72B;" FontSize="14"/></Button>
@@ -30,7 +30,7 @@
             <TextBlock x:Name="Empty" Text="这个文件夹还没有收藏" Margin="4,16" IsHitTestVisible="False" VerticalAlignment="Top" HorizontalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
         </Grid>
         <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" MaxHeight="370"><StackPanel Spacing="8">
-            <StackPanel Orientation="Horizontal" Spacing="8"><Button x:Name="AddLink" Content="添加链接" Click="AddLink_Click" Style="{ThemeResource AccentButtonStyle}"/><Button x:Name="ImportButton" Content="从 Chrome 导入" Click="Import_Click"/></StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8"><Button x:Name="AddLink" Content="添加链接" Click="AddLink_Click" Style="{ThemeResource AccentButtonStyle}"/><Button x:Name="ImportButton" Content="从 Chrome 导入" Click="Import_Click"/><Button x:Name="ExportButton" Content="导出" Click="Export_Click"/></StackPanel>
             <StackPanel x:Name="Editor" Visibility="Collapsed" Spacing="8">
                 <TextBox x:Name="EntryName" Header="名称" MaxLength="200"/>
                 <TextBox x:Name="Address" Header="网址" PlaceholderText="https://" Visibility="Collapsed"/>

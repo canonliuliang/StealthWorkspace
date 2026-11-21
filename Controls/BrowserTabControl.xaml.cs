@@ -173,7 +173,7 @@ public sealed partial class BrowserTabControl : UserControl
         LoadPermissionSettings();
         UpdateEmptyNotices();
         UpdateBookmarkStarState();
-        RefreshStartBookmarks();
+        RefreshBookmarkBar();
         QueueInitialAddressFocus();
     }
 
@@ -1392,7 +1392,7 @@ public sealed partial class BrowserTabControl : UserControl
         {
             LoadPermissionSettings();
             UpdateBookmarkStarState();
-            RefreshStartBookmarks();
+            RefreshBookmarkBar();
             RefreshBookmarkList();
             return;
         }
@@ -1402,7 +1402,7 @@ public sealed partial class BrowserTabControl : UserControl
             if (_isDisposed) return;
             LoadPermissionSettings();
             UpdateBookmarkStarState();
-            RefreshStartBookmarks();
+            RefreshBookmarkBar();
             RefreshBookmarkList();
         });
     }
@@ -2228,18 +2228,6 @@ public sealed partial class BrowserTabControl : UserControl
     #endregion
 
     #region Navigation & Omnibox
-
-    private void RefreshStartBookmarks()
-    {
-        if (_isDisposed || StartSurface.Visibility != Visibility.Visible) return;
-        StartImportButton.Visibility = SettingsService.Instance.PersonalBookmarkSession != null ? Visibility.Visible : Visibility.Collapsed;
-        var bookmarks = SettingsService.Instance.CurrentBookmarks.Where(item => !item.ContainsLoginInfo).Take(12).ToArray();
-        // Loaded is raised again when returning to a tab. Retain the existing
-        // controls and focus if the displayed bookmarks have not changed.
-        if (StartBookmarks.ItemsSource is IReadOnlyList<BookmarkItem> existing && existing.SequenceEqual(bookmarks)) return;
-        StartBookmarks.ItemsSource = bookmarks;
-        StartBookmarksEmpty.Visibility = bookmarks.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
-    }
 
     private void MoreActionsFlyout_Opening(object? sender, object e)
     {

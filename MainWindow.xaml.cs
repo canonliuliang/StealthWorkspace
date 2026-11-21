@@ -410,7 +410,7 @@ public sealed partial class MainWindow : Window
 
             var settingsPage = (SettingsPage)NavFrame.Content;
             var search = (TextBox)settingsPage.FindName("SettingsSearch");
-            var transfer = (Border)settingsPage.FindName("BookmarkTransferSection");
+            if (settingsPage.FindName("BookmarkTransferSection") != null) throw new InvalidOperationException("Duplicate bookmark controls in settings");
             var backupCard = (Border)settingsPage.FindName("BackupSection");
             async Task EnterSettingQueryAsync(string value)
             {
@@ -424,15 +424,13 @@ public sealed partial class MainWindow : Window
                 }
                 finally { search.TextChanged -= OnChanged; }
             }
-            await EnterSettingQueryAsync("HTML");
-            if (transfer.Visibility != Visibility.Visible || backupCard.Visibility != Visibility.Collapsed)
-                throw new InvalidOperationException($"Settings search failed to isolate matching controls: transfer={transfer.Visibility}, backup={backupCard.Visibility}");
+            await EnterSettingQueryAsync("备份");
+            if (backupCard.Visibility != Visibility.Visible) throw new InvalidOperationException("Settings search lost the backup card");
             await EnterSettingQueryAsync("nonexistent synthetic preference");
-            if (transfer.Visibility != Visibility.Collapsed) throw new InvalidOperationException("Settings search retained a non-match");
+            if (backupCard.Visibility != Visibility.Collapsed) throw new InvalidOperationException("Settings search retained a non-match");
             await EnterSettingQueryAsync("");
-            if (transfer.Visibility != Visibility.Visible || backupCard.Visibility != Visibility.Visible)
-                throw new InvalidOperationException("Clearing settings search did not restore controls");
-            SmokeTest.Report("settings: bookmark transfer search, empty results and clearing the filter passed");
+            if (backupCard.Visibility != Visibility.Visible) throw new InvalidOperationException("Clearing search did not restore backup settings");
+            SmokeTest.Report("settings: backup search, empty results and clearing the filter passed");
             var titles = (ComboBox)settingsPage.FindName("CamouflageCombo");
             int originalTitleIndex = titles.SelectedIndex;
             titles.SelectedIndex = 2;

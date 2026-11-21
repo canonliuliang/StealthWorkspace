@@ -242,17 +242,6 @@
             </ComboBox>
           </StackPanel>
         </Border>
-        <Border x:Name="BookmarkTransferSection" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
-          <StackPanel Spacing="8">
-            <TextBlock Text="迁移浏览器收藏" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
-            <TextBlock Text="在 Chrome 书签管理器中选择“导出书签”，再导入 HTML。收藏栏、嵌套文件夹和其中的链接会一并保留。单个文件上限 32 MiB。导出的标题和网址是明文。" Style="{StaticResource StealthCaptionStyle}" TextWrapping="Wrap" />
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <Button x:Name="ImportBookmarksButton" Content="导入 HTML" Click="ImportBookmarks_Click" AutomationProperties.Name="从 HTML 导入收藏" />
-              <Button x:Name="ExportBookmarksButton" Content="导出 HTML" Click="ExportBookmarks_Click" AutomationProperties.Name="导出明文 HTML 收藏" />
-            </StackPanel>
-            <TextBlock x:Name="BookmarkTransferStatus" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Visibility="Collapsed" />
-          </StackPanel>
-        </Border>
         <!-- Card 1: Default Search Engine -->
         <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
           <Grid RowSpacing="12">

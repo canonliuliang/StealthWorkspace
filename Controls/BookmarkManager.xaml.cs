@@ -21,6 +21,8 @@ public sealed partial class BookmarkManager : UserControl
     private object? _editing;
     private bool _deletePending;
     internal Action? ClosePane { get; set; }
+    internal Func<Task>? Export { get; set; }
+    private async void Export_Click(object sender, RoutedEventArgs args) { if (Export != null) await Export(); }
     internal Func<Task>? Import { get; set; }
     internal void FocusSearch() => Filter.Focus(FocusState.Programmatic);
     private void Close_Click(object sender, RoutedEventArgs args) => ClosePane?.Invoke();
@@ -35,7 +37,7 @@ public sealed partial class BookmarkManager : UserControl
     {
         _session = session;
         _current = folder;
-        ImportButton.Visibility = session.Temporary ? Visibility.Collapsed : Visibility.Visible;
+        ExportButton.Visibility = ImportButton.Visibility = session.Temporary ? Visibility.Collapsed : Visibility.Visible;
         Refresh();
     }
 

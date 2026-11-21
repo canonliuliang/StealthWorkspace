@@ -84,10 +84,10 @@ public sealed partial class MainWindow
 
     private async Task CheckBookmarkPaneAsync(BrowserTabControl tab)
     {
-        MediaAcceptance.Invoke((Button)tab.FindName("ManageHomeBookmarks"));
+        MediaAcceptance.Invoke((Button)tab.FindName("ManageBarBookmarks"));
         await Task.Delay(350);
-        var pane = (ContentControl)tab.FindName("BookmarkPane");
-        var manager = (BookmarkManager)pane.Content;
+
+        var manager = tab.ActiveBarEditor ?? throw new InvalidOperationException("Bookmark bar editor did not open.");
         var library = SettingsService.Instance;
         foreach (string folder in new[] { "视频", "图片" })
         {
@@ -110,9 +110,11 @@ public sealed partial class MainWindow
         await Task.Delay(550);
         if (list.Items.Count != 2 || list.ContainerFromIndex(0) is not ListViewItem { ActualHeight: > 0 })
             throw new InvalidOperationException($"Folder list is not visible ({list.Items.Count} rows, {list.ActualHeight} DIP).");
-        await UiCapture.SaveAsync(RootGrid, "bookmark-pane.png");
+        await UiCapture.SaveAsync(manager, "bar-editor.png");
         manager.ClosePane?.Invoke();
-        if (pane.Content != null) throw new InvalidOperationException("Closing the pane retained the manager.");
+        await Task.Delay(450);
+        await UiCapture.SaveAsync(RootGrid, "bookmark-bar.png");
+        if (tab.ActiveBarEditor != null) throw new InvalidOperationException("Closing the pane retained the manager.");
         async Task SaveAsync()
         {
             MediaAcceptance.Invoke((Button)manager.FindName("Save"));
