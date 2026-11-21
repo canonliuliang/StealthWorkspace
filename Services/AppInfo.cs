@@ -12,7 +12,7 @@ namespace StealthWorkspace.Services;
 public static class AppInfo
 {
     /// <summary>Bump this for every delivered fix batch.</summary>
-    public const string DisplayVersion = "2026.11.21-r16.1-preview.2";
+    public const string DisplayVersion = "2026.11.21-r16.1-preview.2.1";
 
     public static string BuildStamp
     {
