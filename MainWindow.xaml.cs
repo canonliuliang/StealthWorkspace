@@ -200,6 +200,14 @@ public sealed partial class MainWindow : Window
         try
         {
             await Task.Delay(300);
+            var arguments = Environment.GetCommandLineArgs();
+            if (arguments.Contains("--setup-controls"))
+            {
+                await ((LockPage)NavFrame.Content).CheckSetupControlsAsync(arguments.Contains("--setup-decoy"),
+                    () => NavFrame.Content as LockPage);
+                SmokeTest.Report("experience complete");
+                return;
+            }
 
             if (!VaultService.Instance.IsUnlocked)
             {

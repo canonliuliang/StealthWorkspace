@@ -57,22 +57,21 @@
                 </StackPanel>
 
                 <!-- State B: First-time Workspace Setup -->
-                <StackPanel x:Name="SetupPanel" Spacing="14" Visibility="Collapsed">
+                <StackPanel x:Name="SetupPanel" x:Load="False" Spacing="14" Visibility="Collapsed">
                     <TextBlock Text="首次初始化" Style="{ThemeResource BodyStrongTextBlockStyle}" />
                     <Button x:Name="RestoreBackupButton" Content="从加密备份恢复" Click="RestoreBackup_Click" HorizontalAlignment="Stretch" />
                     <TextBlock Text="已有备份可直接恢复，仅限原 Windows 用户；恢复后使用原保险箱密码解锁。" TextWrapping="Wrap" FontSize="12" />
                     <PasswordBox x:Name="SetupMasterPwd" Header="设置访问密码" PlaceholderText="至少 6 个字符" PasswordRevealMode="Peek" />
                     <PasswordBox x:Name="SetupConfirmPwd" Header="确认密码" PlaceholderText="再次输入密码" PasswordRevealMode="Peek" />
 
-                    <Expander x:Name="DecoyExpander" Header="高级：设置诱饵密码（可选）" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-                        <StackPanel Spacing="10">
-                            <TextBlock Text="遇到胁迫或盘查时，输入诱饵密码会进入一个独立的无害空间；真实资料不会显示。"
-                                       FontSize="12" TextWrapping="Wrap"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <PasswordBox x:Name="SetupDecoyPwd" Header="诱饵密码" PlaceholderText="至少 6 个字符" PasswordRevealMode="Peek" />
-                            <PasswordBox x:Name="SetupDecoyConfirmPwd" Header="确认诱饵密码" PlaceholderText="再次输入诱饵密码" PasswordRevealMode="Peek" />
-                        </StackPanel>
-                    </Expander>
+                    <CheckBox x:Name="SetDecoyPassword" Content="设置诱饵密码（可选）" Checked="DecoySetupChanged" Unchecked="DecoySetupChanged" />
+                    <StackPanel x:Name="DecoySetupFields" Spacing="10" Visibility="Collapsed">
+                        <TextBlock Text="遇到胁迫或盘查时，输入诱饵密码会进入一个独立的无害空间；真实资料不会显示。"
+                                   FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <PasswordBox x:Name="SetupDecoyPwd" Header="诱饵密码" PlaceholderText="至少 6 个字符" PasswordRevealMode="Peek" />
+                        <PasswordBox x:Name="SetupDecoyConfirmPwd" Header="确认诱饵密码" PlaceholderText="再次输入诱饵密码" PasswordRevealMode="Peek" />
+                    </StackPanel>
 
                     <Button x:Name="SetupButton"
                             Content="完成设置并解锁"

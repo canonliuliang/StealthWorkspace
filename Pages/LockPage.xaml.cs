@@ -25,10 +25,12 @@ public sealed partial class LockPage : Page
     {
         _cooldownCts?.Cancel();
         UnlockPasswordBox.Password = string.Empty;
-        SetupMasterPwd.Password = string.Empty;
-        SetupConfirmPwd.Password = string.Empty;
-        SetupDecoyPwd.Password = string.Empty;
-        SetupDecoyConfirmPwd.Password = string.Empty;
+        if (SetupPanel != null)
+        {
+            SetupMasterPwd.Password = SetupConfirmPwd.Password = string.Empty;
+            SetupDecoyPwd.Password = SetupDecoyConfirmPwd.Password = string.Empty;
+            SetDecoyPassword.IsChecked = false;
+        }
         if (IsLoaded) CheckVaultState();
     }
 
@@ -39,6 +41,7 @@ public sealed partial class LockPage : Page
 
     private void CheckVaultState()
     {
+        if (!ReferenceEquals(Frame?.Content, this)) return;
         var vault = VaultService.Instance;
         MsgInfoBar.IsOpen = false;
 
@@ -53,7 +56,9 @@ public sealed partial class LockPage : Page
 
         ForgotButton.Visibility = unlock ? Visibility.Visible : Visibility.Collapsed;
         UiMotion.SetVisible(UnlockPanel, unlock);
-        UiMotion.SetVisible(SetupPanel, !corrupted && !unlock);
+        bool setup = !corrupted && !unlock;
+        if (setup && SetupPanel == null) FindName(nameof(SetupPanel));
+        if (SetupPanel != null) UiMotion.SetVisible(SetupPanel, setup);
         UiMotion.SetVisible(CorruptPanel, corrupted);
         FocusField(corrupted ? RetryButton : unlock ? UnlockPasswordBox : SetupMasterPwd);
     }
@@ -62,7 +67,7 @@ public sealed partial class LockPage : Page
     {
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (IsLoaded && target.IsEnabled) target.Focus(FocusState.Programmatic);
+            if (IsLoaded && ReferenceEquals(Frame?.Content, this) && target.IsEnabled) target.Focus(FocusState.Programmatic);
         });
     }
 
@@ -196,8 +201,8 @@ public sealed partial class LockPage : Page
 
         string master = SetupMasterPwd.Password;
         string confirm = SetupConfirmPwd.Password;
-        string decoy = SetupDecoyPwd.Password;
-        string decoyConfirm = SetupDecoyConfirmPwd.Password;
+        string decoy = SetDecoyPassword.IsChecked == true ? SetupDecoyPwd.Password : string.Empty;
+        string decoyConfirm = SetDecoyPassword.IsChecked == true ? SetupDecoyConfirmPwd.Password : string.Empty;
 
         if (string.IsNullOrWhiteSpace(master))
         {
@@ -215,30 +220,23 @@ public sealed partial class LockPage : Page
             return;
         }
 
-        if (!string.IsNullOrEmpty(decoy) || !string.IsNullOrEmpty(decoyConfirm))
+        if (SetDecoyPassword.IsChecked == true)
         {
             if (decoy.Length < 6)
             {
-                DecoyExpander.IsExpanded = true;
                 ShowMessage("诱饵密码至少需要 6 个字符", InfoBarSeverity.Warning, SetupDecoyPwd);
                 return;
             }
             if (!string.Equals(decoy, decoyConfirm, StringComparison.Ordinal))
             {
-                DecoyExpander.IsExpanded = true;
                 ShowMessage("两次输入的诱饵密码不一致", InfoBarSeverity.Warning, SetupDecoyConfirmPwd);
                 return;
             }
             if (string.Equals(decoy, master, StringComparison.Ordinal))
             {
-                DecoyExpander.IsExpanded = true;
                 ShowMessage("诱饵密码不能与主密码相同", InfoBarSeverity.Warning, SetupDecoyPwd);
                 return;
             }
-        }
-        else
-        {
-            decoy = string.Empty;
         }
 
         SetBusy(true, "正在创建加密保险箱…");
@@ -335,13 +333,74 @@ public sealed partial class LockPage : Page
         UiMotion.SetVisible(BusyPanel, busy, MotionCue.Fade);
         BusyRing.IsActive = busy;
         UnlockButton.IsEnabled = !busy && _cooldownCts == null;
-        SetupButton.IsEnabled = !busy;
-        RestoreBackupButton.IsEnabled = !busy;
+        if (SetupPanel != null)
+        {
+            SetupButton.IsEnabled = SetupMasterPwd.IsEnabled = SetupConfirmPwd.IsEnabled = !busy;
+            SetDecoyPassword.IsEnabled = SetupDecoyPwd.IsEnabled = SetupDecoyConfirmPwd.IsEnabled = !busy;
+            RestoreBackupButton.IsEnabled = !busy;
+        }
         UnlockPasswordBox.IsEnabled = !busy && _cooldownCts == null;
-        SetupMasterPwd.IsEnabled = !busy;
-        SetupConfirmPwd.IsEnabled = !busy;
-        SetupDecoyPwd.IsEnabled = !busy;
-        SetupDecoyConfirmPwd.IsEnabled = !busy;
+    }
+
+    private void DecoySetupChanged(object sender, RoutedEventArgs args)
+    {
+        if (DecoySetupFields == null) return;
+        bool enabled = SetDecoyPassword.IsChecked == true;
+        DecoySetupFields.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        if (!enabled) SetupDecoyPwd.Password = SetupDecoyConfirmPwd.Password = string.Empty;
+    }
+
+    internal async Task CheckSetupControlsAsync(bool createDecoy, Func<LockPage?> currentLock)
+    {
+        var vault = VaultService.Instance;
+        if (!SmokeTest.UiSmoke || !AppPaths.HasDataRootOverride || vault.HasVault)
+            throw new InvalidOperationException("Setup controls require an empty isolated test vault");
+        if (!IsLoaded || SetupPanel?.Visibility != Visibility.Visible) throw new InvalidOperationException("First-run form is missing");
+        const string master = "SmokeTest#123", decoy = "Secondary#Fixture17";
+        SetupMasterPwd.Password = SetupConfirmPwd.Password = master;
+        SetDecoyPassword.IsChecked = true;
+        MediaAcceptance.Invoke(SetupButton);
+        for (int i = 0; i < 80 && !MsgInfoBar.IsOpen; i++) await Task.Delay(20);
+        if (vault.HasVault || !MsgInfoBar.IsOpen || MsgInfoBar.Severity != InfoBarSeverity.Warning)
+            throw new InvalidOperationException("An enabled blank secondary password must require a correction");
+        SetupDecoyPwd.Password = SetupDecoyConfirmPwd.Password = decoy;
+        SetDecoyPassword.IsChecked = false;
+        if (SetupDecoyPwd.Password.Length != 0 || SetupDecoyConfirmPwd.Password.Length != 0 || DecoySetupFields.Visibility != Visibility.Collapsed)
+            throw new InvalidOperationException("Clearing the optional password left input behind");
+        if (createDecoy)
+        {
+            SetDecoyPassword.IsChecked = true;
+            SetupDecoyPwd.Password = SetupDecoyConfirmPwd.Password = decoy;
+        }
+        MediaAcceptance.Invoke(SetupButton);
+        for (int i = 0; i < 300 && !vault.IsUnlocked; i++) await Task.Delay(20);
+        if (!vault.IsUnlocked || vault.IsDecoyMode) throw new InvalidOperationException("Setup failed to open the primary vault");
+        async Task<LockPage> OpenLockAsync()
+        {
+            MainWindow.Current!.LockWorkspace();
+            for (int i = 0; i < 200 && currentLock() is not { IsLoaded: true }; i++) await Task.Delay(20);
+            var lockPage = currentLock() ?? throw new InvalidOperationException("Lock page did not open");
+            if (!lockPage.IsLoaded || lockPage.SetupPanel != null || lockPage.UnlockPanel.Visibility != Visibility.Visible)
+                throw new InvalidOperationException("Everyday lock instantiated first-run controls");
+            return lockPage;
+        }
+        async Task SubmitAsync(LockPage page, string password)
+        {
+            page.UnlockPasswordBox.Password = password;
+            MediaAcceptance.Invoke(page.UnlockButton);
+            for (int i = 0; i < 300 && (page._busy || page.UnlockPasswordBox.Password.Length > 0); i++) await Task.Delay(20);
+            if (page._busy || page.UnlockPasswordBox.Password.Length > 0) throw new InvalidOperationException("Unlock button did not finish");
+        }
+        var ordinary = await OpenLockAsync();
+        await SubmitAsync(ordinary, master);
+        if (!vault.IsUnlocked || vault.IsDecoyMode) throw new InvalidOperationException("Primary password did not open the primary vault");
+        ordinary = await OpenLockAsync();
+        await SubmitAsync(ordinary, decoy);
+        if (createDecoy ? !vault.IsUnlocked || !vault.IsDecoyMode : vault.IsUnlocked)
+            throw new InvalidOperationException("Secondary password did not match the selected setup mode");
+        if (!createDecoy && (!ordinary.MsgInfoBar.IsOpen || ordinary.MsgInfoBar.Severity != InfoBarSeverity.Error))
+            throw new InvalidOperationException("Unlock did not report the disabled second password as incorrect");
+        SmokeTest.Report($"setup controls: cleared disabled secrets, primary opened, secondary enabled={createDecoy}; everyday lock left setup uncreated");
     }
 
     private async void RestoreBackup_Click(object sender, RoutedEventArgs e)

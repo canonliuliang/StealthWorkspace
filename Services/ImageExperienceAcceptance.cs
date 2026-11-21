@@ -32,6 +32,7 @@ internal static class ImageExperienceAcceptance
         var page = current() ?? throw new InvalidOperationException("Viewer not opened");
         for (int i = 0; i < 100 && !page.IsImageReady && page.MediaError == null; i++) await Task.Delay(50);
         Require(page.IsImageReady && page.ImageCount == 4 && page.NavigationEnabled == (false, true), "first image ready; previous disabled");
+        Require(!page.HasPlaybackElement, "viewing an image leaves the native playback control uncreated");
         await page.SelectMediaAsync(1);
         await Task.Delay(220);
         byte[] expectedPixels = await page.CaptureImageViewportPixelsAsync();
@@ -85,6 +86,7 @@ internal static class ImageExperienceAcceptance
         await CheckAnimationsAsync(root, currentGallery()!, open, current);
         open(items[0]);
         page = current()!;
+        for (int i = 0; i < 100 && !page.IsLoaded; i++) await Task.Delay(10);
         Task pending = page.SelectMediaAsync(2);
         VaultService.Instance.Lock();
         await pending;
@@ -93,10 +95,36 @@ internal static class ImageExperienceAcceptance
         using var unlock = await VaultService.Instance.VerifyPasswordAsync("SmokeTest#123");
         Require(VaultService.Instance.ApplyUnlock(unlock), "isolated vault unlocked again");
         openFromSidebar();
-        Require(current() is { CurrentMediaId: null, IsImageReady: false }, "a new unlock session opens an empty player");
+        Require(current() is { CurrentMediaId: null, IsImageReady: false, HasPlaybackElement: false }, "a new unlock session opens an empty player without a native playback control");
         current()!.ReturnToGallery();
         var deleteGallery = currentGallery()!;
         for (int i = 0; i < 100 && !deleteGallery.IsLoaded; i++) await Task.Delay(50);
+        if (Environment.GetCommandLineArgs().Contains("--gallery-navigation-stress"))
+        {
+            for (int i = 0; i < 24; i++)
+            {
+                MainWindow.Current!.LockWorkspace();
+                using var verified = await VaultService.Instance.VerifyPasswordAsync("SmokeTest#123");
+                if (!VaultService.Instance.ApplyUnlock(verified)) throw new InvalidOperationException("Stress fixture could not unlock");
+                MainWindow.Current!.OnUnlocked();
+                openFromSidebar();
+                var empty = current() ?? throw new InvalidOperationException("Stress fixture player not opened");
+                if (empty.HasPlaybackElement) throw new InvalidOperationException("Empty player created a native playback control");
+                if (i % 2 == 0) empty.ReturnToGallery();
+                else
+                {
+                    for (int turn = 0; turn < 100 && !empty.IsLoaded; turn++) await Task.Delay(10);
+                    var button = (Button)empty.FindName("OpenLibraryButton");
+                    if (!empty.IsLoaded || !button.IsLoaded || empty.HasPlaybackElement) throw new InvalidOperationException("Loaded empty player did not provide a gallery button without a native playback control");
+                    MediaAcceptance.Invoke(button);
+                }
+                deleteGallery = currentGallery() ?? throw new InvalidOperationException("Stress fixture gallery not restored");
+                for (int turn = 0; turn < 100 && !deleteGallery.IsLoaded; turn++) await Task.Delay(10);
+                if (!deleteGallery.IsLoaded) throw new InvalidOperationException("Gallery did not load");
+                await Task.Delay(25);
+                SmokeTest.Report($"gallery navigation stress: {i+1}/24; loaded button={i%2!=0}");
+            }
+        }
         deleteGallery.SetSmokeFilter("switch-", 2, sort: 1);
         deleteGallery.FlushPendingSearch();
         var remaining = deleteGallery.DisplayedItems.ToList();

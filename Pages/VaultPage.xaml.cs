@@ -78,6 +78,7 @@ public sealed partial class VaultPage : Page
 
     private void VaultPage_Loaded(object sender, RoutedEventArgs e)
     {
+        if (!ReferenceEquals(Frame?.Content, this)) return;
         if (_loaded) return;
         _loaded = true;
         _totalsDirty = true;
@@ -102,7 +103,18 @@ public sealed partial class VaultPage : Page
     }
 
     private void VaultPage_Unloaded(object sender, RoutedEventArgs e)
+        => StopGallery();
+
+    protected override void OnNavigatedFrom(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
+        StopGallery();
+        base.OnNavigatedFrom(e);
+    }
+
+    private void StopGallery()
+    {
+        if (!_loaded) return;
+        _loaded = false;
         _searchDebounce.Stop();
         VaultService.Instance.VisibleItems.CollectionChanged -= VisibleItems_CollectionChanged;
         VaultWork.Changed -= UpdateSelectionCommands;
@@ -112,7 +124,6 @@ public sealed partial class VaultPage : Page
         _thumbnailImages.Clear();
         _thumbnailLifetime?.Dispose();
         _thumbnailLifetime = null;
-        _loaded = false;
     }
 
     private void ReleaseThumbnail(Image image)
@@ -172,12 +183,13 @@ public sealed partial class VaultPage : Page
                     (preview, duration) = await VaultVideoPreview.DecodeAsync(item, token);
                 }
                 else preview = (await VaultImageDecoder.DecodeAsync(item, 400, token)).Source;
-                if (!token.IsCancellationRequested && ReferenceEquals(image.Tag, item) && VaultService.Instance.IsUnlocked)
+                if (!token.IsCancellationRequested && _loaded && ReferenceEquals(Frame?.Content, this) &&
+                    ReferenceEquals(image.Tag, item) && VaultService.Instance.IsUnlocked)
                 {
                     item.SetVideoDuration(duration);
                     image.Source = preview;
                     if (SmokeTest.Enabled && item.MediaType == "Video") SmokeTest.Report("video preview: rendered " + item.DisplayDuration);
-                    UiMotion.Reveal(image, MotionCue.Fade);
+                    if (image.IsLoaded) UiMotion.Reveal(image, MotionCue.Fade);
                 }
                 else preview.Dispose();
             }
@@ -581,6 +593,7 @@ public sealed partial class VaultPage : Page
 
     private void MediaGridView_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
     {
+        if (!_loaded || !ReferenceEquals(Frame?.Content, this)) return;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(args.ItemContainer,
             args.InRecycleQueue ? string.Empty : (args.Item as VaultItem)?.OriginalFileName ?? string.Empty);
         if (args.ItemContainer.ContentTemplateRoot is not FrameworkElement root ||

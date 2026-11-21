@@ -4,6 +4,8 @@
 
 此次改动来自一位每天使用视频网站的用户。他希望下次打开应用时仍能使用会员，但本机历史里不再显示昨天看过的页面。旧版在锁定后丢失两个测试站的登录 Cookie、本地偏好和网站数据库，清历史也让用户退出。Firefox 社区有类似的直接反馈，不能据此估计影响所有用户的比例。[Firefox 用户反馈](https://support.mozilla.org/en-US/questions/1201080)
 
+Brave 的 Windows 用户也报告过关闭再打开就退出账号，另一条反馈来自需要在两次启动间保留登录的网页应用用户。Chrome 的清理界面将访问历史、网站数据、已缓存的文件和下载列表分别处理。本版据此把这四项分开验收，并在盾牌中说明清除账号的影响。[Brave 的 Windows 用户反馈](https://github.com/brave/brave-browser/issues/44789) · [网页应用用户反馈](https://github.com/brave/brave-browser/issues/33351) · [Chrome 的数据清理说明](https://support.google.com/chrome/answer/2392709?hl=zh-Hans)
+
 主空间使用每个保险箱独立的网站配置，只在解锁后附加。退出时明确向 WebView2 清理浏览历史、下载历史和 HTTP 磁盘缓存；应用同时丢弃内存中的最近访问和关闭标签。第一方 Cookie、网页本地存储与网站数据库交给内核按网站的规则维护。选择内置平衡跟踪防护以兼顾登录支付、视频和嵌入内容的兼容性。[WebView2 数据种类](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/winrt/microsoft_web_webview2_core/corewebview2browsingdatakinds?view=webview2-winrt-1.0.3719.77) · [Edge 跟踪防护](https://learn.microsoft.com/en-us/microsoft-edge/web-platform/tracking-prevention)
 
 | 用户操作 | 在真实浏览器内检查的结果 |

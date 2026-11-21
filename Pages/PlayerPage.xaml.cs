@@ -66,16 +66,6 @@ public sealed partial class PlayerPage : Page
     public PlayerPage()
     {
         InitializeComponent();
-        PlayerElement.AddHandler(DoubleTappedEvent, new DoubleTappedEventHandler(PlayerElement_DoubleTapped), true);
-        PlayerElement.RegisterPropertyChangedCallback(MediaPlayerElement.IsFullWindowProperty, (_, _) =>
-        {
-            if (!PlayerElement.IsFullWindow) return;
-            PlayerElement.IsFullWindow = false;
-            if (CanUseControls && CurrentItem?.MediaType == "Video")
-            {
-                SetPlayerFullScreen(!_fullScreen);
-            }
-        });
 
         _loadingDelay.Tick += (_, _) =>
         {
@@ -85,13 +75,13 @@ public sealed partial class PlayerPage : Page
             LoadingRing.Visibility = LoadingRing.IsActive ? Visibility.Visible : Visibility.Collapsed;
             UiMotion.SetVisible(LoadingFeedback, true, MotionCue.Fade);
         };
-        Unloaded += PlayerPage_Unloaded;
-        PrivacyMediaGuard.AppAudioMuteChanged += OnAppAudioMuteChanged;
-        VaultService.Instance.Locked += OnVaultLocked;
-        VaultWork.Changed += OnVaultWorkChanged;
+        Loaded += PlayerPage_Loaded;
+        Unloaded += (_, _) => Cleanup();
     }
 
-    protected override async void OnNavigatedTo(NavigationEventArgs e)
+    private bool _visualsStarted;
+
+    protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
 
@@ -99,17 +89,29 @@ public sealed partial class PlayerPage : Page
         var vault = VaultService.Instance;
         string? id = (request?.Item ?? e.Parameter as VaultItem)?.Id ?? _lastItemId;
         VaultItem? item = vault.IsUnlocked && id != null ? vault.VisibleItems.FirstOrDefault(entry => entry.Id == id) : null;
-        if (item == null)
-        {
-            ShowEmptyState();
-            return;
-        }
+        if (item == null) return;
         _returnState = request?.ReturnState;
         IEnumerable<VaultItem> items = request?.Items is { } displayed ? displayed : vault.VisibleItems.OrderByDescending(entry => entry.ImportedAt);
         _queue.AddRange(items.Where(entry => entry.MediaType == item.MediaType).DistinctBy(entry => entry.Id));
         _index = _queue.FindIndex(entry => entry.Id == item.Id);
         if (_index < 0) { _index = _queue.Count; _queue.Add(item); }
-        await LoadMediaAsync(item);
+    }
+
+    private async void PlayerPage_Loaded(object sender, RoutedEventArgs args)
+    {
+        if (_visualsStarted || _cleanedUp || !ReferenceEquals(Frame?.Content, this)) return;
+        _visualsStarted = true;
+        PrivacyMediaGuard.AppAudioMuteChanged += OnAppAudioMuteChanged;
+        VaultService.Instance.Locked += OnVaultLocked;
+        VaultWork.Changed += OnVaultWorkChanged;
+        if (VaultService.Instance.IsUnlocked && CurrentItem is { } item) await LoadMediaAsync(item);
+        else ShowEmptyState();
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        Cleanup();
+        base.OnNavigatedFrom(e);
     }
 
     private void ShowEmptyState()
@@ -124,14 +126,33 @@ public sealed partial class PlayerPage : Page
         ToolTipService.SetToolTip(MediaTitleText, null);
         MediaFormatBadge.Text = "";
         PlayerEmptyNotice.Visibility = Visibility.Visible;
-        PlayerElement.Visibility = ImageContainer.Visibility = NavigationBar.Visibility = Visibility.Collapsed;
+        if (PlayerElement != null) PlayerElement.Visibility = Visibility.Collapsed;
+        ImageContainer.Visibility = NavigationBar.Visibility = Visibility.Collapsed;
         ImageFitButton.Visibility = RotateButton.Visibility = DeleteButton.Visibility = Visibility.Collapsed;
         SpeedButton.Visibility = StretchButton.Visibility = FullScreenButton.Visibility = Visibility.Collapsed;
         PlaybackInfoBar.IsOpen = false;
         EndLoadingFeedback();
     }
 
-    private MediaPlayer CreateMediaPlayer()
+    internal bool HasPlaybackElement => PlayerElement != null;
+
+    private MediaPlayerElement EnsurePlaybackElement()
+    {
+        if (PlayerElement is { } existing) return existing;
+        // Construct the native media engine only when opening audio or video. Its
+        // teardown can pump COM messages during a XAML layout or rendering pass.
+        var element = (MediaPlayerElement)FindName(nameof(PlayerElement));
+        element.AddHandler(DoubleTappedEvent, new DoubleTappedEventHandler(PlayerElement_DoubleTapped), true);
+        element.RegisterPropertyChangedCallback(MediaPlayerElement.IsFullWindowProperty, (_, _) =>
+        {
+            if (!element.IsFullWindow) return;
+            element.IsFullWindow = false;
+            if (CanUseControls && CurrentItem?.MediaType == "Video") SetPlayerFullScreen(!_fullScreen);
+        });
+        return element;
+    }
+
+    private MediaPlayer CreateMediaPlayer(MediaPlayerElement element)
     {
         var player = new MediaPlayer { Volume = _volume, IsMuted = _userMuted };
         try { player.CommandManager.IsEnabled = false; } catch { }
@@ -141,11 +162,11 @@ public sealed partial class PlayerPage : Page
         _mediaPlayer = player;
         try
         {
-            PlayerElement.SetMediaPlayer(player);
+            element.SetMediaPlayer(player);
             ApplyAppAudioMute(player);
-            if (PlayerElement.TransportControls != null)
+            if (element.TransportControls != null)
             {
-                PlayerElement.TransportControls.IsCompact = false;
+                element.TransportControls.IsCompact = false;
             }
         }
         catch (Exception ex)
@@ -184,7 +205,7 @@ public sealed partial class PlayerPage : Page
         if (!_loadingDelay.IsEnabled && LoadingFeedback.Visibility != Visibility.Visible)
             _loadingDelay.Start();
         PlaybackInfoBar.IsOpen = false;
-        PlayerElement.Visibility = Visibility.Collapsed;
+        if (PlayerElement != null) PlayerElement.Visibility = Visibility.Collapsed;
         bool image = item.MediaType == "Image";
         PlaybackInfoBar.Title = image ? "无法显示图片" : "无法播放";
         _showingImage = image;
@@ -293,9 +314,10 @@ public sealed partial class PlayerPage : Page
                 _plaintextStream = stream;
                 _randomAccessStream = _plaintextStream.AsRandomAccessStream();
                 _mediaSource = MediaSource.CreateFromStream(_randomAccessStream, item.MimeType);
-                MediaPlayer player = CreateMediaPlayer();
+                var element = EnsurePlaybackElement();
+                MediaPlayer player = CreateMediaPlayer(element);
                 player.Source = _mediaSource;
-                PlayerElement.Visibility = Visibility.Visible;
+                element.Visibility = Visibility.Visible;
                 player.Play();
             }
             finally { _loadGate.Release(); }
@@ -390,6 +412,7 @@ public sealed partial class PlayerPage : Page
 
     private async void OnVaultWorkChanged()
     {
+        if (_cleanedUp) return;
         UpdateDeleteButton();
         if (!_cleanedUp && !_deleting && VaultService.Instance.IsUnlocked && !VaultWork.IsBusy) await RefreshQueueAsync();
     }
@@ -468,6 +491,7 @@ public sealed partial class PlayerPage : Page
             return Task.CompletedTask;
         int direction = Math.Sign(index - _index);
         _index = index;
+        if (!_visualsStarted) return Task.CompletedTask;
         return LoadMediaAsync(_queue[index], direction);
     }
 
@@ -506,7 +530,7 @@ public sealed partial class PlayerPage : Page
 
     internal bool HandlePlaybackKey(VirtualKey key)
     {
-        if (key == VirtualKey.Escape && PlayerElement.IsFullWindow) { PlayerElement.IsFullWindow = false; return true; }
+        if (key == VirtualKey.Escape && PlayerElement?.IsFullWindow == true) { PlayerElement.IsFullWindow = false; return true; }
         if (key == VirtualKey.Escape && _fullScreen) { SetPlayerFullScreen(false); return true; }
         if (key == VirtualKey.F && CurrentItem?.MediaType == "Video") { SetPlayerFullScreen(!_fullScreen); return true; }
         if (_mediaPlayer is not { } player || !IsMediaReady) return false;
@@ -535,20 +559,20 @@ public sealed partial class PlayerPage : Page
 
     internal void ExitAnyFullWindow()
     {
-        try { if (PlayerElement.IsFullWindow) PlayerElement.IsFullWindow = false; } catch { }
+        try { if (PlayerElement?.IsFullWindow == true) PlayerElement.IsFullWindow = false; } catch { }
         if (_fullScreen) SetPlayerFullScreen(false);
     }
 
     private void SetPlayerFullScreen(bool enable)
     {
-        try { if (!enable && PlayerElement.IsFullWindow) PlayerElement.IsFullWindow = false; } catch { }
+        try { if (!enable && PlayerElement?.IsFullWindow == true) PlayerElement.IsFullWindow = false; } catch { }
         if (_fullScreen == enable || MainWindow.Current is not { } window) return;
         window.SetFullScreenMode(enable);
         _fullScreen = window.AppWindow.Presenter.Kind == Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen;
         PlayerTopBar.Visibility = _fullScreen ? Visibility.Collapsed : Visibility.Visible;
         NavigationBar.Visibility = _fullScreen || CurrentItem == null ? Visibility.Collapsed : Visibility.Visible;
         ExitFullScreenButton.Visibility = _fullScreen ? Visibility.Visible : Visibility.Collapsed;
-        if (_fullScreen) PlayerElement.Focus(FocusState.Programmatic);
+        if (_fullScreen) PlayerElement?.Focus(FocusState.Programmatic);
     }
 
     private void FullScreen_Click(object sender, RoutedEventArgs e)
@@ -647,7 +671,8 @@ public sealed partial class PlayerPage : Page
 
     private void StretchToggle_Click(object sender, RoutedEventArgs e)
     {
-        PlayerElement.Stretch = StretchButton.IsChecked == true ? Stretch.UniformToFill : Stretch.Uniform;
+        if (PlayerElement != null)
+            PlayerElement.Stretch = StretchButton.IsChecked == true ? Stretch.UniformToFill : Stretch.Uniform;
     }
 
     private void PlayerBossKey_Click(object sender, RoutedEventArgs e)
@@ -661,7 +686,7 @@ public sealed partial class PlayerPage : Page
     {
         if (!CanUseControls) return;
         args.Handled = true;
-        if (PlayerElement.IsFullWindow) PlayerElement.IsFullWindow = false;
+        if (PlayerElement?.IsFullWindow == true) PlayerElement.IsFullWindow = false;
         else if (_fullScreen) SetPlayerFullScreen(false);
         else BackBtn_Click(sender, new RoutedEventArgs());
     }
@@ -671,7 +696,7 @@ public sealed partial class PlayerPage : Page
         if (!CanUseControls) return;
         if (e.Key == VirtualKey.Escape)
         {
-            if (PlayerElement.IsFullWindow) PlayerElement.IsFullWindow = false;
+            if (PlayerElement?.IsFullWindow == true) PlayerElement.IsFullWindow = false;
             else if (_fullScreen) SetPlayerFullScreen(false);
             else BackBtn_Click(sender, new RoutedEventArgs());
             e.Handled = true;
@@ -707,14 +732,6 @@ public sealed partial class PlayerPage : Page
         MainWindow.Current?.ReturnToVault(state);
     }
 
-    private void PlayerPage_Unloaded(object sender, RoutedEventArgs e)
-    {
-        PrivacyMediaGuard.AppAudioMuteChanged -= OnAppAudioMuteChanged;
-        VaultService.Instance.Locked -= OnVaultLocked;
-        VaultWork.Changed -= OnVaultWorkChanged;
-        Cleanup();
-    }
-
     private void Cleanup()
     {
         if (_cleanedUp) return;
@@ -723,6 +740,10 @@ public sealed partial class PlayerPage : Page
         _queue.Clear();
         _index = -1;
         _returnState = null;
+        if (!_visualsStarted) return;
+        PrivacyMediaGuard.AppAudioMuteChanged -= OnAppAudioMuteChanged;
+        VaultService.Instance.Locked -= OnVaultLocked;
+        VaultWork.Changed -= OnVaultWorkChanged;
         SetPlayerFullScreen(false);
         ReleasePlayer();
         _imageLoad?.Cancel();
@@ -734,7 +755,7 @@ public sealed partial class PlayerPage : Page
     {
         IsMediaReady = false;
         SpeedButton.IsEnabled = false;
-        try { if (PlayerElement.IsFullWindow) PlayerElement.IsFullWindow = false; } catch { }
+        try { if (PlayerElement?.IsFullWindow == true) PlayerElement.IsFullWindow = false; } catch { }
 
         // Detach the player from the XAML element *before* disposing it: disposing a
         // MediaPlayer that a live MediaPlayerElement still references can fail-fast in
@@ -745,7 +766,7 @@ public sealed partial class PlayerPage : Page
         if (player != null)
         {
             try { _volume = player.Volume; _userMuted = _muteBeforeBossKey ?? player.IsMuted; } catch { }
-            try { PlayerElement.SetMediaPlayer(null); } catch { }
+            try { PlayerElement?.SetMediaPlayer(null); } catch { }
             try { player.Pause(); } catch { }
             try { player.Source = null; } catch { }
             try

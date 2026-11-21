@@ -96,7 +96,7 @@
         <!-- Media Stage Area -->
         <Grid Grid.Row="1">
             <!-- WinUI Video Player -->
-            <MediaPlayerElement x:Name="PlayerElement"
+            <MediaPlayerElement x:Name="PlayerElement" x:Load="False"
                                 AreTransportControlsEnabled="True"
                                 AutoPlay="True"
                                 Stretch="Uniform"
@@ -114,7 +114,7 @@
                     </Border>
                     <TextBlock Text="选择一份媒体开始" FontSize="24" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
                     <TextBlock Text="在媒体库中打开图片或视频，在这里专注观看。" Style="{StaticResource StealthCaptionStyle}" TextAlignment="Center" />
-                    <Button Content="打开媒体库" Click="OpenLibrary_Click" Style="{ThemeResource AccentButtonStyle}" HorizontalAlignment="Center" Padding="20,10" />
+                    <Button x:Name="OpenLibraryButton" Content="打开媒体库" Click="OpenLibrary_Click" Style="{ThemeResource AccentButtonStyle}" HorizontalAlignment="Center" Padding="20,10" />
                 </StackPanel>
             </Grid>
 
