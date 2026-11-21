@@ -19,6 +19,12 @@ public sealed partial class BrowserPage
         SmokeTest.Report($"audit: waiting for test-window activation, pid={Environment.ProcessId}");
         for (int i = 0; i < 300 && !BrowserZoomInput.IsOwnerForeground(MainWindow.CurrentHandle); i++) await Task.Delay(100);
         if (!BrowserZoomInput.IsOwnerForeground(MainWindow.CurrentHandle)) throw new InvalidOperationException("Audit window must be activated");
+        if (Environment.GetCommandLineArgs().Contains("--downloads-only"))
+        {
+            await CheckDownloadLifetimeAsync();
+            SmokeTest.Report("download audit complete");
+            return;
+        }
         var firstItem = (TabViewItem)BrowserTabView.SelectedItem;
         var first = (BrowserTabControl)firstItem.Content;
         if (!await first.RunSmokeNavigationAsync(checkSleep: true)) throw new InvalidOperationException("Audit setup failed");

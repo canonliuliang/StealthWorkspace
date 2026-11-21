@@ -12,32 +12,32 @@ namespace StealthWorkspace.Services;
 public static class SystemAudio
 {
     private static readonly object Gate = new();
-    private static bool _mutedByUs;
+    private static AudioEndpointVolume? _mutedEndpoint;
 
     public static bool MuteForBossKey()
     {
         lock (Gate)
         {
+            if (_mutedEndpoint != null) return true;
+            AudioEndpointVolume? endpoint = null;
             try
             {
-                bool muted;
-                if (!TryGetMuteCore(out muted)) return false;
-                if (muted)
-                {
-                    // Already muted by the user or another app: never touch it.
-                    _mutedByUs = false;
-                    return true;
-                }
-
-                bool ok = TrySetMuteCore(true);
-                _mutedByUs = ok;
-                return ok;
+                endpoint = AudioEndpointVolume.TryOpen();
+                if (endpoint == null || !endpoint.TryGetMute(out bool muted)) return false;
+                if (muted) return true;
+                if (!endpoint.TrySetMute(true)) return false;
+                // The user can switch to headphones or a different default output
+                // while the cover is up. Restore this precise device on dismissal.
+                _mutedEndpoint = endpoint;
+                endpoint = null;
+                return true;
             }
             catch (Exception ex)
             {
                 AppLog.Warn($"系统静音不可用: {ex.GetType().Name}");
                 return false;
             }
+            finally { endpoint?.Dispose(); }
         }
     }
 
@@ -46,34 +46,18 @@ public static class SystemAudio
     {
         lock (Gate)
         {
-            if (!_mutedByUs) return;
-            _mutedByUs = false;
+            using var endpoint = _mutedEndpoint;
+            if (endpoint == null) return;
+            _mutedEndpoint = null;
             try
             {
-                TrySetMuteCore(false);
+                endpoint.TrySetMute(false);
             }
             catch (Exception ex)
             {
                 AppLog.Warn($"恢复系统静音失败: {ex.GetType().Name}");
             }
         }
-    }
-
-    private static bool TryGetMuteCore(out bool muted)
-    {
-        muted = false;
-        using var endpoint = AudioEndpointVolume.TryOpen();
-        if (endpoint == null)
-        {
-            return false;
-        }
-        return endpoint.TryGetMute(out muted);
-    }
-
-    private static bool TrySetMuteCore(bool mute)
-    {
-        using var endpoint = AudioEndpointVolume.TryOpen();
-        return endpoint != null && endpoint.TrySetMute(mute);
     }
 
     private sealed class AudioEndpointVolume : IDisposable
@@ -145,11 +129,11 @@ public static class SystemAudio
     [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IMMDeviceEnumerator
     {
-        int EnumAudioEndpoints(int dataFlow, int stateMask, out IntPtr devices);
-        int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice? device);
-        int GetDevice(string id, out IMMDevice? device);
-        int RegisterEndpointNotificationCallback(IntPtr client);
-        int UnregisterEndpointNotificationCallback(IntPtr client);
+        [PreserveSig] int EnumAudioEndpoints(int dataFlow, int stateMask, out IntPtr devices);
+        [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice? device);
+        [PreserveSig] int GetDevice(string id, out IMMDevice? device);
+        [PreserveSig] int RegisterEndpointNotificationCallback(IntPtr client);
+        [PreserveSig] int UnregisterEndpointNotificationCallback(IntPtr client);
     }
 
     [ComImport]
@@ -157,7 +141,7 @@ public static class SystemAudio
     [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IMMDevice
     {
-        int Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object? interfacePtr);
+        [PreserveSig] int Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object? interfacePtr);
     }
 
     [ComImport]
@@ -165,24 +149,24 @@ public static class SystemAudio
     [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IAudioEndpointVolume
     {
-        int RegisterControlChangeNotify(IntPtr notify);
-        int UnregisterControlChangeNotify(IntPtr notify);
-        int GetChannelCount(out uint count);
-        int SetMasterVolumeLevel(float level, ref Guid eventContext);
-        int SetMasterVolumeLevelScalar(float level, ref Guid eventContext);
-        int GetMasterVolumeLevel(out float level);
-        int GetMasterVolumeLevelScalar(out float level);
-        int SetChannelVolumeLevel(uint channel, float level, ref Guid eventContext);
-        int SetChannelVolumeLevelScalar(uint channel, float level, ref Guid eventContext);
-        int GetChannelVolumeLevel(uint channel, out float level);
-        int GetChannelVolumeLevelScalar(uint channel, out float level);
-        int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid eventContext);
-        int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
-        int GetVolumeStepInfo(out uint step, out uint stepCount);
-        int VolumeStepUp(ref Guid eventContext);
-        int VolumeStepDown(ref Guid eventContext);
-        int QueryHardwareSupport(out uint mask);
-        int GetVolumeRange(out float min, out float max, out float increment);
+        [PreserveSig] int RegisterControlChangeNotify(IntPtr notify);
+        [PreserveSig] int UnregisterControlChangeNotify(IntPtr notify);
+        [PreserveSig] int GetChannelCount(out uint count);
+        [PreserveSig] int SetMasterVolumeLevel(float level, ref Guid eventContext);
+        [PreserveSig] int SetMasterVolumeLevelScalar(float level, ref Guid eventContext);
+        [PreserveSig] int GetMasterVolumeLevel(out float level);
+        [PreserveSig] int GetMasterVolumeLevelScalar(out float level);
+        [PreserveSig] int SetChannelVolumeLevel(uint channel, float level, ref Guid eventContext);
+        [PreserveSig] int SetChannelVolumeLevelScalar(uint channel, float level, ref Guid eventContext);
+        [PreserveSig] int GetChannelVolumeLevel(uint channel, out float level);
+        [PreserveSig] int GetChannelVolumeLevelScalar(uint channel, out float level);
+        [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid eventContext);
+        [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
+        [PreserveSig] int GetVolumeStepInfo(out uint step, out uint stepCount);
+        [PreserveSig] int VolumeStepUp(ref Guid eventContext);
+        [PreserveSig] int VolumeStepDown(ref Guid eventContext);
+        [PreserveSig] int QueryHardwareSupport(out uint mask);
+        [PreserveSig] int GetVolumeRange(out float min, out float max, out float increment);
     }
 }
 

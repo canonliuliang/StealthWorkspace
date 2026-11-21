@@ -1612,7 +1612,9 @@ public sealed partial class BrowserTabControl : UserControl
     private void OnEngineDownloadDialogChanged(CoreWebView2 sender, object args)
     {
         // A focused WebView can consume Ctrl+J in its own download UI before XAML sees the key.
-        if (!sender.IsDefaultDownloadDialogOpen) return;
+        bool open = sender.IsDefaultDownloadDialogOpen;
+        if (SmokeTest.BrowserAudit) SmokeTest.Report($"download flyout: engine download dialog open={open}");
+        if (!open) return;
         sender.CloseDefaultDownloadDialog();
         if (IsLoaded && IsForegroundTab && MainWindow.Current?.IsPrivacyCoverVisible == false)
             OpenDownloadsFromShortcut();

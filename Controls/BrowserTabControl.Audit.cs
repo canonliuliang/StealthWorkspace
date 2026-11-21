@@ -158,9 +158,11 @@ public sealed partial class BrowserTabControl
             throw new InvalidOperationException("Could not send Ctrl+J while the document had keyboard focus");
         try
         {
-            for (int i = 0; i < 80 && !flyout.IsOpen; i++) await Task.Delay(25);
-            if (!flyout.IsOpen || core.IsDefaultDownloadDialogOpen || flyout.Content is not DownloadListControl)
-                throw new InvalidOperationException("Webpage Ctrl+J failed to show only the workspace downloads");
+            bool IsWorkspaceListVisible() => flyout.IsOpen && flyout.Content is DownloadListControl { IsLoaded: true } && !core.IsDefaultDownloadDialogOpen;
+            for (int i = 0; i < 80 && !IsWorkspaceListVisible(); i++) await Task.Delay(25);
+            await Task.Delay(200);
+            if (!IsWorkspaceListVisible())
+                throw new InvalidOperationException($"Webpage Ctrl+J failed to show only the workspace downloads; workspace={flyout.IsOpen}; content={flyout.Content?.GetType().Name}; engine={core.IsDefaultDownloadDialogOpen}");
             Services.SmokeTest.Report("download flyout: native Ctrl+J on the focused webpage opened only the workspace download list");
         }
         finally { flyout.Hide(); }
@@ -200,7 +202,6 @@ public sealed partial class BrowserTabControl
 
     internal async Task ClickAuditAsync(string id, bool background = false)
     {
-        if (background) _backgroundClickAt = Environment.TickCount64;
         // Only synthetic loopback pages use this diagnostic user gesture. Normal
         // browsing relies on the runtime's trusted IsUserInitiated event value.
         if (_hookedCore is not { } core || !Uri.TryCreate(core.Source, UriKind.Absolute, out var uri) || !uri.IsLoopback)
@@ -210,6 +211,8 @@ public sealed partial class BrowserTabControl
         await Task.Delay(75);
         if (id == "fullscreen")
             Services.SmokeTest.Report($"fullscreen gesture: windowForeground={Services.BrowserZoomInput.IsOwnerForeground(MainWindow.CurrentHandle)}; loaded={_browserControl?.IsLoaded}; xamlFocus={_browserControl?.FocusState}; addressPending={_focusAddressOnLoad}; selected={_isSelected}; pageFocused={await core.ExecuteScriptAsync("document.hasFocus()")}");
+        // Record the simulated modifier at the click, after the control has loaded and obtained focus.
+        if (background) _backgroundClickAt = Environment.TickCount64;
         await core.CallDevToolsProtocolMethodAsync("Runtime.evaluate", JsonSerializer.Serialize(new
         {
             expression = "document.getElementById(" + JsonSerializer.Serialize(id) + ").click()",
