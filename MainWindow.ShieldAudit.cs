@@ -177,8 +177,21 @@ public sealed partial class MainWindow
         await UiCapture.SaveAsync(RootGrid, "bookmark-reading.png");
         if (Environment.GetEnvironmentVariable("STEALTH_TEST_CAPTURE_BOOKMARK_WINDOW") == "1")
         {
-            string captured = Path.Combine(Path.GetDirectoryName(SmokeTest.OutputPath!)!, "bookmark-window.ready");
-            await WaitForAsync(() => File.Exists(captured), "The native window screenshot was not captured.");
+            // Only this synthetic loopback document in the isolated test vault is captured.
+            var protection = BossKeyService.Instance;
+            bool restore = protection.IsDisplayAffinityProtected;
+            string output = Path.GetDirectoryName(SmokeTest.OutputPath!)!;
+            if (tab.CurrentUrl != episodes[23].Url || (restore && !protection.SetDisplayAffinityProtection(false)))
+                throw new InvalidOperationException("Cannot prepare the synthetic reading window.");
+            try
+            {
+                File.WriteAllText(Path.Combine(output, "bookmark-window.request"), "");
+                await WaitForAsync(() => File.Exists(Path.Combine(output, "bookmark-window.ready")), "The native window screenshot was not captured.");
+            }
+            finally
+            {
+                if (restore && !protection.SetDisplayAffinityProtection(true)) throw new InvalidOperationException("The test window's capture setting could not be restored.");
+            }
         }
         var browser = (BrowserPage)NavFrame.Content;
         var tabs = (TabView)browser.FindName("BrowserTabView");

@@ -54,7 +54,7 @@ Write-Output "Running $Mode in isolated test data; PID=$($process.Id)"
 $deadline = [datetime]::UtcNow.AddSeconds($timeout)
 $lastActivated = ''
 while (!$process.WaitForExit(200) -and [datetime]::UtcNow -lt $deadline) {
-    if ($CaptureBookmarkWindow -and (Test-Path -LiteralPath (Join-Path $output 'bookmark-reading.png'))) {
+    if ($CaptureBookmarkWindow -and (Test-Path -LiteralPath (Join-Path $output 'bookmark-window.request'))) {
         $process.Refresh()
         if ($process.MainWindowHandle -eq 0 -or $process.MainWindowTitle -notlike '*测试窗口*') { continue }
         $screenshot = Join-Path $output 'bookmark-window.png'
