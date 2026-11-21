@@ -63,18 +63,36 @@ internal static class RemovalSelfTest
             string icon = Path.Combine(directory, "iconcache_32.db");
             File.WriteAllBytes(cache, bytes);
             File.WriteAllBytes(icon, bytes);
-            Require(CreateHardLinkW(link, source, IntPtr.Zero));
+            if (!CreateHardLinkW(link, source, IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not create the synthetic thumbnail hard link.");
             var item = new CleanerItem { Category = CleanerCategory.ThumbnailCache };
             var options = new CleanerOptions { SecureShredFiles = true };
             CleanerItem result = CleanerService.CleanThumbnails(item, directory, options, CancellationToken.None);
-            Require(result.DetectedCount == 1 && result.Outcome == CleanOutcome.Skipped && File.Exists(link) && !File.Exists(cache));
+            void CheckResult(bool expected, string stage)
+            {
+                if (!expected)
+                    throw new InvalidOperationException($"{stage}. Remaining={result.DetectedCount}, outcome={result.Outcome}, status={result.Status}.");
+            }
+            void CheckUntouchedContent(string stage)
+            {
+                CheckResult(File.ReadAllBytes(source).AsSpan().SequenceEqual(bytes), stage + ": hard-link source contents changed");
+                CheckResult(File.ReadAllBytes(icon).AsSpan().SequenceEqual(bytes), stage + ": unrelated icon-cache contents changed");
+            }
+            CheckUntouchedContent("After the overwrite request");
+            CheckResult(File.Exists(link), "The overwrite request removed the hard link");
+            CheckResult(!File.Exists(cache), "The ordinary synthetic thumbnail still exists after the overwrite request");
+            CheckResult(result.DetectedCount == 1, "The overwrite request returned an incorrect remaining count");
+            CheckResult(result.Outcome == CleanOutcome.Skipped, "The overwrite request did not report skipping the hard link");
             options.SecureShredFiles = false;
             string readOnlyCache = Path.Combine(directory, "thumbcache_readonly.db");
             File.WriteAllBytes(readOnlyCache, bytes);
             File.SetAttributes(readOnlyCache, FileAttributes.ReadOnly);
             result = CleanerService.CleanThumbnails(item, directory, options, CancellationToken.None);
-            Require(result.DetectedCount == 0 && result.Outcome == CleanOutcome.Complete && !File.Exists(link) && !File.Exists(readOnlyCache));
-            Require(File.ReadAllBytes(source).AsSpan().SequenceEqual(bytes) && File.ReadAllBytes(icon).AsSpan().SequenceEqual(bytes));
+            CheckUntouchedContent("After ordinary deletion");
+            CheckResult(!File.Exists(link), "Ordinary deletion left the synthetic hard-link name");
+            CheckResult(!File.Exists(readOnlyCache), "Ordinary deletion left the synthetic read-only cache name");
+            CheckResult(result.DetectedCount == 0, "Ordinary deletion returned an incorrect remaining count");
+            CheckResult(result.Outcome == CleanOutcome.Complete, "Ordinary deletion did not report completion");
             return Task.CompletedTask;
         });
         await Check("Cleaner: normal deletion preserves the read-only bit on a sibling hard link", () =>
