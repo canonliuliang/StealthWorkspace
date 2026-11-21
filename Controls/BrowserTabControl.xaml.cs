@@ -1620,7 +1620,6 @@ public sealed partial class BrowserTabControl : UserControl
         // AltGr is reported as Ctrl+Alt on Windows. Keep these keystrokes available to text editors.
         if (isCtrl && isAlt || IsKeyPressed(VirtualKey.LeftWindows) || IsKeyPressed(VirtualKey.RightWindows)) return;
         bool plainCtrl = isCtrl && !shift;
-        if (plainCtrl && e.Key == VirtualKey.J) { e.Handled = true; ShowDownloads_Click(this, new RoutedEventArgs()); return; }
         if (plainCtrl && e.Key == VirtualKey.H) { e.Handled = true; OpenSessionHistory(); return; }
 
         if (plainCtrl && e.Key == VirtualKey.D)
@@ -2297,7 +2296,8 @@ public sealed partial class BrowserTabControl : UserControl
         CancelInitialAddressFocus();
         try
         {
-            EnsureDownloadsFlyout().ShowAt(DownloadsBtn);
+            var flyout = EnsureDownloadsFlyout();
+            if (!flyout.IsOpen) flyout.ShowAt(DownloadsBtn);
             UiMotion.SetVisible(DownloadToast, false);
         }
         catch (Exception ex) { AppLog.Warn("Download dialog failed: " + ex.GetType().Name); ShowBrowserError("无法显示下载记录", "可以从更多菜单打开下载文件夹。"); }

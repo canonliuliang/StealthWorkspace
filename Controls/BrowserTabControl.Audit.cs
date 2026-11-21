@@ -101,21 +101,50 @@ public sealed partial class BrowserTabControl
         {
             flyout.Opened -= Opened;
             flyout.Closed -= Closed;
-            flyout.Hide();
+            if (flyout.IsOpen)
+            {
+                var dismissed = new TaskCompletionSource<bool>();
+                void Dismissed(object? sender, object args) => dismissed.TrySetResult(true);
+                flyout.Closed += Dismissed;
+                try
+                {
+                    flyout.Hide();
+                    await dismissed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                finally { flyout.Closed -= Dismissed; }
+            }
         }
     }
 
     internal async Task CheckDownloadShortcutAuditAsync()
     {
         var flyout = EnsureDownloadsFlyout();
-        for (int i = 0; i < 50 && flyout.IsOpen; i++) await Task.Delay(25);
-        UrlTextBox.Focus(Microsoft.UI.Xaml.FocusState.Keyboard);
-        if (flyout.IsOpen || !Services.BrowserZoomInput.SendDownloadsForAudit(MainWindow.CurrentHandle))
-            throw new InvalidOperationException("Could not send Ctrl+J to the test window");
-        for (int i = 0; i < 80 && !flyout.IsOpen; i++) await Task.Delay(25);
-        if (!flyout.IsOpen) throw new InvalidOperationException("Ctrl+J failed to show downloads from the address bar");
-        flyout.Hide();
-        Services.SmokeTest.Report("download flyout: native Ctrl+J opened the shared downloads from the address bar");
+        var editor = FindAddressEditor(UrlTextBox) ?? throw new InvalidOperationException("Missing address editor");
+        if (!editor.Focus(Microsoft.UI.Xaml.FocusState.Keyboard) || !IsAddressBarFocused)
+            throw new InvalidOperationException("The address editor did not receive keyboard focus");
+        int opened = 0, closed = 0;
+        void Opened(object? sender, object args) => opened++;
+        void Closed(object? sender, object args) => closed++;
+        flyout.Opened += Opened;
+        flyout.Closed += Closed;
+        try
+        {
+            if (flyout.IsOpen || !Services.BrowserZoomInput.SendDownloadsForAudit(MainWindow.CurrentHandle))
+                throw new InvalidOperationException("Could not send Ctrl+J to the test window");
+            for (int i = 0; i < 80 && opened == 0; i++) await Task.Delay(25);
+            if (!flyout.IsOpen || opened != 1) throw new InvalidOperationException("Ctrl+J failed to show downloads from the address bar");
+            if (!Services.BrowserZoomInput.SendDownloadsForAudit(MainWindow.CurrentHandle))
+                throw new InvalidOperationException("Could not repeat Ctrl+J");
+            await Task.Delay(250);
+            if (!flyout.IsOpen || opened != 1 || closed != 0) throw new InvalidOperationException("Repeated Ctrl+J reopened or dismissed downloads");
+            Services.SmokeTest.Report("download flyout: native Ctrl+J opened the shared downloads from the address bar; repeating it kept one flyout open");
+        }
+        finally
+        {
+            flyout.Opened -= Opened;
+            flyout.Closed -= Closed;
+            flyout.Hide();
+        }
     }
 
     internal async Task<CoreWebView2DownloadOperation> BeginDownloadAuditAsync(string address)

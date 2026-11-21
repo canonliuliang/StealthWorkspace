@@ -17,12 +17,20 @@ public sealed partial class BrowserPage
 
     private void BrowserPage_PreviewKeyDown(object sender, KeyRoutedEventArgs args)
     {
-        // TextBox consumes Ctrl+Shift+A as Select All before a parent accelerator.
-        // Handle only this exact browser command; leave normal editing shortcuts alone.
-        if (args.Key != VirtualKey.A || !_isPageLoaded || _isUnloading || _isBurningAll) return;
+        if (args.Key is not (VirtualKey.A or VirtualKey.J) || !_isPageLoaded || _isUnloading || _isBurningAll) return;
         bool Down(VirtualKey key) => Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(key)
             .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
-        if (!Down(VirtualKey.Control) || !Down(VirtualKey.Shift) || Down(VirtualKey.Menu)) return;
+        if (!Down(VirtualKey.Control) || Down(VirtualKey.Menu) || Down(VirtualKey.LeftWindows) || Down(VirtualKey.RightWindows)) return;
+        bool shift = Down(VirtualKey.Shift);
+        if (args.Key == VirtualKey.J)
+        {
+            if (shift || BrowserTabView.SelectedItem is not TabViewItem { Content: BrowserTabControl tab }) return;
+            args.Handled = true;
+            tab.OpenDownloadsFromShortcut();
+            return;
+        }
+        // TextBox consumes Ctrl+Shift+A as Select All before a parent accelerator.
+        if (!shift) return;
         args.Handled = true;
         if (!_tabSearchOpen) TabListFlyout.ShowAt(TabSearchButton);
         else TabSearchBox.Focus(FocusState.Keyboard);
