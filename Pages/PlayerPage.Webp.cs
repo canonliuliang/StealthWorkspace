@@ -12,7 +12,7 @@ public sealed partial class PlayerPage
 
     // Windows' WebP decoder returns composited canvas frames (including blending
     // and disposal). WinUI's BitmapImage plays GIFs but displays WebP frame zero.
-    private async Task PlayWebpAsync(VaultItem item, int version, uint width, uint height)
+    private async Task PlayWebpAsync(VaultItem item, int version, uint width, uint height, SoftwareBitmapSource source)
     {
         using var lifetime = new CancellationTokenSource();
         _webpPlayback = lifetime;
@@ -39,16 +39,9 @@ public sealed partial class PlayerPage
                 frame = await decoder.GetFrameAsync(index).AsTask(token);
                 var pixels = await frame.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied,
                     transform, ExifOrientationMode.RespectExifOrientation, ColorManagementMode.ColorManageToSRgb).AsTask(token);
-                var next = await VaultImageDecoder.CreateSourceAsync(pixels, token);
-                try
-                {
-                    if (token.IsCancellationRequested || version != _loadVersion || _cleanedUp || !VaultService.Instance.IsUnlocked) return;
-                    var previous = ImageViewer.Source as IDisposable;
-                    ImageViewer.Source = next;
-                    next = null;
-                    previous?.Dispose();
-                }
-                finally { next?.Dispose(); }
+                // Keep one displayed source for this animation. Replacing the
+                // frame does not close a source still used by the compositor.
+                await VaultImageDecoder.SetPixelsAsync(source, pixels, token);
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }

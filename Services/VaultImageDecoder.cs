@@ -40,24 +40,31 @@ internal static class VaultImageDecoder
     // Accept ownership: once handed to XAML, only the source may close its pixels.
     internal static async Task<SoftwareBitmapSource> CreateSourceAsync(SoftwareBitmap bitmap, CancellationToken token)
     {
-        SoftwareBitmapSource? source = null;
-        bool handedToXaml = false;
+        var source = new SoftwareBitmapSource();
         try
         {
-            token.ThrowIfCancellationRequested();
-            source = new SoftwareBitmapSource();
-            var upload = source.SetBitmapAsync(bitmap);
-            handedToXaml = true;
-            await upload;
+            await SetPixelsAsync(source, bitmap, token);
             token.ThrowIfCancellationRequested();
             return source;
         }
         catch
         {
-            source?.Dispose();
-            if (!handedToXaml) bitmap.Dispose();
+            source.Dispose();
             throw;
         }
+    }
+
+    internal static async Task SetPixelsAsync(SoftwareBitmapSource source, SoftwareBitmap bitmap, CancellationToken token)
+    {
+        bool handedToXaml = false;
+        try
+        {
+            token.ThrowIfCancellationRequested();
+            var upload = source.SetBitmapAsync(bitmap);
+            handedToXaml = true;
+            await upload;
+        }
+        finally { if (!handedToXaml) bitmap.Dispose(); }
     }
 
     internal static (uint Width, uint Height) GetDecodeSize(uint width, uint height, uint maxEdge, ulong maxPixels)

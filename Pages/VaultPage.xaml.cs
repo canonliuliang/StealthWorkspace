@@ -119,10 +119,9 @@ public sealed partial class VaultPage : Page
     {
         // The async operation disposes its token after cancellation has unwound.
         if (_thumbnailLoads.Remove(image, out var pending)) pending.Token.Cancel();
-        var previous = image.Source as IDisposable;
+        // A recycled card can still have a native composition frame in flight.
         image.Source = null;
         image.Tag = null;
-        previous?.Dispose();
     }
 
     internal async Task<bool> WaitForSmokeThumbnailAsync(string? id = null)

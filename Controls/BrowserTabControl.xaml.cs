@@ -886,6 +886,14 @@ public sealed partial class BrowserTabControl : UserControl
             StartSurface.Visibility = Visibility.Visible;
             if (_browserControl is { } browser) browser.Visibility = Visibility.Collapsed;
             StartMessage.Visibility = Visibility.Visible;
+            var historyError = exception as BrowserHistoryUnavailableException ?? exception.InnerException as BrowserHistoryUnavailableException;
+            if (historyError != null)
+            {
+                StartMessage.Text = historyError.Message;
+                if (SessionStateText != null) SessionStateText.Text = "等待清理浏览记录";
+                ShowBrowserError("网页还未打开", historyError.Message);
+                return;
+            }
             StartMessage.Text = "可重试，或输入另一个地址。";
             if (SessionStateText != null) SessionStateText.Text = "浏览器启动失败";
             string detail = BrowserProfileManager.LastInitializationError;

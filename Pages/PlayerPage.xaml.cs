@@ -162,9 +162,9 @@ public sealed partial class PlayerPage : Page
         StopImageDrag();
         _webpPlayback?.Cancel();
         if (ImageViewer.Source is Microsoft.UI.Xaml.Media.Imaging.BitmapImage animation) animation.Stop();
-        var previous = ImageViewer.Source as IDisposable;
+        // A transition or an in-flight composition pass may still hold the
+        // displayed source. Detaching allows XAML to release its last reference.
         ImageViewer.Source = null;
-        previous?.Dispose();
     }
 
     private async Task LoadMediaAsync(VaultItem item, int direction = 0)
@@ -260,7 +260,7 @@ public sealed partial class PlayerPage : Page
                 _imagePixelHeight = animatedBitmap != null ? animatedHeight : bitmap!.Value.Height;
                 _imageWidthMode = _preferredWidthMode ?? _imagePixelHeight >= _imagePixelWidth * 2.0;
                 ImageViewer.Source = (ImageSource?)animatedBitmap ?? bitmap!.Value.Source;
-                if (animateWebp) _ = PlayWebpAsync(item, version, (uint)_imagePixelWidth, (uint)_imagePixelHeight);
+                if (animateWebp) _ = PlayWebpAsync(item, version, (uint)_imagePixelWidth, (uint)_imagePixelHeight, bitmap!.Value.Source);
                 RotateButton.IsEnabled = true;
                 ApplyImageLayout(resetViewport: true);
                 if (direction == 0 && XamlRoot is { } root &&

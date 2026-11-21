@@ -13,10 +13,20 @@ public static partial class BrowserProfileManager
         CoreWebView2BrowsingDataKinds.BrowsingHistory | CoreWebView2BrowsingDataKinds.DownloadHistory;
     private static SettingsService.BookmarkSession? _environmentWorkspace;
     private static DispatcherQueue? _ownerDispatcher;
-    private static Task? _entryCleanup;
-    private static uint _entryBrowserProcess;
+    private static BrowserEntryHistoryGate _entryHistory = new();
+    internal sealed class HistoryResults
+    {
+        internal bool LastPersonal { get; set; } = true;
+        internal bool LastShutdown { get; private set; } = true;
+        internal void RecordShutdown(bool personal, bool success)
+        {
+            if (personal) LastPersonal = success;
+            LastShutdown = success;
+        }
+    }
+    private static readonly HistoryResults _historyResults = new();
     private static readonly ConcurrentDictionary<string, Task<bool>> PendingAccountCleanup = new(StringComparer.OrdinalIgnoreCase);
-    internal static bool LastPersonalHistoryCleanupSucceeded { get; private set; } = true;
+    internal static bool LastPersonalHistoryCleanupSucceeded => _historyResults.LastPersonal;
 
     private static void RequireCurrentWorkspace(SettingsService.BookmarkSession? session)
     {
@@ -36,18 +46,17 @@ public static partial class BrowserProfileManager
             // An environment can outlive its crashed browser process. Each new
             // native writer must finish recovery before any tab navigates.
             uint process = core.BrowserProcessId;
-            if (process != _entryBrowserProcess)
+            await _entryHistory.WaitAsync(process, () =>
             {
-                _entryBrowserProcess = process;
-                _entryCleanup = null;
-            }
-            var cleanup = _entryCleanup ??= core.Profile.ClearBrowsingDataAsync(SessionHistoryKinds).AsTask();
-            try { await cleanup; }
-            catch { if (ReferenceEquals(_entryCleanup, cleanup)) _entryCleanup = null; throw; }
+                RequireCurrentWorkspace(session);
+                if (_sessionEnding != null || !ReferenceEquals(environment,_sharedEnvironment) || core.BrowserProcessId != process)
+                    throw new OperationCanceledException("浏览空间正在关闭。");
+                return core.Profile.ClearBrowsingDataAsync(SessionHistoryKinds).AsTask();
+            }, TimeSpan.FromSeconds(12));
             RequireCurrentWorkspace(session);
-            if (_sessionEnding != null || process != _entryBrowserProcess || !ReferenceEquals(_sharedEnvironment, environment) || !ReferenceEquals(session, _environmentWorkspace))
+            if (_sessionEnding != null || core.BrowserProcessId != process || !ReferenceEquals(_sharedEnvironment, environment) || !ReferenceEquals(session, _environmentWorkspace))
                 throw new OperationCanceledException("浏览空间正在关闭。");
-            LastPersonalHistoryCleanupSucceeded = true;
+            _historyResults.LastPersonal = true;
         }
     }
 
@@ -84,8 +93,7 @@ public static partial class BrowserProfileManager
     {
         var finalizer = _preparedFinalizer ?? new HistoryFinalizer(environment);
         _preparedFinalizer = null;
-        finalizer.UserTabsClosed.TrySetResult(true);
-        var work = finalizer.Completion;
+        var work = DrainEntryAndFinishAsync(_entryHistory,finalizer);
         PendingAccountCleanup[directory] = work;
         try
         {
@@ -94,6 +102,7 @@ public static partial class BrowserProfileManager
         catch (TimeoutException)
         {
             finalizer.Lifetime.Cancel();
+            finalizer.UserTabsClosed.TrySetResult(false);
             AppLog.Warn("浏览历史清理超时。其他空间可以继续；此空间须等待内核结束该操作。");
             return false;
         }
@@ -109,13 +118,20 @@ public static partial class BrowserProfileManager
         }
     }
 
+    private static async Task<bool> DrainEntryAndFinishAsync(BrowserEntryHistoryGate entry, HistoryFinalizer finalizer)
+    {
+        await entry.WaitForDrainAsync().ConfigureAwait(false);
+        finalizer.UserTabsClosed.TrySetResult(true);
+        return await finalizer.Completion.ConfigureAwait(false);
+    }
+
     private static async Task WaitForPreviousHistoryOperationAsync(string directory)
     {
         if (!PendingAccountCleanup.TryGetValue(directory, out var prior)) return;
         // A hang in WebView2 must not make a second profile attach, hold the
         // other workspace's lock indefinitely or silently bypass history removal.
         try { await prior.WaitAsync(TimeSpan.FromSeconds(2)); }
-        catch (TimeoutException) { throw new IOException("上一次网站历史清理仍在进行，请稍后重试。"); }
+        catch (TimeoutException ex) { throw new BrowserHistoryUnavailableException("上次的浏览记录仍在清理，请稍后点击重试。", ex); }
     }
 
     private static Task<bool> ClearClosedProfileHistoryAsync(CoreWebView2Environment environment, HistoryFinalizer finalizer)

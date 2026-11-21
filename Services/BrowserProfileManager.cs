@@ -521,14 +521,17 @@ public static partial class BrowserProfileManager
                     if (_environmentWorkspace is { Temporary: false } && _sharedEnvironment is { } personalEnvironment)
                     {
                         bool cleared = await FinishHistoryWithinDeadlineAsync(personalEnvironment, _sharedUserDataDirectory!).ConfigureAwait(false);
-                        LastPersonalHistoryCleanupSucceeded = cleared;
+                        _historyResults.RecordShutdown(personal:true,success:cleared);
                     }
-                    else ownedDirectory = _sharedUserDataDirectory;
+                    else if (_sharedEnvironment != null)
+                    {
+                        ownedDirectory = _sharedUserDataDirectory;
+                        _historyResults.RecordShutdown(personal:false,success:true);
+                    }
                     _sharedEnvironment = null;
                     _sharedUserDataDirectory = null;
                     _environmentWorkspace = null;
-                    _entryCleanup = null;
-                    _entryBrowserProcess = 0;
+                    _entryHistory = new BrowserEntryHistoryGate();
                     _ownerDispatcher = null;
                     _profileOwnerLease?.Dispose();
                     _profileOwnerLease = null;
@@ -580,7 +583,7 @@ public static partial class BrowserProfileManager
             {
                 ShutdownLock.Release();
             }
-            return SnapshotPendingDeletion().Length == 0 && LastPersonalHistoryCleanupSucceeded;
+            return SnapshotPendingDeletion().Length == 0 && _historyResults.LastShutdown;
         }
         catch (Exception ex)
         {

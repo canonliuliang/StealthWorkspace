@@ -81,6 +81,50 @@ internal static class BrowserProfileSafetyTests
         await BrowserAccountDirectory.RemoveForReplacementAsync(root,changedIdentity);
         await BrowserAccountDirectory.RemoveForReplacementAsync(other,identity);
         await CheckLegacyIdentityAsync(testRoot,report);
+        await CheckEntryDeadlineAsync(report);
+    }
+
+    private static async Task CheckEntryDeadlineAsync(Action<bool,string,string> report)
+    {
+        var gate = new BrowserEntryHistoryGate();
+        var delayed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int requests = 0, allowed = 0;
+        Task First() { requests++; return delayed.Task; }
+        async Task<bool> WasHeldAsync()
+        {
+            try
+            {
+                await gate.WaitAsync(11,First,TimeSpan.FromMilliseconds(25));
+                allowed++;
+                return false;
+            }
+            catch (BrowserHistoryUnavailableException ex) { return ex.InnerException is TimeoutException; }
+        }
+        bool first = await WasHeldAsync();
+        Task? native = gate.Current;
+        bool retry = await WasHeldAsync();
+        report(first && retry && allowed == 0 && requests == 1 && ReferenceEquals(native,gate.Current) && !native!.IsCompleted,
+            "A stalled first navigation reaches a bounded error and retries without submitting a second clear or opening a page", "");
+        var other = new BrowserEntryHistoryGate();
+        await other.WaitAsync(20,() => Task.CompletedTask,TimeSpan.FromSeconds(2));
+        Task same = gate.WaitAsync(11,First,TimeSpan.FromSeconds(3));
+        int newCalls = 0;
+        Task next = gate.WaitAsync(12,() => { newCalls++; return Task.CompletedTask; },TimeSpan.FromSeconds(3));
+        Task exit = gate.WaitForDrainAsync();
+        bool held = !same.IsCompleted && !next.IsCompleted && !exit.IsCompleted && newCalls == 0 && !gate.Current!.IsCompleted;
+        delayed.SetResult();
+        await Task.WhenAll(same,next,exit);
+        report(held && requests == 1 && newCalls == 1 && gate.Current!.IsCompletedSuccessfully,
+            "Another environment proceeds while a recovered writer and its shutdown guard await the previous native operation", "");
+        bool failed = false;
+        try { await gate.WaitAsync(13,() => Task.FromException(new IOException()),TimeSpan.FromSeconds(2)); }
+        catch (BrowserHistoryUnavailableException ex) { failed = ex.InnerException is IOException; }
+        await gate.WaitAsync(13,() => { newCalls++; return Task.CompletedTask; },TimeSpan.FromSeconds(2));
+        report(failed && newCalls == 2, "A terminal native failure allows exactly one fresh cleanup on retry", "");
+        var status = new BrowserProfileManager.HistoryResults();
+        status.RecordShutdown(personal:true,success:false);
+        status.RecordShutdown(personal:false,success:true);
+        report(status.LastShutdown && !status.LastPersonal, "A successful decoy exit is reported independently of an earlier unconfirmed personal cleanup", "");
     }
 
     private static async Task CheckLegacyIdentityAsync(string testRoot, Action<bool,string,string> report)

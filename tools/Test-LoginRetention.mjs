@@ -22,11 +22,31 @@ const runId = randomUUID().replaceAll('-', '');
 const logs = [];
 function report(message) { logs.push(message); console.log(message); }
 const tags = { '127.0.0.1': 'A', localhost: 'B' };
+const testCache = options.includes('--exercise-crash');
+let assetGets = 0;
+const observations = [];
+let currentPhase;
 
 function handler(req, res) {
   const host = req.headers.host?.split(':')[0];
-  const match = req.url?.match(/^\/([0-9a-f]{32})\/(login|read|logout|who)(?:(?:\/[a-z]+)?\/[0-9a-f]{32})?$/);
-  if (req.method !== 'GET' || !Object.hasOwn(tags, host) || match?.[1] !== runId) { res.writeHead(404).end(); return; }
+  if (req.method !== 'GET' || !Object.hasOwn(tags, host) || !req.url?.startsWith('/' + runId + '/')) { res.writeHead(404).end(); return; }
+  if (testCache && req.url === '/' + runId + '/asset' && tags[host] === 'A') {
+    res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'public, max-age=86400, immutable' });
+    res.end('asset-' + runId + '-' + ++assetGets);
+    return;
+  }
+  if (testCache && req.url === '/' + runId + '/asset-count' && tags[host] === 'A') {
+    res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end(String(assetGets));
+    return;
+  }
+  const receipt = req.url.match(/^\/[0-9a-f]{32}\/storage-check\/([a-z]+)\/(login|read|logout)\/(present|absent)\/(none|[0-9]+-[0-9]+-[0-9]+)$/);
+  if (testCache && receipt && receipt[1] === currentPhase) {
+    observations.push({ site: tags[host], phase: receipt[1], op: receipt[2], offline: receipt[3], counts: receipt[4], serverGets: assetGets });
+    res.writeHead(204, { 'Cache-Control': 'no-store' }).end();
+    return;
+  }
+  const match = req.url.match(/^\/([0-9a-f]{32})\/(login|read|logout|who)(?:(?:\/([a-z]+))?\/[0-9a-f]{32})?$/);
+  if (match?.[1] !== runId) { res.writeHead(404).end(); return; }
   const site = tags[host], op = match[2], secret = runId + site;
   res.setHeader('Cache-Control', 'no-store');
   if (op === 'who') {
@@ -42,10 +62,10 @@ function handler(req, res) {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.end('<!doctype html><html><meta charset=utf-8><title>Membership fixture ' + site +
     '</title><main>Local membership fixture</main><script>(' + fixturePage.toString() + ')(' +
-    [runId, site, op].map(v => JSON.stringify(v)).join(',') + ')</script></html>');
+    [runId, site, op, match[3] ?? currentPhase, testCache].map(v => JSON.stringify(v)).join(',') + ')</script></html>');
 }
 
-async function fixturePage(id, site, action) {
+async function fixturePage(id, site, action, phase, checkCache) {
   let step = 'localStorage';
   try {
     const value = id + site;
@@ -73,6 +93,33 @@ async function fixturePage(id, site, action) {
           tx.onabort = tx.onerror = () => reject(tx.error);
         });
       } finally { db.close(); }
+    }
+    if (checkCache) {
+      step = 'CacheStorage';
+      const name = 'offline-membership-' + id;
+      const key = '/' + id + '/saved-offline-page';
+      if (write) await (await caches.open(name)).put(key, new Response(value));
+      const cached = await caches.match(key, { cacheName: name });
+      const hasOffline = !!cached && await cached.text() === value;
+      if (hasOffline !== (saved === value)) throw Error('CacheStorage and expected site data disagree.');
+      let counts = 'none';
+      // Seed runs this after its lock/unlock. Crash is the next fresh app
+      // process, before the controller requests an abrupt exit.
+      if (site === 'A' && action === 'read' && (phase === 'seed' || phase === 'crash')) {
+        step = 'ordinary HTTP GET reuse';
+        const count = async () => Number(await (await fetch('/' + id + '/asset-count', { cache: 'no-store' })).text());
+        const url = '/' + id + '/asset';
+        const before = await count();
+        const first = await (await fetch(url)).text();
+        const afterFirst = await count();
+        const second = await (await fetch(url)).text();
+        const afterSecond = await count();
+        counts = [before, afterFirst, afterSecond].join('-');
+        if (first !== second || !first.startsWith('asset-' + id + '-') || afterFirst !== before + 1 || afterSecond !== afterFirst)
+          throw Error('Immutable asset GET counts ' + counts + '.');
+      }
+      const receipt = await fetch('/' + id + '/storage-check/' + phase + '/' + action + '/' + (hasOffline ? 'present' : 'absent') + '/' + counts, { cache: 'no-store' });
+      if (!receipt.ok) throw Error('The local server did not acknowledge the cache observation.');
     }
     step = 'server session';
     const { authenticated } = await (await fetch('/' + id + '/who', { cache: 'no-store' })).json();
@@ -181,6 +228,7 @@ async function requireHistory(evidence, stage, expectation = 'clean', attempts =
 }
 
 async function run(phase) {
+  currentPhase = phase;
   const evidence = path.join(output, phase + '.txt');
   const child = spawn(executable, ['--ui-smoke', evidence, '--data-root', roots[phase === 'other' ? 'other' : 'main'],
     '--login-retention-test', phase, '--login-test-id', runId, '--login-test-port', String(port),
@@ -244,6 +292,20 @@ try {
     ['seed', ...(options.includes('--exercise-crash') ? ['crash', 'recover'] : []), ...(options.includes('--exercise-last-tab') ? ['lasttab'] : []),
     'logout', 'forget', 'decoy', 'other', 'verify', ...(options.includes('--exercise-clear-all') ? ['clearall', 'checkall'] : [])];
   for (const phase of phases) await run(phase);
+  if (testCache) {
+    const seed = observations.find(o => o.phase === 'seed' && o.site === 'A' && o.counts === '0-1-1');
+    const restart = observations.find(o => o.phase === 'crash' && o.site === 'A' && o.counts === '1-2-2');
+    if (!seed || !restart || seed.serverGets !== 1 || restart.serverGets !== 2 || assetGets !== 2)
+      throw Error('Expected positive HTTP cache reuse and a network GET after normal process exit.');
+    const stored = (phase, site, state) => observations.some(o => o.phase === phase && o.site === site && o.op === 'read' && o.offline === state);
+    for (const [phase, site, state] of [['crash','A','present'],['crash','B','present'],['forget','A','absent'],['forget','B','present']])
+      if (!stored(phase, site, state)) throw Error('Missing CacheStorage proof for ' + phase + ' ' + site + ' ' + state);
+    if (options.includes('--exercise-clear-all') && !['A','B'].every(site => stored('checkall',site,'absent')))
+      throw Error('CacheStorage remained after clear-all and restart.');
+    report('HTTP immutable resource, ordinary GETs: seed server counts 0→1→1; first app restart 1→2→2 (two total server requests).');
+    report('CacheStorage offline entries survived lock and process restart; single-site removal preserved B.' +
+      (options.includes('--exercise-clear-all') ? ' Both entries remained absent after all-site removal and another restart.' : ''));
+  }
   report(options.includes('--only-clear-all') ? 'PASS two-origin account and site data removal from a blank tab and after restart' :
     options.includes('--only-last-tab') ? 'PASS last website closed, native blank tab exited, and both site accounts survived restart' :
     'PASS complete cross-process login, logout, origin removal, isolation and history checks');
@@ -251,5 +313,6 @@ try {
   report('FAIL ' + e.message); process.exitCode = 1;
 } finally {
   server.close(); if (ipv6.listening) ipv6.close();
+  if (testCache) await fs.writeFile(path.join(output, 'cache-observations.json'), JSON.stringify({ assetGets, observations }, null, 2));
   await fs.writeFile(path.join(output, 'summary.txt'), logs.join('\n') + '\n');
 }

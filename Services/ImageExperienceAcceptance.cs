@@ -1,6 +1,9 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
+using System.Diagnostics;
+using System.Runtime.InteropServices.WindowsRuntime;
 using StealthWorkspace.Models;
 using StealthWorkspace.Pages;
 using Windows.Graphics.Imaging;
@@ -158,24 +161,48 @@ internal static class ImageExperienceAcceptance
             open(VaultService.Instance.VisibleItems.Single(i => i.OriginalFileName == name));
             var page = current()!;
             var view = (Image)page.FindName("ImageViewer");
-            int displayed = view.Source == null ? 0 : 1;
-            long registration = view.RegisterPropertyChangedCallback(Image.SourceProperty, (_, _) => { if (view.Source != null) displayed++; });
-            try
-            {
-                for (int i = 0; i < 150 && !page.IsImageReady; i++) await Task.Delay(20);
-                if (name.EndsWith(".gif", StringComparison.Ordinal))
-                    Require(view.Source is Microsoft.UI.Xaml.Media.Imaging.BitmapImage { IsAnimatedBitmap: true, IsPlaying: true }, "encrypted GIF is playing through WinUI");
-                else
-                {
-                    for (int i = 0; i < 200 && displayed < 6; i++) await Task.Delay(20);
-                    await Task.Delay(700);
-                    Require(displayed == 6 && page.MediaError == null, "encrypted WebP displays all three frames twice and stops");
-                }
-            }
-            finally { view.UnregisterPropertyChangedCallback(Image.SourceProperty, registration); }
+            for (int i = 0; i < 150 && !page.IsImageReady; i++) await Task.Delay(20);
+            if (name.EndsWith(".gif", StringComparison.Ordinal))
+                Require(view.Source is BitmapImage { IsAnimatedBitmap: true, IsPlaying: true }, "encrypted GIF is playing through WinUI");
+            else
+                await CheckWebpPixelsAsync(view, page);
             page.ReturnToGallery();
             await Task.Delay(100);
         }
+    }
+
+    private static async Task CheckWebpPixelsAsync(Image view, PlayerPage page)
+    {
+        var observed = new List<int>();
+        var clock = Stopwatch.StartNew();
+        TimeSpan lastChange = TimeSpan.Zero;
+        while (clock.Elapsed < TimeSpan.FromSeconds(6))
+        {
+            var capture = new RenderTargetBitmap();
+            await capture.RenderAsync(view, 24, 24);
+            byte[] pixels = (await capture.GetPixelsAsync()).ToArray();
+            if (capture.PixelWidth > 0 && capture.PixelHeight > 0 && pixels.Length == capture.PixelWidth * capture.PixelHeight * 4)
+            {
+                int Offset(double position) => 4 * ((int)(position * capture.PixelHeight) * capture.PixelWidth + (int)(position * capture.PixelWidth));
+                int reference = Offset(.8), center = Offset(5.5 / 12), corner = Offset(.8 / 12);
+                // All three frames have an opaque red reference. The second has
+                // a blue center; the third has a small transparent top-left patch.
+                if (pixels[reference + 2] > 96 && pixels[reference + 2] > pixels[reference] * 2)
+                {
+                    int frame = pixels[center] > pixels[center + 2] ? 2 : pixels[corner + 3] < pixels[reference + 3] / 2 ? 3 : 1;
+                    if (observed.Count == 0 || observed[^1] != frame)
+                    {
+                        observed.Add(frame);
+                        lastChange = clock.Elapsed;
+                    }
+                }
+            }
+            if (observed.Count >= 6 && clock.Elapsed - lastChange >= TimeSpan.FromMilliseconds(850)) break;
+            await Task.Delay(15);
+        }
+        SmokeTest.Report("animated WebP rendered pixel sequence: " + string.Join(",", observed));
+        Require(observed.SequenceEqual(new[] { 1, 2, 3, 1, 2, 3 }) && clock.Elapsed - lastChange >= TimeSpan.FromMilliseconds(850) &&
+            page.MediaError == null, "encrypted WebP displays all three frames twice and stops");
     }
 
     private static void Require(bool condition, string message)
