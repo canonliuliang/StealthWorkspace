@@ -1,5 +1,46 @@
 # 验证范围
 
+## R16.1 第二次预览维护更新
+
+**2026-11-21 08:40:13 UTC** 公开 Windows ARM64 和 x64 未签名便携预览包。维护标签指向合并提交 `f079ca2dc9dd64fc292350c5876688fe1a16230f`。官网、个人站软件下载页、更新公告和 RSS 均已核对为本次版本。[GitHub Release](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview.2.1) · [维护 PR #10](https://github.com/canonliuliang/StealthWorkspace/pull/10) · [官网](https://canonliuliang.github.io/StealthWorkspace/) · [软件页](https://liu-digital-space.pages.dev/work/stealthworkspace/) · [公告](https://liu-digital-space.pages.dev/updates/#stealth-r16-1-preview-2-1) · [RSS](https://liu-digital-space.pages.dev/feed.xml)
+
+### 公开下载与校验
+
+| 从官网链接匿名完整下载的文件 | 字节 | SHA-256 |
+| --- | ---: | --- |
+| Windows ARM64 ZIP | 96,301,008 | `c697349abe39f4baca2f3eaeb6c0a163f6f671887585543764a72f0f84e2c256` |
+| Windows x64 ZIP | 98,678,691 | `0097927aab240d203d3f29d549f690113eab7d9854b9521019f445d97145ad3a` |
+| SHA256SUMS.txt | 232 | `40dd3aef7b225a5a7cdcbf890f232dd92815b1ceb401496caf27e10dc639a5a8` |
+
+两个 ZIP 均与标签流水线的原始包逐字节相同。解压后的 ARM64 547 个文件、x64 551 个文件逐个核对 SHA-256，通过检查。程序集版本包含本次标签的完整提交。原生 Windows ARM64 运行器通过 321 项、失败 0 项、跳过 1 项，原生 x64 运行器通过 319 项、失败 0 项、跳过 3 项。两台运行器均没有可用的 SUBST 映射，x64 测试卷另有两项缺少独立的 8.3 短文件名。[ARM64 构建日志](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44885663559/job/136790272805) · [x64 构建日志](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44885663559/job/136790273257) · [发布后官网部署](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44885962556)
+
+从公开页面重新下载、解压后，ARM64 在 79 和 158 字符的合成数据父目录各跑一轮核心检查，x64 在 77 和 158 字符的目录各跑一轮。四轮均为 320 项通过、0 项失败、2 项盘符映射检查因环境受限跳过。
+
+从公开 ARM64 包重新启动 11 个独立应用进程，另观测到 13 个 WebView2 浏览器进程，Windows 实测完整性等级均为 Low（RID 4096）。两个站点由服务器核对 HttpOnly 登录状态。正常锁定和重启后登录仍有效，普通 GET 的服务端计数首次为 0→1→1，重启后为 1→2→2，站点离线 CacheStorage 仍在。强制退出后的原生历史表保留了 2 条测试访问。恢复后的检查显示旧访问 0 条、新访问 2 条，再次正常退出后本批访问为 0 条。关闭最后一个网页、保留空标签再退出，也核对了磁盘访问记录为零。单站及全站数据清除、退出登录、临时空间和另一保险箱的隔离均用合成数据验证。[账号、缓存与历史的重跑方法](R161-DAILY-BROWSING.md)
+
+### 本机验收
+
+使用 Windows 11 ARM64 26300.9974、200% 显示缩放和 WebView2 157.0.4341.60。测试使用合成保险箱、回环网站与下载文件。x64 界面在这台机器上通过 Windows on Arm 仿真运行。
+
+- **Cookie 与网站账号。** 在两个合成网站分别写入登录 Cookie、localStorage、IndexedDB 和 CacheStorage，并由服务端核对登录。取消清理后两站均能登录。确认「仅清除本站 Cookie」只让当前站登出，确认「仅清除所有 Cookie」让两站登出。三种网站存储在这些操作后仍可读取。
+- **下载、菜单与结束会话。** 下载 4 MiB 文件，清空下载列表后从更多菜单打开下载文件夹，复制进保险箱并逐字节核对。从目录的原生关闭按钮返回后，再从工具栏下载列表打开同一目录，两次均能看到磁盘文件。普通权限和受限权限各完整执行一次。取消结束会话保留原有标签和网址，确认后只留一个可以继续打开网页的新标签，并完成历史、下载记录和临时缓存清理。常规权限下新 Edge InPrivate 窗口实际访问了测试网址。受限权限下验证了指引、取消和复制被拒后的全选重试，复制请求的内容及剪贴板历史、漫游选项由隔离写入端核对，未向个人系统剪贴板写入。
+- **后台标签。** 在真实 Windows 前台测试窗口，普通左键选择子页，Ctrl 单击和中键单击保留当前页。旧版在链接处理约 1 秒或中键按住约 1.15 秒时会抢走当前标签。修复后，慢速页面上的 Ctrl 单击、中键单击和长按中键都在后台打开。网页取消了中键动作后再按 Enter（包括鼠标刚放开的紧接按键）、普通单击、跳转到新文档或页面稍后自行打开窗口，也核对了实际选中的标签。
+- **隐私入口和图库。** 标题栏和地址栏的盾牌在原生浅色、深色窗口实拍，第三组在单个窗口预览 Windows 对比色资源，测试机未开启整机高对比度。两轮常规动效及一轮减少动效均完整通过下载通知中断重开、加密图片快速切换、锁定清理和删除至空图库。800 × 12000 长图的最后一次切换以阅读区域的实际像素核对。三轮均实际显示 WebP 的 1、2、3、1、2、3 帧，最终第三帧分别持续确认 2749、2547 和 2742 毫秒。专供原生截图观测的三帧时长是 900、1200 和 1500 毫秒，帧图像、混合方式和两次循环与旧夹具相同。
+- **应用自管深目录。** 在 Windows 长路径策略关闭时，上一公开包在 154 字符的隔离数据父目录有 5 项失败。相同深度的修复候选在 ARM64 及仿真 x64 都为 318 通过、0 失败、2 项盘符映射检查因环境受限而跳过。345 字符的密文路径实测完成导入、重新解锁、导出、删除和重置。人工占用刚复制的一个文件 110 毫秒，修复前连续 3 次旧库迁移失败，修复后 3 次都完成迁移并逐项核对 32 个文件及重置标志。长期占用仍会明确失败。
+
+**WebView2 网站数据库的限制。** 一次浏览回归使用 162 字符的诊断根，WebView2 实际用户数据目录达 197 字符，IndexedDB 建库失败。相同候选改为 96 字符的诊断根后全套浏览通过。普通安装在本机使用 96 字符的固定账户目录，其位置由 Windows LocalLow 和固定长度的保险箱标识决定。相同目录下，50 与 80 字符的合成回环主机能使用 IndexedDB，100 字符合成主机建库失败。同期 Cookie、localStorage、CacheStorage 均可用。使用扩展路径访问同一目录也未改变结果。此结果来自上述 Windows 与内核版本，实际网站发生率未知。保险箱备份不含网站账号目录。[安装与更新](INSTALL.md) · [隐私与数据边界](PRIVACY.md)
+
+### 启动与多标签负载
+
+在 4 个逻辑处理器、约 6 GiB 内存的 Parallels ARM 虚拟机上，对上一公开 ARM64 包和本次最终候选各预热一次，再交错运行 7 对。每次用全新合成资料，二进制文件缓存已预热。计时从操作系统创建进程到 WinUI 锁页根控件首次加载，浏览器内核和首个网页尚未启动。
+
+| 进程到锁页 | 中位数 | 最短–最长 |
+| --- | ---: | ---: |
+| 上一公开包 R16.1 第二次预览 | 841.2 ms | 733.6–855.4 ms |
+| 本次维护候选 | 848.6 ms | 544.3–855.1 ms |
+
+两组范围重叠，七对样本不足以支持启动提速结论。连续三分钟反复打开、关闭标签，共完成 12 轮，保留标签的页面状态和退出清理均通过。宿主私有内存采样峰值为 74.7 MiB，网页渲染进程另计。[启动测试工具](../tools/Measure-BrowserStartup.ps1)
+
 ## R16.1 第二次预览
 
 GitHub 于 **2026-11-21 06:29:31 UTC** 公开 Windows ARM64 和 x64 未签名便携预览包。标签 [`v2026.11.21-r16.1-preview.2`](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview.2) 指向 [`374789f`](https://github.com/canonliuliang/StealthWorkspace/commit/374789f8ce52951748051737cf41f497a578336f)，对应[功能与修复 PR #8](https://github.com/canonliuliang/StealthWorkspace/pull/8)。[标签构建与发布](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44875495179) · [main 双架构构建](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44875488460) · [发布后官网部署](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44875784778)
