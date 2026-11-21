@@ -520,7 +520,7 @@
         <!-- WebView2 Browser Control: Maximized Viewport Area -->
         <Grid Grid.Row="3">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <Grid x:Name="WebContentArea">>
+            <Grid x:Name="WebContentArea">
             <Grid x:Name="BrowserHost" />
             <ProgressBar x:Name="BrowserProgressBar" VerticalAlignment="Top" Height="2" Canvas.ZIndex="10"
                          IsHitTestVisible="False" IsIndeterminate="True" Visibility="Collapsed" AutomationProperties.Name="正在加载网页" />
