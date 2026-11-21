@@ -99,6 +99,9 @@ public static class Program
 
     internal static void ShowFatalStartupError()
     {
+        // Automated launch checks have a separate data root and a file report.
+        // A modal message here would keep a broken candidate alive during an update.
+        if (SmokeTest.Enabled) return;
         try
         {
             NativeMethods.MessageBoxW(

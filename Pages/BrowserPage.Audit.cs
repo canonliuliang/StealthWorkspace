@@ -19,6 +19,25 @@ public sealed partial class BrowserPage
         SmokeTest.Report($"audit: waiting for test-window activation, pid={Environment.ProcessId}");
         for (int i = 0; i < 300 && !BrowserZoomInput.IsOwnerForeground(MainWindow.CurrentHandle); i++) await Task.Delay(100);
         if (!BrowserZoomInput.IsOwnerForeground(MainWindow.CurrentHandle)) throw new InvalidOperationException("Audit window must be activated");
+        if (Environment.GetCommandLineArgs().Contains("--menu-actions-only"))
+        {
+            var selected = (BrowserTabControl)((TabViewItem)BrowserTabView.SelectedItem).Content;
+            await selected.CheckMenuActionsAuditAsync();
+            SmokeTest.Report("menu actions audit complete");
+            return;
+        }
+        if (Environment.GetCommandLineArgs().Contains("--downloads-only"))
+        {
+            await CheckDownloadLifetimeAsync();
+            SmokeTest.Report("download audit complete");
+            return;
+        }
+        await CheckNewTabPickerAsync();
+        if (Environment.GetCommandLineArgs().Contains("--new-tab-only"))
+        {
+            SmokeTest.Report("audit complete");
+            return;
+        }
         var firstItem = (TabViewItem)BrowserTabView.SelectedItem;
         var first = (BrowserTabControl)firstItem.Content;
         if (!await first.RunSmokeNavigationAsync(checkSleep: true)) throw new InvalidOperationException("Audit setup failed");
@@ -90,6 +109,36 @@ public sealed partial class BrowserPage
             "returning to pending page resumes it with unsaved form intact");
         await CloseTabAsync(item);
         await CloseTabAsync(foreground);
+    }
+
+    private async Task CheckNewTabPickerAsync()
+    {
+        // A normal new tab has no WebView. Capture exactly what this user sees
+        // before any fixture navigation, then exercise the flyout they opened.
+        await UiCapture.SaveAsync(this, "new-tab.png");
+        TabListFlyout.ShowAt(TabSearchButton);
+        try
+        {
+            await WaitAuditAsync(() => TabSearchContent.IsLoaded && TabSearchResults.Items.Count == 1);
+            var row = (Models.BrowserTabSearchItem)TabSearchResults.Items[0];
+            AuditRequire(row.CloseVisibility == Microsoft.UI.Xaml.Visibility.Collapsed,
+                "closing the sole empty tab is not offered as a no-op");
+            await Task.Delay(225);
+            await UiCapture.SaveAsync(TabSearchContent, "open-tabs.png");
+            TabSearchBox.Text = "no-match-for-synthetic-empty-tab";
+            await WaitAuditAsync(() => TabSearchResults.Items.Count == 0 &&
+                TabSearchEmpty.Visibility == Microsoft.UI.Xaml.Visibility.Visible);
+            TabSearchScope.SelectedItem = ClosedTabsSection;
+            TabSearchBox.Text = "";
+            await WaitAuditAsync(() => TabSearchEmpty.Text.Contains("本次会话"));
+            await UiCapture.SaveAsync(TabSearchContent, "recent-tabs-empty.png");
+            AuditRequire(TabSearchResults.Items.Count == 0, "tab picker shows its two empty states");
+        }
+        finally
+        {
+            TabListFlyout.Hide();
+            await WaitAuditAsync(() => !_tabSearchOpen);
+        }
     }
 
     private static void AuditRequire(bool passed, string description)
@@ -232,6 +281,7 @@ public sealed partial class BrowserPage
         var blank = (BrowserTabControl)blankItem.Content;
         AuditRequire(await blank.OpenDownloadsAuditAsync() && !blank.HasBrowserControl,
             "new blank tab shows shared downloads without starting a WebView");
+        await blank.CheckDownloadShortcutAuditAsync();
         AuditRequire(blank.HasPendingDownloadBadge, "new tab displays pending count for the closed tab's download");
         record.TogglePauseResume();
         await WaitAuditAsync(() => record.CanResume);
@@ -242,6 +292,7 @@ public sealed partial class BrowserPage
         byte[] bytes = await File.ReadAllBytesAsync(path);
         AuditRequire(bytes.Length == 4194304 && bytes.All(b => b == 0x5A), "closed-tab download completes with exact content and releases controller");
         await blank.NavigateAuditAsync(fixture.Address + "/page");
+        await blank.CheckWebDownloadShortcutAuditAsync();
         var first = await blank.BeginDownloadAuditAsync(fixture.Address + "/download-slow?first");
         var survivor = await blank.BeginDownloadAuditAsync(fixture.Address + "/download-slow?second");
         var cancelled = BrowserDownloads.Items.Single(entry => entry.FilePath == first.ResultFilePath);

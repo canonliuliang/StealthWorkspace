@@ -29,31 +29,43 @@ if ((Get-FileHash -LiteralPath $shortcutIcon -Algorithm SHA256).Hash -ne $source
     throw 'Shortcut icon copy hash does not match the published icon.'
 }
 $shell = New-Object -ComObject WScript.Shell
-foreach ($folder in @([Environment]::GetFolderPath('DesktopDirectory'), [Environment]::GetFolderPath('Programs'))) {
-    $linkPath = Join-Path $folder 'Stealth 私密浏览器.lnk'
+# Construct Chinese labels from code points so Windows PowerShell 5.1 parses identically
+# regardless of file BOM or active ANSI code page (CP936 / CP1252 / UTF-8).
+$brandLabel = 'Stealth ' + (-join [char[]]@(0x79C1, 0x5BC6, 0x6D4F, 0x89C8, 0x5668))
+$mainShortcutName = $brandLabel + '.lnk'
+$mainShortcutDesc = (-join [char[]]@(0x6253, 0x5F00, 0x0020)) + $brandLabel + (-join [char[]]@(0x4E0E, 0x52A0, 0x5BC6, 0x5A92, 0x4F53, 0x5DE5, 0x4F5C, 0x53F0))
+$quickShortcutName = (-join [char[]]@(0x6253, 0x5F00, 0x79C1, 0x5BC6, 0x6D4F, 0x89C8, 0x5668)) + '.lnk'
+$quickShortcutDesc = (-join [char[]]@(0x76F4, 0x63A5, 0x6253, 0x5F00, 0x0020)) + $brandLabel
+
+$shortcutChanges = @{}
+function Save-AppLink([string]$linkPath, [string]$description) {
+    $shortcutChanges[$linkPath] = if (Test-Path -LiteralPath $linkPath) { 0x2000 } else { 0x0002 }
     $link = $shell.CreateShortcut($linkPath)
     $link.TargetPath = $executable
     $link.WorkingDirectory = $publishRoot
+    $link.Arguments = ''
     $link.IconLocation = $shortcutIcon + ',0'
-    $link.Description = '打开 Stealth 私密浏览器与加密媒体工作台'
+    $link.Description = $description
     $link.WindowStyle = 1
     $link.Save()
-    if ($shell.CreateShortcut($linkPath).TargetPath -ne $executable) { throw "Shortcut verification failed: $linkPath" }
+    $attributes = [IO.File]::GetAttributes($linkPath)
+    if ($attributes -band [IO.FileAttributes]::Hidden) {
+        [IO.File]::SetAttributes($linkPath, ($attributes -band (-bnot [IO.FileAttributes]::Hidden)))
+    }
+    $saved = $shell.CreateShortcut($linkPath)
+    if ($saved.TargetPath -ne $executable -or $saved.WorkingDirectory -ne $publishRoot -or $saved.Arguments -or
+        ($saved.IconLocation -replace ',\s*0$','') -ne $shortcutIcon) { throw "Shortcut verification failed: $linkPath" }
     Write-Output $linkPath
+}
+foreach ($folder in @([Environment]::GetFolderPath('DesktopDirectory'), [Environment]::GetFolderPath('Programs'))) {
+    Save-AppLink (Join-Path $folder $mainShortcutName) $mainShortcutDesc
 }
 
 # The old batch launcher looks like a blank document and opens a console. Keep a
 # familiar, icon-bearing entry that launches the app directly instead.
 $desktop = [Environment]::GetFolderPath('DesktopDirectory')
-$quickLinkPath = Join-Path $desktop '打开私密浏览器.lnk'
-$quickLink = $shell.CreateShortcut($quickLinkPath)
-$quickLink.TargetPath = $executable
-$quickLink.WorkingDirectory = $publishRoot
-$quickLink.IconLocation = $shortcutIcon + ',0'
-$quickLink.Description = '直接打开 Stealth 私密浏览器'
-$quickLink.WindowStyle = 1
-$quickLink.Save()
-Write-Output $quickLinkPath
+$quickLinkPath = Join-Path $desktop $quickShortcutName
+Save-AppLink $quickLinkPath $quickShortcutDesc
 
 # Notify only these shortcuts; do not delete the global icon cache or restart Explorer.
 if (-not ('StealthShortcutNotify' -as [type])) {
@@ -66,7 +78,6 @@ public static class StealthShortcutNotify {
 }
 '@
 }
-foreach ($path in @((Join-Path $desktop 'Stealth 私密浏览器.lnk'), $quickLinkPath,
-    (Join-Path ([Environment]::GetFolderPath('Programs')) 'Stealth 私密浏览器.lnk'))) {
-    [StealthShortcutNotify]::SHChangeNotify(0x2000, 0x1005, $path, [IntPtr]::Zero)
+foreach ($path in $shortcutChanges.Keys) {
+    [StealthShortcutNotify]::SHChangeNotify($shortcutChanges[$path], 0x1005, $path, [IntPtr]::Zero)
 }

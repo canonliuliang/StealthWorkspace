@@ -21,13 +21,26 @@ internal static class WorkspaceDialogs
     internal static async Task<ContentDialogResult> ShowAsync(ContentDialog dialog)
     {
         if (MainWindow.Current?.IsPrivacyCoverVisible == true) return ContentDialogResult.None;
+        if (Active.Any(p => !p.Dismissed)) return ContentDialogResult.None;
+
+        if (dialog.RequestedTheme == Microsoft.UI.Xaml.ElementTheme.Default &&
+            dialog.XamlRoot?.Content is Microsoft.UI.Xaml.FrameworkElement rootElement &&
+            rootElement.RequestedTheme != Microsoft.UI.Xaml.ElementTheme.Default)
+        {
+            dialog.RequestedTheme = rootElement.RequestedTheme;
+        }
+
         var presentation = new Presentation(dialog);
-        var operation = dialog.ShowAsync();
         Active.Add(presentation);
         try
         {
-            var result = await operation;
+            var result = await dialog.ShowAsync();
             return presentation.Dismissed ? ContentDialogResult.None : result;
+        }
+        catch (System.Runtime.InteropServices.COMException ex)
+        {
+            AppLog.Warn("显示工作区对话框冲突，已忽略重复弹窗", ex);
+            return ContentDialogResult.None;
         }
         finally
         {

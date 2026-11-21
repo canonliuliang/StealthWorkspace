@@ -1,6 +1,9 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
+using System.Diagnostics;
+using System.Runtime.InteropServices.WindowsRuntime;
 using StealthWorkspace.Models;
 using StealthWorkspace.Pages;
 using Windows.Graphics.Imaging;
@@ -29,6 +32,7 @@ internal static class ImageExperienceAcceptance
         var page = current() ?? throw new InvalidOperationException("Viewer not opened");
         for (int i = 0; i < 100 && !page.IsImageReady && page.MediaError == null; i++) await Task.Delay(50);
         Require(page.IsImageReady && page.ImageCount == 4 && page.NavigationEnabled == (false, true), "first image ready; previous disabled");
+        Require(!page.HasPlaybackElement, "viewing an image leaves the native playback control uncreated");
         await page.SelectMediaAsync(1);
         await Task.Delay(220);
         byte[] expectedPixels = await page.CaptureImageViewportPixelsAsync();
@@ -79,8 +83,10 @@ internal static class ImageExperienceAcceptance
         Require(page.IsImageReady && page.CurrentMediaId == items[2].Id, "sidebar reopens the last item in this unlock session");
         page.ReturnToGallery();
         await Task.Delay(200);
+        await CheckAnimationsAsync(root, currentGallery()!, open, current);
         open(items[0]);
         page = current()!;
+        for (int i = 0; i < 100 && !page.IsLoaded; i++) await Task.Delay(10);
         Task pending = page.SelectMediaAsync(2);
         VaultService.Instance.Lock();
         await pending;
@@ -89,10 +95,36 @@ internal static class ImageExperienceAcceptance
         using var unlock = await VaultService.Instance.VerifyPasswordAsync("SmokeTest#123");
         Require(VaultService.Instance.ApplyUnlock(unlock), "isolated vault unlocked again");
         openFromSidebar();
-        Require(current() is { CurrentMediaId: null, IsImageReady: false }, "a new unlock session opens an empty player");
+        Require(current() is { CurrentMediaId: null, IsImageReady: false, HasPlaybackElement: false }, "a new unlock session opens an empty player without a native playback control");
         current()!.ReturnToGallery();
         var deleteGallery = currentGallery()!;
         for (int i = 0; i < 100 && !deleteGallery.IsLoaded; i++) await Task.Delay(50);
+        if (Environment.GetCommandLineArgs().Contains("--gallery-navigation-stress"))
+        {
+            for (int i = 0; i < 24; i++)
+            {
+                MainWindow.Current!.LockWorkspace();
+                using var verified = await VaultService.Instance.VerifyPasswordAsync("SmokeTest#123");
+                if (!VaultService.Instance.ApplyUnlock(verified)) throw new InvalidOperationException("Stress fixture could not unlock");
+                MainWindow.Current!.OnUnlocked();
+                openFromSidebar();
+                var empty = current() ?? throw new InvalidOperationException("Stress fixture player not opened");
+                if (empty.HasPlaybackElement) throw new InvalidOperationException("Empty player created a native playback control");
+                if (i % 2 == 0) empty.ReturnToGallery();
+                else
+                {
+                    for (int turn = 0; turn < 100 && !empty.IsLoaded; turn++) await Task.Delay(10);
+                    var button = (Button)empty.FindName("OpenLibraryButton");
+                    if (!empty.IsLoaded || !button.IsLoaded || empty.HasPlaybackElement) throw new InvalidOperationException("Loaded empty player did not provide a gallery button without a native playback control");
+                    MediaAcceptance.Invoke(button);
+                }
+                deleteGallery = currentGallery() ?? throw new InvalidOperationException("Stress fixture gallery not restored");
+                for (int turn = 0; turn < 100 && !deleteGallery.IsLoaded; turn++) await Task.Delay(10);
+                if (!deleteGallery.IsLoaded) throw new InvalidOperationException("Gallery did not load");
+                await Task.Delay(25);
+                SmokeTest.Report($"gallery navigation stress: {i+1}/24; loaded button={i%2!=0}");
+            }
+        }
         deleteGallery.SetSmokeFilter("switch-", 2, sort: 1);
         deleteGallery.FlushPendingSearch();
         var remaining = deleteGallery.DisplayedItems.ToList();
@@ -135,6 +167,70 @@ internal static class ImageExperienceAcceptance
         for (int i = 0; i < VisualTreeHelper.GetChildrenCount(element); i++)
             if (FindConfirm(VisualTreeHelper.GetChild(element, i), label) is { } child) return child;
         return null;
+    }
+
+    private static async Task CheckAnimationsAsync(string root, VaultPage gallery, Action<VaultItem> open, Func<PlayerPage?> current)
+    {
+        // Synthetic 8x8 GIF; 12x12 WebP with partial blue and transparent frames,
+        // durations 120/230/340 ms and a finite loop count of two.
+        foreach (var (name, data) in new[]
+        {
+            ("motion.gif", "R0lGODlhCAAIAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQAMAAAACwAAAAACAAIAAAIDwABCBxIsKDBgwgTKkwYEAAh+QQBMAABACwAAAAACAAIAIEAAP8AAAAAAAAAAAAIDwABCBxIsKDBgwgTKkwYEAA7"),
+            ("motion.webp", "UklGRrwAAABXRUJQVlA4WAoAAAASAAAACwAACwAAQU5JTQYAAAAAAAAAAgBBTk1GKAAAAAAAAAAAAAsAAAsAAHgAAAJWUDhMDwAAAC8LwAIABxD9j/4HIqL/AQBBTk1GKAAAAAIAAAIAAAIAAAIAAOYAAABWUDhMDwAAAC8CgAAABxDR//4HIqL/AQBBTk1GMAAAAAAAAAAAAAYAAAYAAFQBAAJWUDhMFwAAAC8GgAEQDxDzH/MfDIUAAqBIvInof8D/AA==")
+        })
+        {
+            string path = Path.Combine(root, name);
+            await File.WriteAllBytesAsync(path, Convert.FromBase64String(data));
+        }
+        var imported = await gallery.ImportFilesAsync([Path.Combine(root, "motion.gif"), Path.Combine(root, "motion.webp")]);
+        Require(imported.Imported == 2, "two animated fixtures imported into the encrypted vault");
+        foreach (string name in new[] { "motion.gif", "motion.webp" })
+        {
+            open(VaultService.Instance.VisibleItems.Single(i => i.OriginalFileName == name));
+            var page = current()!;
+            var view = (Image)page.FindName("ImageViewer");
+            for (int i = 0; i < 150 && !page.IsImageReady; i++) await Task.Delay(20);
+            if (name.EndsWith(".gif", StringComparison.Ordinal))
+                Require(view.Source is BitmapImage { IsAnimatedBitmap: true, IsPlaying: true }, "encrypted GIF is playing through WinUI");
+            else
+                await CheckWebpPixelsAsync(view, page);
+            page.ReturnToGallery();
+            await Task.Delay(100);
+        }
+    }
+
+    private static async Task CheckWebpPixelsAsync(Image view, PlayerPage page)
+    {
+        var observed = new List<int>();
+        var clock = Stopwatch.StartNew();
+        TimeSpan lastChange = TimeSpan.Zero;
+        while (clock.Elapsed < TimeSpan.FromSeconds(6))
+        {
+            var capture = new RenderTargetBitmap();
+            await capture.RenderAsync(view, 24, 24);
+            byte[] pixels = (await capture.GetPixelsAsync()).ToArray();
+            if (capture.PixelWidth > 0 && capture.PixelHeight > 0 && pixels.Length == capture.PixelWidth * capture.PixelHeight * 4)
+            {
+                int Offset(double position) => 4 * ((int)(position * capture.PixelHeight) * capture.PixelWidth + (int)(position * capture.PixelWidth));
+                int reference = Offset(.8), center = Offset(5.5 / 12), corner = Offset(.8 / 12);
+                // All three frames have an opaque red reference. The second has
+                // a blue center; the third has a small transparent top-left patch.
+                if (pixels[reference + 2] > 96 && pixels[reference + 2] > pixels[reference] * 2)
+                {
+                    int frame = pixels[center] > pixels[center + 2] ? 2 : pixels[corner + 3] < pixels[reference + 3] / 2 ? 3 : 1;
+                    if (observed.Count == 0 || observed[^1] != frame)
+                    {
+                        observed.Add(frame);
+                        lastChange = clock.Elapsed;
+                    }
+                }
+            }
+            if (observed.Count >= 6 && clock.Elapsed - lastChange >= TimeSpan.FromMilliseconds(850)) break;
+            await Task.Delay(15);
+        }
+        SmokeTest.Report("animated WebP rendered pixel sequence: " + string.Join(",", observed));
+        Require(observed.SequenceEqual(new[] { 1, 2, 3, 1, 2, 3 }) && clock.Elapsed - lastChange >= TimeSpan.FromMilliseconds(850) &&
+            page.MediaError == null, "encrypted WebP displays all three frames twice and stops");
     }
 
     private static void Require(bool condition, string message)

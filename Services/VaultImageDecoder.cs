@@ -12,7 +12,7 @@ internal static class VaultImageDecoder
     internal static async Task<DecodedImage> DecodeAsync(VaultItem item, uint maxEdge, CancellationToken cancellationToken,
         ulong maxPixels = 16 * 1024 * 1024)
     {
-        using SoftwareBitmap bitmap = await Task.Run(async () =>
+        SoftwareBitmap bitmap = await Task.Run(async () =>
         {
             cancellationToken.ThrowIfCancellationRequested();
             using Stream decrypted = VaultService.Instance.OpenDecryptedStream(item);
@@ -31,19 +31,40 @@ internal static class VaultImageDecoder
                 .AsTask(cancellationToken);
         }, cancellationToken);
 
-        cancellationToken.ThrowIfCancellationRequested();
+        int width = bitmap.PixelWidth, height = bitmap.PixelHeight;
+        return new(await CreateSourceAsync(bitmap, cancellationToken), width, height);
+    }
+
+    // WinUI retains this exact SoftwareBitmap so it can later render into a
+    // software surface (for example, after a GPU reset or a RenderTargetBitmap).
+    // Accept ownership: once handed to XAML, only the source may close its pixels.
+    internal static async Task<SoftwareBitmapSource> CreateSourceAsync(SoftwareBitmap bitmap, CancellationToken token)
+    {
         var source = new SoftwareBitmapSource();
         try
         {
-            await source.SetBitmapAsync(bitmap).AsTask(cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
-            return new DecodedImage(source, bitmap.PixelWidth, bitmap.PixelHeight);
+            await SetPixelsAsync(source, bitmap, token);
+            token.ThrowIfCancellationRequested();
+            return source;
         }
         catch
         {
             source.Dispose();
             throw;
         }
+    }
+
+    internal static async Task SetPixelsAsync(SoftwareBitmapSource source, SoftwareBitmap bitmap, CancellationToken token)
+    {
+        bool handedToXaml = false;
+        try
+        {
+            token.ThrowIfCancellationRequested();
+            var upload = source.SetBitmapAsync(bitmap);
+            handedToXaml = true;
+            await upload;
+        }
+        finally { if (!handedToXaml) bitmap.Dispose(); }
     }
 
     internal static (uint Width, uint Height) GetDecodeSize(uint width, uint height, uint maxEdge, ulong maxPixels)

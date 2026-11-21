@@ -382,15 +382,18 @@ public sealed partial class BrowserPage : Page
         if (BrowserTabControl.LiveTabCount != 1 || survivingClosed > 2) return false;
         string? oldProfile = BrowserProfileManager.ActiveSessionDirectory;
 
-        bool cleared = await BurnAllTabsAsync() && oldProfile != null && !System.IO.Directory.Exists(oldProfile);
-        SmokeTest.Report("browser: old session removed=" + cleared);
+        bool personal = SettingsService.Instance.PersonalBookmarkSession != null;
+        bool cleared = await BurnAllTabsAsync() && oldProfile != null &&
+            (personal ? Directory.Exists(oldProfile) && BrowserProfileManager.LastPersonalHistoryCleanupSucceeded : !Directory.Exists(oldProfile))
+            && BrowserSessionHistory.RecentlyClosed.Count == 0;
+        SmokeTest.Report("browser: session history cleanup completed=" + cleared + "; retained personal account directory=" + personal);
         BrowserTabControl? fresh = (BrowserTabView.SelectedItem as TabViewItem)?.Content as BrowserTabControl;
         if (!cleared || fresh == null || fresh.HasBrowserControl || !await fresh.RunSmokeNavigationAsync()) return false;
 
-        bool rotated = BrowserProfileManager.ActiveSessionDirectory is { } current &&
-            !string.Equals(current, oldProfile, StringComparison.OrdinalIgnoreCase) && !await fresh.HasSmokeCookieAsync();
-        SmokeTest.Report("browser: local page loaded in a new session=" + rotated);
-        return rotated && await CheckTabManagementSmokeAsync();
+        bool correctScope = BrowserProfileManager.ActiveSessionDirectory is { } current &&
+            string.Equals(current, oldProfile, StringComparison.OrdinalIgnoreCase) == personal && await fresh.HasSmokeCookieAsync() == personal;
+        SmokeTest.Report("browser: fresh tabs and expected persistent test cookie scope=" + correctScope);
+        return correctScope && await CheckTabManagementSmokeAsync();
     }
 
     internal BrowserTabControl? SmokeSelectedTab => _selectedTab;
@@ -574,7 +577,9 @@ public sealed partial class BrowserPage : Page
             else
             {
                 SessionNotice.Title = "旧会话数据尚未完全清除";
-                SessionNotice.Message = "新的标签页将使用新会话。可再次结束会话重试，或在退出时重试。";
+                SessionNotice.Message = VaultService.Instance.IsDecoyMode
+                    ? "部分临时文件仍在使用。可以稍后重试。"
+                    : "浏览记录未确认清理完成。下次打开网页前会再次清理；网站登录会保留。";
                 SessionNotice.Severity = InfoBarSeverity.Warning;
                 UiMotion.Open(SessionNotice);
             }
@@ -625,7 +630,11 @@ public sealed partial class BrowserPage : Page
         CreateNewTab();
     }
 
-    private async void BurnAllTabs_Click(object sender, RoutedEventArgs e) => await RequestEndSessionAsync();
+    private async void BurnAllTabs_Click(object sender, RoutedEventArgs e)
+    {
+        if (_tabSearchOpen) CloseTabSearch();
+        await RequestEndSessionAsync();
+    }
 
     private async Task RequestEndSessionAsync()
     {
@@ -640,7 +649,9 @@ public sealed partial class BrowserPage : Page
                 var dialog = new ContentDialog
                 {
                     XamlRoot = XamlRoot, Title = "结束本次浏览会话？",
-                    Content = "将关闭全部标签页，清除本次浏览记录、最近关闭的标签及网站登录状态。未提交的表单内容可能丢失。" +
+                    Content = (SettingsService.Instance.ActiveBookmarkSession?.Temporary == true
+                        ? "将关闭所有临时网页并清除浏览记录和登录状态。"
+                        : "将关闭所有标签并清除本次浏览记录，网站登录会保留。未提交的表单会丢失。") +
                         (pending > 0 ? $"\n{pending} 个未完成下载也将取消。" : ""),
                     PrimaryButtonText = "结束会话", CloseButtonText = "继续浏览", DefaultButton = ContentDialogButton.Close
                 };
@@ -720,6 +731,13 @@ public sealed partial class BrowserPage : Page
     {
         if (_selectedTab == null) return;
         _selectedTab.OpenSessionHistory();
+        args.Handled = true;
+    }
+
+    private void DownloadsAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (_selectedTab == null) return;
+        _selectedTab.OpenDownloadsFromShortcut();
         args.Handled = true;
     }
 

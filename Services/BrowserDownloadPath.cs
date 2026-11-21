@@ -8,6 +8,10 @@ internal sealed class BrowserDownloadPath : IDisposable
     internal string FilePath { get; }
     private BrowserDownloadPath(string path) => FilePath = path;
 
+    internal static bool IsCurrentWorkspace(SettingsService.BookmarkSession? workspace) =>
+        workspace != null && VaultService.Instance.IsUnlocked && workspace.Temporary == VaultService.Instance.IsDecoyMode &&
+        ReferenceEquals(workspace, SettingsService.Instance.ActiveBookmarkSession);
+
     internal static BrowserDownloadPath Reserve(string directory, string suggestedName)
     {
         directory = Path.GetFullPath(directory);
@@ -32,8 +36,10 @@ internal sealed class BrowserDownloadPath : IDisposable
         foreach (char direction in "\u202A\u202B\u202C\u202D\u202E\u2066\u2067\u2068\u2069") name = name.Replace(direction, '_');
         name = name.Trim().TrimEnd('.', ' ');
         if (string.IsNullOrEmpty(name)) name = "download.bin";
-        string extension = Truncate(Path.GetExtension(name), 20);
-        string stem = Truncate(Path.GetFileNameWithoutExtension(name), 120 - extension.Length);
+        string extension = Truncate(Path.GetExtension(name), 20).TrimEnd('.', ' ');
+        if (extension.Length <= 1) extension = string.Empty;
+        string stem = Truncate(Path.GetFileNameWithoutExtension(name), 120 - extension.Length).Trim().TrimEnd('.', ' ');
+        if (string.IsNullOrEmpty(stem)) stem = "download";
         string device = stem.Split('.')[0].TrimEnd(' ').ToUpperInvariant();
         if (device is "CON" or "PRN" or "AUX" or "NUL" or "CONIN$" or "CONOUT$" ||
             (device.Length == 4 && device[..3] is ("COM" or "LPT") && device[3] is (>= '1' and <= '9') or '¹' or '²' or '³'))

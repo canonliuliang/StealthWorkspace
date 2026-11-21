@@ -15,10 +15,11 @@ if ($output.StartsWith($repo.TrimEnd('\') + '\', [StringComparison]::OrdinalIgno
 New-Item -ItemType Directory -Path $output | Out-Null
 # Compile the production settings and identity sources with their real serializer,
 # DPAPI and File.Replace. Only logging and the unused default path are substituted.
-$hashes = foreach ($name in @('SettingsService', 'BrowserAddress')) {
+$hashes = foreach ($name in @('SettingsService', 'BrowserAddress', 'BookmarkFolder')) {
     foreach ($kind in @('Baseline', 'Candidate')) {
         $sourceRoot = if ($kind -eq 'Baseline') { $baseline } else { $repo }
         $file = Join-Path $sourceRoot "Services\$name.cs"
+        if ($name -eq 'BookmarkFolder' -and !(Test-Path -LiteralPath $file)) { continue }
         $code = [IO.File]::ReadAllText($file).Replace('namespace StealthWorkspace.Services;', "namespace $kind;")
         [IO.File]::WriteAllText((Join-Path $output "$kind.$name.cs"), $code)
         [PSCustomObject]@{ implementation=$kind; source=$name; sha256=(Get-FileHash -LiteralPath $file).Hash }

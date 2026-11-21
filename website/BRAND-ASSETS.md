@@ -4,6 +4,8 @@ The Stealth website is a buildless static site hosted with the project's existin
 
 ## Stealth identity and screenshots
 
+- `assets/r161-daily.png` is a 2138 × 1477 capture of the R16.1 second preview. It shows the running Windows app, its new-tab page and a bookmark bar populated with synthetic links.
+
 - `assets/r161-bookmarks.png` is a 2178 × 1469 WinApp CLI capture of the r16.1 window after importing a synthetic HTML file through the native file picker. The settings page reports two added bookmarks, one duplicate and one unsupported URL.
 
 - `assets/app-icon.svg` and `assets/app-icon.png` are copied from the project's editable r15 brand assets in `Assets/`. The mark uses flat jade and graphite geometry; it is not a third-party logo.
@@ -11,6 +13,8 @@ The Stealth website is a buildless static site hosted with the project's existin
 - `assets/r16-tab-search.png` shows the r16 recently closed list in an isolated Windows test session. A lossless crop retains the entire 2158 × 1469 main window and excludes the WinApp CLI capture labels and separate tooltip panel.
 - `assets/media-library.png` is the r15 light-theme screenshot from `artifacts/overhaul-final/vault-light-640.png`. It is an empty, isolated test library with no personal media. The previous r12 media screenshot has been replaced rather than relabeled as r15.
 - Screenshots retain their original content and aspect ratio. Images are local to the site, with explicit dimensions; the below-fold media image is lazy-loaded.
+
+- `assets/r161-revision-login.png` is a 720 × 946 capture of the website account controls in the second R16.1 preview, using an isolated local test page.
 
 ## Other marks
 
@@ -21,5 +25,5 @@ Third-party marks are secondary to the Stealth brand. No affiliation or endorsem
 
 ## Release and claims
 
-Both architecture links target the versioned x64 and ARM64 archives in `v2026.11.21-r16.1-preview`. The Pages workflow checks for both ZIPs and the checksum manifest before deploying the download page.
+Both architecture links target the versioned x64 and ARM64 archives in `v2026.11.21-r16.1-preview.2`. The Pages workflow checks for both ZIPs and the checksum manifest before deploying the download page.
 r161-site-storage.png 是 r16.1 的真实 WinUI 站点面板，来自隔离的本机测试来源。

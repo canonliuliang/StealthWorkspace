@@ -12,6 +12,10 @@ namespace StealthWorkspace.Services;
 
 public class BookmarkItem
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string DisplayHost => Uri.TryCreate(Url, UriKind.Absolute, out var uri) ? uri.IdnHost : string.Empty;
+    public string FolderId { get; init; } = "";
+    public int? Position { get; init; }
     internal bool ContainsLoginInfo => Url.Contains('@') && Uri.TryCreate(Url, UriKind.Absolute, out var uri) && uri.UserInfo.Length != 0;
     public override string ToString() => string.IsNullOrWhiteSpace(Title) ? Url : Title;
     public string Title { get; set; } = string.Empty;
@@ -53,6 +57,7 @@ public class AppSettingsData
 
     // Bookmarks (encrypted at rest via DPAPI)
     public ImmutableList<BookmarkItem> Bookmarks { get; set; } = [];
+    public ImmutableList<BookmarkFolder> BookmarkFolders { get; set; } = [];
 
     internal AppSettingsData WithBookmarks(ImmutableList<BookmarkItem> bookmarks)
     {
@@ -62,7 +67,7 @@ public class AppSettingsData
     }
 
     // Cleaner Preferences
-    public bool AutoCheckThumbcacheOnStartup { get; set; } = true;
+    public bool AutoCheckThumbcacheOnStartup { get; set; }
     public bool AutoFlushDnsOnExit { get; set; }
     public bool AutoWipeJumpList { get; set; } = true;
 
@@ -75,7 +80,7 @@ public class AppSettingsData
 /// last known good file is kept, so a crash while saving can never silently reset the
 /// user's configuration.
 /// </summary>
-public class SettingsService
+public partial class SettingsService
 {
     private static readonly Lazy<SettingsService> Shared = new(() => new SettingsService { _bookmarkSession = null });
     public static SettingsService Instance => Shared.Value;
@@ -86,15 +91,19 @@ public class SettingsService
     // Transfer a warmed index between immutable snapshots under this short
     // cache lock. Readers never take the DPAPI write lock to look up a star.
     private readonly object _bookmarkIndexGate = new();
-    private readonly ConditionalWeakTable<ImmutableList<BookmarkItem>, Dictionary<BrowserAddress.PageKey, BookmarkItem?>> _bookmarkIndexes = new();
+    private readonly record struct IndexedBookmark(BookmarkItem First, bool Multiple = false);
+    private readonly ConditionalWeakTable<ImmutableList<BookmarkItem>, Dictionary<BrowserAddress.PageKey, IndexedBookmark>> _bookmarkIndexes = new();
     internal sealed class BookmarkSession(bool temporary)
     {
         internal bool Temporary { get; } = temporary;
+        internal string? DownloadDirectoryName { get; } = temporary ? $"session-{Environment.ProcessId}-{Guid.NewGuid():N}" : null;
         internal volatile ImmutableList<BookmarkItem> Items = [];
+        internal volatile ImmutableList<BookmarkFolder> Folders = [];
     }
     // Services opened directly against an isolated settings file work with its
     // persistent data. The application's shared instance starts locked.
     private volatile BookmarkSession? _bookmarkSession = new(false);
+    private AppSettingsData? _realDataBeforeDecoy;
     internal BookmarkSession? ActiveBookmarkSession => _bookmarkSession;
     internal BookmarkSession? PersonalBookmarkSession => _bookmarkSession is { Temporary: false } current ? current : null;
     internal ImmutableList<BookmarkItem> CurrentBookmarks => BookmarksFor(_bookmarkSession);
@@ -104,8 +113,23 @@ public class SettingsService
 
     internal void SetBookmarkWorkspace(bool? decoy)
     {
-        if (_bookmarkSession?.Temporary == decoy) return;
-        _bookmarkSession = decoy.HasValue ? new(decoy.Value) : null;
+        lock (_saveGate)
+        {
+            if (_bookmarkSession?.Temporary == true && decoy != true && _realDataBeforeDecoy != null)
+            {
+                Data = _realDataBeforeDecoy;
+                _realDataBeforeDecoy = null;
+            }
+            else if (decoy == true && _bookmarkSession?.Temporary != true)
+            {
+                _realDataBeforeDecoy = Data;
+                Data = Data.WithBookmarks([]);
+                Data.BookmarkFolders = [];
+            }
+
+            if (_bookmarkSession?.Temporary == decoy) return;
+            _bookmarkSession = decoy.HasValue ? new(decoy.Value) : null;
+        }
     }
 
     public AppSettingsData Data { get; private set; }
@@ -269,14 +293,22 @@ public class SettingsService
     /// </summary>
     public bool SaveSettings() => SaveSettings(null);
 
-    private bool SaveSettings(ImmutableList<BookmarkItem>? bookmarkChange, Action? transferIndex = null)
+    private bool SaveSettings(ImmutableList<BookmarkItem>? bookmarkChange, Action? transferIndex = null, ImmutableList<BookmarkFolder>? folderChange = null)
     {
         lock (_saveGate)
         {
             if (ReadDeferred) return false;
+            if (_bookmarkSession?.Temporary == true)
+            {
+                // Decoy sessions must never overwrite the real workspace's persisted settings on disk.
+                Normalize(Data);
+                NotifySettingsChanged();
+                return true;
+            }
             try
             {
                 var snapshot = bookmarkChange == null ? Data : Data.WithBookmarks(bookmarkChange);
+                if (folderChange != null) snapshot.BookmarkFolders = folderChange;
                 Normalize(snapshot);
                 byte[] plaintext = JsonSerializer.SerializeToUtf8Bytes(snapshot);
                 byte[] encrypted;
@@ -310,6 +342,7 @@ public class SettingsService
                 {
                     transferIndex?.Invoke();
                     Data.Bookmarks = snapshot.Bookmarks;
+                    Data.BookmarkFolders = snapshot.BookmarkFolders;
                 }
                 NotifySettingsChanged();
                 return true;
@@ -343,6 +376,7 @@ public class SettingsService
     private static void Normalize(AppSettingsData d)
     {
         d.Bookmarks ??= [];
+        d.BookmarkFolders ??= [];
         if (d.Bookmarks.Any(b => b == null || string.IsNullOrWhiteSpace(b.Url)))
             d.Bookmarks = d.Bookmarks.RemoveAll(b => b == null || string.IsNullOrWhiteSpace(b.Url));
         foreach (var b in d.Bookmarks)
@@ -402,30 +436,34 @@ public class SettingsService
         return bookmarks.Any(b => BrowserAddress.SamePage(b.Url, url));
     }
 
-    private bool FindIndexedBookmark(ImmutableList<BookmarkItem> bookmarks, BrowserAddress.PageKey key, out BookmarkItem? unique)
+    internal BookmarkItem? FirstBookmark(ImmutableList<BookmarkItem> bookmarks, Uri address) =>
+        bookmarks.Count < 32 ? bookmarks.Find(item => BrowserAddress.SamePage(address, item.Url)) :
+        FindIndexedBookmark(bookmarks, BrowserAddress.PageKey.From(address), out var match) ? match.First : null;
+
+    private bool FindIndexedBookmark(ImmutableList<BookmarkItem> bookmarks, BrowserAddress.PageKey key, out IndexedBookmark match)
     {
         lock (_bookmarkIndexGate)
         {
             var index = _bookmarkIndexes.GetValue(bookmarks, static items =>
             {
-                var result = new Dictionary<BrowserAddress.PageKey, BookmarkItem?>(items.Count);
+                var result = new Dictionary<BrowserAddress.PageKey, IndexedBookmark>(items.Count);
                 foreach (var item in items)
                 {
                     var address = BrowserAddress.PageKey.From(item.Url);
-                    // Null preserves legacy duplicate handling on rename/delete.
-                    if (!result.TryAdd(address, item)) result[address] = null;
+                    if (!result.TryAdd(address, new(item)) && !result[address].Multiple)
+                        result[address] = result[address] with { Multiple = true };
                 }
                 return result;
             });
-            return index.TryGetValue(key, out unique);
+            return index.TryGetValue(key, out match);
         }
     }
 
-    private static BookmarkItem NewBookmark(string? title, Uri uri, DateTime created)
+    private static BookmarkItem NewBookmark(string? title, Uri uri, DateTime created, string folderId = "", int? position = null)
     {
         string name = string.IsNullOrWhiteSpace(title) ? uri.Host : title.Trim();
         if (name.Length > 200) name = name[..(char.IsHighSurrogate(name[199]) ? 199 : 200)];
-        return new BookmarkItem { Title = name, Url = uri.AbsoluteUri, CreatedAt = created };
+        return new BookmarkItem { Title = name, Url = uri.AbsoluteUri, CreatedAt = created, FolderId = folderId, Position = position };
     }
 
     public bool AddBookmark(string title, string url) => AddBookmark(title, url, _bookmarkSession);
@@ -441,7 +479,7 @@ public class SettingsService
             var key = BrowserAddress.PageKey.From(uri);
             if (bookmarks.Count >= 32 ? FindIndexedBookmark(bookmarks, key, out _) : bookmarks.Any(b => BrowserAddress.SamePage(uri, b.Url))) return true;
             var item = NewBookmark(title, uri, DateTime.Now);
-            return SaveBookmarks(session, bookmarks.Insert(0, item), index => index[key] = item);
+            return SaveBookmarks(session, bookmarks.Insert(0, item), index => index[key] = new(item));
         }
     }
 
@@ -456,9 +494,9 @@ public class SettingsService
             if (!ReferenceEquals(_bookmarkSession, session)) return false;
             var bookmarks = BookmarksFor(session);
             var key = BrowserAddress.PageKey.From(url);
-            BookmarkItem? unique = null;
-            if (bookmarks.Count >= 32 && !FindIndexedBookmark(bookmarks, key, out unique)) return true;
-            var updated = unique != null ? bookmarks.Remove(unique) : bookmarks.RemoveAll(b => BrowserAddress.SamePage(b.Url, url));
+            IndexedBookmark match = default;
+            if (bookmarks.Count >= 32 && !FindIndexedBookmark(bookmarks, key, out match)) return true;
+            var updated = match is { First: not null, Multiple: false } ? bookmarks.Remove(match.First) : bookmarks.RemoveAll(b => BrowserAddress.SamePage(b.Url, url));
             return updated.Count == bookmarks.Count || SaveBookmarks(session, updated, index => index.Remove(key));
         }
     }
@@ -475,14 +513,14 @@ public class SettingsService
             if (!ReferenceEquals(_bookmarkSession, session)) return false;
             var bookmarks = BookmarksFor(session);
             var key = BrowserAddress.PageKey.From(url);
-            BookmarkItem? unique = null;
-            if (bookmarks.Count >= 32 && !FindIndexedBookmark(bookmarks, key, out unique)) return false;
-            var item = unique ?? bookmarks.FirstOrDefault(b => BrowserAddress.SamePage(b.Url, url));
+            IndexedBookmark match = default;
+            if (bookmarks.Count >= 32 && !FindIndexedBookmark(bookmarks, key, out match)) return false;
+            var item = match.First ?? bookmarks.FirstOrDefault(b => BrowserAddress.SamePage(b.Url, url));
             if (item == null) return false;
             if (item.Title == title) return true;
             if (title.Length > 200) title = title[..(char.IsHighSurrogate(title[199]) ? 199 : 200)];
-            var replacement = new BookmarkItem { Title = title, Url = item.Url, CreatedAt = item.CreatedAt };
-            return SaveBookmarks(session, bookmarks.Replace(item, replacement), index => { if (unique != null) index[key] = replacement; });
+            var replacement = new BookmarkItem { Title = title, Url = item.Url, CreatedAt = item.CreatedAt, FolderId = item.FolderId, Position = item.Position };
+            return SaveBookmarks(session, bookmarks.Replace(item, replacement), index => index[key] = new(replacement, match.Multiple));
         }
     }
 
@@ -512,14 +550,14 @@ public class SettingsService
             token.ThrowIfCancellationRequested();
             if (additions.Count == 0) return true;
             if (!SaveBookmarks(session, bookmarks.InsertRange(0, additions), index =>
-                { foreach (var pair in newKeys) index[pair.Key] = pair.Value; })) return false;
+                { foreach (var pair in newKeys) index[pair.Key] = new(pair.Value); })) return false;
             added = additions.Count;
             return true;
         }
     }
 
     // The caller holds _saveGate from the initial snapshot through persistence.
-    private bool SaveBookmarks(BookmarkSession session, ImmutableList<BookmarkItem> updated, Action<Dictionary<BrowserAddress.PageKey, BookmarkItem?>> updateIndex)
+    private bool SaveBookmarks(BookmarkSession session, ImmutableList<BookmarkItem> updated, Action<Dictionary<BrowserAddress.PageKey, IndexedBookmark>> updateIndex)
     {
         if (!ReferenceEquals(session, _bookmarkSession)) return false;
         var previous = BookmarksFor(session);

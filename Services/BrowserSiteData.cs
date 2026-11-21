@@ -4,6 +4,21 @@ namespace StealthWorkspace.Services;
 
 internal static class BrowserSiteData
 {
+    internal static async Task ClearSiteAccountAsync(CoreWebView2 core, Uri page, Func<bool> canContinue)
+    {
+        if (page.Scheme is not ("http" or "https") || page.Host.Length == 0)
+            throw new ArgumentException("A web origin is required.", nameof(page));
+        if (!canContinue()) throw new OperationCanceledException();
+        // The engine owns these stores. Keep other origins intact, including
+        // independently partitioned embedded content belonging to another site.
+        string origin = page.GetComponents(UriComponents.SchemeAndServer, UriFormat.UriEscaped);
+        await core.CallDevToolsProtocolMethodAsync("Storage.clearDataForOrigin",
+            System.Text.Json.JsonSerializer.Serialize(new { origin, storageTypes = "local_storage,indexeddb,cache_storage,service_workers,file_systems,websql" }));
+        if (!canContinue()) throw new OperationCanceledException();
+        await DeleteCookiesForHostAsync(core, page.IdnHost, canContinue);
+        if (!canContinue()) throw new OperationCanceledException();
+    }
+
     internal static Task ClearOfflineDataForOriginAsync(CoreWebView2 core, Uri page)
     {
         if (page.Scheme is not ("http" or "https") || string.IsNullOrEmpty(page.Host))

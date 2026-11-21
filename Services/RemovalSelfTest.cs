@@ -13,6 +13,10 @@ internal static class RemovalSelfTest
     {
         public void Report(string value) => report(value);
     }
+    private sealed class FractionProgress(Action<double> report) : IProgress<double>
+    {
+        public void Report(double value) => report(value);
+    }
 
     internal static async Task RunAsync(string testRoot, Action<bool, string, string> report, Action<string, string> skip)
     {
@@ -59,15 +63,70 @@ internal static class RemovalSelfTest
             string icon = Path.Combine(directory, "iconcache_32.db");
             File.WriteAllBytes(cache, bytes);
             File.WriteAllBytes(icon, bytes);
-            Require(CreateHardLinkW(link, source, IntPtr.Zero));
+            if (!CreateHardLinkW(link, source, IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not create the synthetic thumbnail hard link.");
             var item = new CleanerItem { Category = CleanerCategory.ThumbnailCache };
             var options = new CleanerOptions { SecureShredFiles = true };
             CleanerItem result = CleanerService.CleanThumbnails(item, directory, options, CancellationToken.None);
-            Require(result.DetectedCount == 1 && File.Exists(link) && !File.Exists(cache));
+            void CheckResult(bool expected, string stage)
+            {
+                if (!expected)
+                    throw new InvalidOperationException($"{stage}. Remaining={result.DetectedCount}, outcome={result.Outcome}, status={result.Status}.");
+            }
+            void CheckUntouchedContent(string stage)
+            {
+                CheckResult(File.ReadAllBytes(source).AsSpan().SequenceEqual(bytes), stage + ": hard-link source contents changed");
+                CheckResult(File.ReadAllBytes(icon).AsSpan().SequenceEqual(bytes), stage + ": unrelated icon-cache contents changed");
+            }
+            CheckUntouchedContent("After the overwrite request");
+            CheckResult(File.Exists(link), "The overwrite request removed the hard link");
+            CheckResult(!File.Exists(cache), "The ordinary synthetic thumbnail still exists after the overwrite request");
+            CheckResult(result.DetectedCount == 1, "The overwrite request returned an incorrect remaining count");
+            CheckResult(result.Outcome == CleanOutcome.Skipped, "The overwrite request did not report skipping the hard link");
             options.SecureShredFiles = false;
+            string readOnlyCache = Path.Combine(directory, "thumbcache_readonly.db");
+            File.WriteAllBytes(readOnlyCache, bytes);
+            File.SetAttributes(readOnlyCache, FileAttributes.ReadOnly);
             result = CleanerService.CleanThumbnails(item, directory, options, CancellationToken.None);
-            Require(result.DetectedCount == 0 && !File.Exists(link));
-            Require(File.ReadAllBytes(source).AsSpan().SequenceEqual(bytes) && File.ReadAllBytes(icon).AsSpan().SequenceEqual(bytes));
+            CheckUntouchedContent("After ordinary deletion");
+            CheckResult(!File.Exists(link), "Ordinary deletion left the synthetic hard-link name");
+            CheckResult(!File.Exists(readOnlyCache), "Ordinary deletion left the synthetic read-only cache name");
+            CheckResult(result.DetectedCount == 0, "Ordinary deletion returned an incorrect remaining count");
+            CheckResult(result.Outcome == CleanOutcome.Complete, "Ordinary deletion did not report completion");
+            return Task.CompletedTask;
+        });
+        await Check("Cleaner: normal deletion preserves the read-only bit on a sibling hard link", () =>
+        {
+            string directory = Directory.CreateDirectory(Path.Combine(root, "readonly-links")).FullName;
+            string keep = Path.Combine(directory, "keep.bin"), cache = Path.Combine(directory, "thumbcache_link.db");
+            File.WriteAllBytes(keep, bytes);
+            Require(CreateHardLinkW(cache, keep, IntPtr.Zero));
+            File.SetAttributes(keep, FileAttributes.ReadOnly);
+            try
+            {
+                var result = CleanerService.CleanThumbnails(new CleanerItem(), directory, new CleanerOptions(), default);
+                Require(result.DetectedCount == 0 && !File.Exists(cache));
+                Require(File.ReadAllBytes(keep).AsSpan().SequenceEqual(bytes) && (File.GetAttributes(keep) & FileAttributes.ReadOnly) != 0);
+            }
+            finally { File.SetAttributes(keep, FileAttributes.Normal); }
+            return Task.CompletedTask;
+        });
+        await Check("Cleaner: a held read-only file is counted as skipped in both modes and can be retried", () =>
+        {
+            string directory = Directory.CreateDirectory(Path.Combine(root, "busy-cache")).FullName;
+            string cache = Path.Combine(directory, "thumbcache_busy.db");
+            File.WriteAllBytes(cache, bytes);
+            File.SetAttributes(cache, FileAttributes.ReadOnly);
+            using (var reader = File.Open(cache, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                foreach (bool shred in new[] { true, false })
+                {
+                    var result = CleanerService.CleanThumbnails(new CleanerItem(), directory, new CleanerOptions { SecureShredFiles = shred }, default);
+                    Require(result.Outcome == CleanOutcome.Skipped && result.DetectedCount == 1);
+                    Require(File.ReadAllBytes(cache).AsSpan().SequenceEqual(bytes) && (File.GetAttributes(cache) & FileAttributes.ReadOnly) != 0);
+                }
+            }
+            Require(CleanerService.CleanThumbnails(new CleanerItem(), directory, new CleanerOptions(), default).DetectedCount == 0);
             return Task.CompletedTask;
         });
         await Check("Cleaner: shutdown waits for active work and cancellation skips queued work", async () =>
@@ -214,6 +273,24 @@ internal static class RemovalSelfTest
             Require(vault.VisibleItems.Count == 0 && !File.Exists(secondPath));
             vault.Lock();
         });
+        await Check("Removal: retrying one item preserves other previously blocked items and their journal", async () =>
+        {
+            var vault = await NewVault("subset-retry");
+            var first = await vault.ImportFileAsync(source, false);
+            var second = await vault.ImportFileAsync(source, false);
+            string firstPath = MediaPath("subset-retry", first.StoredFileName);
+            string secondPath = MediaPath("subset-retry", second.StoredFileName);
+            string journal = Path.Combine(root, "subset-retry", "remove.dat");
+            using (var firstReader = File.Open(firstPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (var secondReader = File.Open(secondPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                await ExpectFailure(() => vault.DeleteItemsAsync([first, second]));
+            await vault.DeleteItemAsync(first);
+            Require(!File.Exists(firstPath) && File.Exists(secondPath) && File.Exists(journal));
+            VerifyRemaining(vault);
+            await vault.DeleteItemAsync(second);
+            Require(!File.Exists(secondPath) && !File.Exists(journal));
+            vault.Lock();
+        });
         await Check("Removal: partial decoy clear preserves failed item and supports retry", async () =>
         {
             var vault = await NewVault("busy-decoy", true); await vault.ImportFileAsync(source, false);
@@ -228,6 +305,56 @@ internal static class RemovalSelfTest
             vault.Lock(); vault = new VaultService(Path.Combine(root, "busy-decoy")); Unlock(vault);
             await vault.ClearDecoyAsync(); Require(!vault.HasDecoyVault); VerifyRemaining(vault);
             Require(Directory.GetFiles(Path.Combine(root, "busy-decoy", "MediaVault")).Length == 1); vault.Lock();
+        });
+        await Check("Removal: a main-space decoy clear can finish a previously blocked decoy-item removal", async () =>
+        {
+            var vault = await NewVault("decoy-escalate", true);
+            await vault.ImportFileAsync(source, false);
+            Unlock(vault, true);
+            var item = await vault.ImportFileAsync(source, false);
+            await vault.ImportFileAsync(source, false);
+            using (var reader = File.Open(MediaPath("decoy-escalate", item.StoredFileName), FileMode.Open, FileAccess.Read, FileShare.Read))
+                await ExpectFailure(() => vault.DeleteItemAsync(item));
+            Unlock(vault);
+            await vault.ClearDecoyAsync();
+            Require(!vault.HasDecoyVault && !File.Exists(Path.Combine(root, "decoy-escalate", "remove.dat")));
+            VerifyRemaining(vault);
+            vault.Lock();
+        });
+        await Check("Removal: the next write finishes a committed password rotation after a reader releases the old file", async () =>
+        {
+            var vault = await NewVault("rotation-retry");
+            var item = await vault.ImportFileAsync(source, false);
+            string old = MediaPath("rotation-retry", item.StoredFileName);
+            string journal = Path.Combine(root, "rotation-retry", "rotate.dat");
+            using (var reader = File.Open(old, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                await vault.ChangeMasterPasswordAsync("RotatedMain#123");
+                Require(vault.IsUnlocked && File.Exists(journal) && File.Exists(old));
+                await ExpectFailure(() => vault.ImportFileAsync(source, false));
+            }
+            await vault.RenameItemAsync(vault.VisibleItems.Single(), "renamed.bin");
+            Require(!File.Exists(journal) && !File.Exists(old));
+            VerifyRemaining(vault);
+            vault.Lock();
+        });
+        await Check("Removal: cancellation after decrypting export data retains the previous target and removes the part file", async () =>
+        {
+            var vault = await NewVault("export-cancel");
+            var item = await vault.ImportFileAsync(source, false);
+            string folder = Directory.CreateDirectory(Path.Combine(root, "cancelled-export")).FullName;
+            string target = Path.Combine(folder, "saved.bin");
+            File.WriteAllText(target, "keep");
+            using var cancellation = new CancellationTokenSource();
+            try
+            {
+                await vault.ExportItemAsync(item, target, new FractionProgress(f => { if (f > 0) cancellation.Cancel(); }), cancellation.Token);
+                throw new InvalidOperationException("Export unexpectedly committed");
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+            if (File.ReadAllText(target) != "keep") throw new InvalidOperationException("A canceled export replaced the destination.");
+            if (Directory.EnumerateFiles(folder, "*.part").Any()) throw new InvalidOperationException("A canceled export left its temporary file behind.");
+            vault.Lock();
         });
         await Check("Removal: journal write failure leaves ciphertext and index untouched", async () =>
         {

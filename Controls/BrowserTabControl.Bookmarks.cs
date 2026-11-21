@@ -21,7 +21,7 @@ public sealed partial class BrowserTabControl
         bool bookmarked = valid && SettingsService.Instance.IsBookmarked(url);
         bool privateAddress = valid && address!.UserInfo.Length != 0 && !bookmarked;
         BookmarkStarBtn.IsEnabled = valid && !privateAddress && !_savingBookmark;
-        string action = _savingBookmark ? "正在保存收藏" : bookmarked ? "取消收藏" : privateAddress ? "无法收藏含登录信息的网址" : "收藏本页";
+        string action = _savingBookmark ? "正在保存收藏" : bookmarked ? (SettingsService.Instance.HasBookmarkFolders ? "编辑收藏" : "取消收藏") : privateAddress ? "无法收藏含登录信息的网址" : "收藏本页";
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(BookmarkStarBtn, action);
         ToolTipService.SetToolTip(BookmarkStarBtn, action + " (Ctrl+D)");
         VisualStateManager.GoToState(this, bookmarked ? "Bookmarked" : "NotBookmarked", false);
@@ -36,6 +36,12 @@ public sealed partial class BrowserTabControl
         bool bookmarked = settings.IsBookmarked(url);
         if (!bookmarked && address!.UserInfo.Length != 0) return;
         string title = string.IsNullOrWhiteSpace(CurrentTitle) ? url : CurrentTitle;
+        var library = settings.GetBookmarkLibrary();
+        if (library.Folders.Count != 0 && settings.ActiveBookmarkSession is { } current)
+        {
+            await SaveToBookmarkFolderAsync(title, address!, current, library);
+            return;
+        }
         bool saved = await SaveBookmarkEditAsync(settings.ActiveBookmarkSession, session => bookmarked ?
             settings.RemoveBookmark(url, session) : settings.AddBookmark(title, url, session));
         if (saved && !_isDisposed && GetCurrentDocumentUrl() == url) UiMotion.Reveal(BookmarkStarIcon, MotionCue.Fade);
@@ -45,7 +51,7 @@ public sealed partial class BrowserTabControl
     {
         if (sender is not FrameworkElement { Tag: BookmarkItem item }) return;
         var settings = SettingsService.Instance;
-        await SaveBookmarkEditAsync(settings.ActiveBookmarkSession, session => settings.RemoveBookmark(item.Url, session));
+        await SaveBookmarkEditAsync(settings.ActiveBookmarkSession, session => settings.RemoveBookmarkEntry(session, item));
     }
 
     private async Task<bool> SaveBookmarkEditAsync(SettingsService.BookmarkSession? session, Func<SettingsService.BookmarkSession, bool> change)
@@ -79,6 +85,7 @@ public sealed partial class BrowserTabControl
 
     private void RefreshBookmarkList()
     {
+        RefreshBookmarkBar();
         if (_isDisposed || _bookmarkFilter == null || BookmarksListView == null || BookmarkSearchBox == null) return;
         string query = BookmarkSearchBox.Text.Trim();
         var matches = _bookmarkFilter.Filter(SettingsService.Instance.CurrentBookmarks, query);
@@ -134,7 +141,7 @@ public sealed partial class BrowserTabControl
                 ReferenceEquals(SettingsService.Instance.ActiveBookmarkSession, session))
             {
                 string title = name.Text;
-                await SaveBookmarkEditAsync(session, current => SettingsService.Instance.RenameBookmark(item.Url, title, current));
+                await SaveBookmarkEditAsync(session, current => SettingsService.Instance.EditBookmark(current, item, title, item.Url, item.FolderId));
             }
         }
         catch (Exception ex) { AppLog.Warn("Rename bookmark: " + ex.GetType().Name); }
@@ -174,6 +181,9 @@ public sealed partial class BrowserTabControl
 
     private void DetachBookmarkUi()
     {
+        _bookmarkImport?.Cancel();
+        _barSnapshot = null;
+        BookmarkBarEntries.Children.Clear();
         _bookmarkToRename = null;
         _bookmarkDialog?.Hide();
         BookmarksFlyout.Hide();

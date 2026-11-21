@@ -101,8 +101,72 @@ public sealed partial class BrowserTabControl
         {
             flyout.Opened -= Opened;
             flyout.Closed -= Closed;
+            if (flyout.IsOpen)
+            {
+                var dismissed = new TaskCompletionSource<bool>();
+                void Dismissed(object? sender, object args) => dismissed.TrySetResult(true);
+                flyout.Closed += Dismissed;
+                try
+                {
+                    flyout.Hide();
+                    await dismissed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                finally { flyout.Closed -= Dismissed; }
+            }
+        }
+    }
+
+    internal async Task CheckDownloadShortcutAuditAsync()
+    {
+        await RequireKeyboardForegroundAsync("download keyboard");
+        var flyout = EnsureDownloadsFlyout();
+        var editor = FindAddressEditor(UrlTextBox) ?? throw new InvalidOperationException("Missing address editor");
+        if (!editor.Focus(Microsoft.UI.Xaml.FocusState.Keyboard) || !IsAddressBarFocused)
+            throw new InvalidOperationException("The address editor did not receive keyboard focus");
+        int opened = 0, closed = 0;
+        void Opened(object? sender, object args) => opened++;
+        void Closed(object? sender, object args) => closed++;
+        flyout.Opened += Opened;
+        flyout.Closed += Closed;
+        try
+        {
+            if (flyout.IsOpen || !Services.BrowserZoomInput.SendDownloadsForAudit(MainWindow.CurrentHandle))
+                throw new InvalidOperationException("Could not send Ctrl+J to the test window");
+            for (int i = 0; i < 80 && opened == 0; i++) await Task.Delay(25);
+            if (!flyout.IsOpen || opened != 1) throw new InvalidOperationException("Ctrl+J failed to show downloads from the address bar");
+            if (!Services.BrowserZoomInput.SendDownloadsForAudit(MainWindow.CurrentHandle))
+                throw new InvalidOperationException("Could not repeat Ctrl+J");
+            await Task.Delay(250);
+            if (!flyout.IsOpen || opened != 1 || closed != 0) throw new InvalidOperationException("Repeated Ctrl+J reopened or dismissed downloads");
+            Services.SmokeTest.Report("download flyout: native Ctrl+J opened the shared downloads from the address bar; repeating it kept one flyout open");
+        }
+        finally
+        {
+            flyout.Opened -= Opened;
+            flyout.Closed -= Closed;
             flyout.Hide();
         }
+    }
+
+    internal async Task CheckWebDownloadShortcutAuditAsync()
+    {
+        var core = _hookedCore ?? throw new InvalidOperationException("Missing focused document for Ctrl+J");
+        var flyout = EnsureDownloadsFlyout();
+        if (flyout.IsOpen || _browserControl?.Focus(Microsoft.UI.Xaml.FocusState.Keyboard) != true)
+            throw new InvalidOperationException("Could not focus the webpage before Ctrl+J");
+        for (int i = 0; i < 40 && await core.ExecuteScriptAsync("document.hasFocus()") != "true"; i++) await Task.Delay(25);
+        if (await core.ExecuteScriptAsync("document.hasFocus()") != "true" || !Services.BrowserZoomInput.SendDownloadsForAudit(MainWindow.CurrentHandle))
+            throw new InvalidOperationException("Could not send Ctrl+J while the document had keyboard focus");
+        try
+        {
+            bool IsWorkspaceListVisible() => flyout.IsOpen && flyout.Content is DownloadListControl { IsLoaded: true } && !core.IsDefaultDownloadDialogOpen;
+            for (int i = 0; i < 80 && !IsWorkspaceListVisible(); i++) await Task.Delay(25);
+            await Task.Delay(200);
+            if (!IsWorkspaceListVisible())
+                throw new InvalidOperationException($"Webpage Ctrl+J failed to show only the workspace downloads; workspace={flyout.IsOpen}; content={flyout.Content?.GetType().Name}; engine={core.IsDefaultDownloadDialogOpen}");
+            Services.SmokeTest.Report("download flyout: native Ctrl+J on the focused webpage opened only the workspace download list");
+        }
+        finally { flyout.Hide(); }
     }
 
     internal async Task<CoreWebView2DownloadOperation> BeginDownloadAuditAsync(string address)
@@ -139,7 +203,6 @@ public sealed partial class BrowserTabControl
 
     internal async Task ClickAuditAsync(string id, bool background = false)
     {
-        if (background) _backgroundClickAt = Environment.TickCount64;
         // Only synthetic loopback pages use this diagnostic user gesture. Normal
         // browsing relies on the runtime's trusted IsUserInitiated event value.
         if (_hookedCore is not { } core || !Uri.TryCreate(core.Source, UriKind.Absolute, out var uri) || !uri.IsLoopback)
@@ -149,6 +212,8 @@ public sealed partial class BrowserTabControl
         await Task.Delay(75);
         if (id == "fullscreen")
             Services.SmokeTest.Report($"fullscreen gesture: windowForeground={Services.BrowserZoomInput.IsOwnerForeground(MainWindow.CurrentHandle)}; loaded={_browserControl?.IsLoaded}; xamlFocus={_browserControl?.FocusState}; addressPending={_focusAddressOnLoad}; selected={_isSelected}; pageFocused={await core.ExecuteScriptAsync("document.hasFocus()")}");
+        // Record the simulated modifier at the click, after the control has loaded and obtained focus.
+        if (background) _backgroundClickAt = Environment.TickCount64;
         await core.CallDevToolsProtocolMethodAsync("Runtime.evaluate", JsonSerializer.Serialize(new
         {
             expression = "document.getElementById(" + JsonSerializer.Serialize(id) + ").click()",

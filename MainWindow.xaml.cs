@@ -156,7 +156,8 @@ public sealed partial class MainWindow : Window
             SmokeTest.Report($"motion: custom animations={UiMotion.AnimationsEnabled}, scale={RootGrid.XamlRoot.RasterizationScale:0.##}");
             if (SmokeTest.UiSmoke)
             {
-                if (SmokeTest.InteractiveFixture) _ = OpenInteractiveFixtureAsync();
+                if (LoginRetentionAcceptance.Requested) _ = RunLoginRetentionAcceptanceAsync();
+                else if (SmokeTest.InteractiveFixture) _ = OpenInteractiveFixtureAsync();
                 else if (!SmokeTest.Interactive) _ = RunUiSmokeWalkAsync();
             }
             else
@@ -199,6 +200,14 @@ public sealed partial class MainWindow : Window
         try
         {
             await Task.Delay(300);
+            var arguments = Environment.GetCommandLineArgs();
+            if (arguments.Contains("--setup-controls"))
+            {
+                await ((LockPage)NavFrame.Content).CheckSetupControlsAsync(arguments.Contains("--setup-decoy"),
+                    () => NavFrame.Content as LockPage);
+                SmokeTest.Report("experience complete");
+                return;
+            }
 
             if (!VaultService.Instance.IsUnlocked)
             {
@@ -388,6 +397,7 @@ public sealed partial class MainWindow : Window
 
             NavigateToPage(typeof(CleanerPage), null, "cleaner", force: true);
             await Task.Delay(3500);
+            await ((CleanerPage)NavFrame.Content).VerifySyntheticCleanAsync();
 
             NavigateToPage(typeof(SettingsPage), null, null, force: true);
             await Task.Delay(600);
@@ -445,6 +455,30 @@ public sealed partial class MainWindow : Window
             // The popup layer sits above page transitions. Lock while a real modal
             // is open and ensure its awaiting action receives cancellation.
             await WorkspaceNativeDialogsAudit.CheckRevocationAsync();
+            var previousTheme = RootGrid.RequestedTheme;
+            try
+            {
+                foreach (var theme in new[] { ElementTheme.Dark, ElementTheme.Light })
+                {
+                    RootGrid.RequestedTheme = theme;
+                    var themed = new ContentDialog { XamlRoot = RootGrid.XamlRoot, Content = "主题验证", CloseButtonText = "关闭" };
+                    var showing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    themed.Opened += (_, _) => showing.TrySetResult();
+                    var first = WorkspaceDialogs.ShowAsync(themed);
+                    await showing.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    try
+                    {
+                        if (themed.ActualTheme != theme) throw new InvalidOperationException("Dialog theme differs from the workspace");
+                        var second = new ContentDialog { XamlRoot = RootGrid.XamlRoot, CloseButtonText = "关闭" };
+                        if (await WorkspaceDialogs.ShowAsync(second).WaitAsync(TimeSpan.FromSeconds(3)) != ContentDialogResult.None)
+                            throw new InvalidOperationException("A second modal entered the active workspace dialog");
+                    }
+                    finally { themed.Hide(); }
+                    await first.WaitAsync(TimeSpan.FromSeconds(5));
+                }
+            }
+            finally { RootGrid.RequestedTheme = previousTheme; }
+            SmokeTest.Report("settings: real dark and light dialogs follow the workspace; a concurrent request is dismissed");
             var dialog = new ContentDialog { XamlRoot = RootGrid.XamlRoot, Content = "测试", CloseButtonText = "关闭" };
             var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             dialog.Opened += (_, _) => opened.TrySetResult();
@@ -567,7 +601,7 @@ public sealed partial class MainWindow : Window
         // synchronously before the first window paints, or touch real profiles
         // from an isolated diagnostic process.
         if (!SmokeTest.Enabled)
-            await Task.Run(BrowserProfileManager.SweepStaleProfiles);
+            await Task.Run(() => { BrowserProfileManager.SweepStaleProfiles(); AppPaths.SweepDecoyDownloads(); });
         try
         {
             await Task.Run(() => VaultService.Instance.SweepOrphanedMedia());
@@ -609,7 +643,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void RefreshStatusBadge()
+    internal void RefreshStatusBadge()
     {
         if (_shutdownStarted || _windowClosed) return;
         var work = VaultWork.Current;
@@ -619,7 +653,7 @@ public sealed partial class MainWindow : Window
         StatusProgress.IsActive = busy;
         StatusBadge.IsEnabled = !_pageNavigationBlocked && !busy;
 
-        (string label, string hint) = ("就绪", "打开痕迹清理");
+        (string label, string hint) = ("隐私清理", "查看可清理的本地文件与上次清理结果");
         if (busy && work != null)
         {
             string taskName = SettingsService.Instance.Data.CamouflageIndex > 0 ? "处理中" : work.Label;
@@ -630,7 +664,7 @@ public sealed partial class MainWindow : Window
         else if (SettingsService.Instance.ReadDeferred)
             (label, hint) = ("设置暂时只读", "设置文件暂不可访问。解除占用后重启，即可读取并保存最新设置。");
         else if (_pendingResidueCount > 0)
-            (label, hint) = ("发现系统残留", $"检测到 {_pendingResidueCount} 个资源管理器缩略图缓存文件，点击前往清理。");
+            (label, hint) = ("系统缩略图缓存", $"Windows 资源管理器有 {_pendingResidueCount} 个缩略图缓存文件。点击查看清理选项。");
         else if (!BossKeyService.Instance.IsBossKeyEnabled && SettingsService.Instance.Data.BossKeyEnabled)
             (label, hint) = ("老板键未注册", BossKeyService.Instance.LastBossKeyError);
         else if (SettingsService.Instance.LoadFailed)
@@ -679,7 +713,7 @@ public sealed partial class MainWindow : Window
                 delayMs = MillisecondsUntilIdleLock(minutes, unchecked((uint)Environment.TickCount), info.dwTime);
                 if (lockIfDue && delayMs == 0)
                 {
-                    LockWorkspace();
+                    LockWorkspace(preserveCamouflage: true);
                     return;
                 }
             }
@@ -699,12 +733,12 @@ public sealed partial class MainWindow : Window
     {
         // LockWorkspace marshals to the UI thread and also revokes in-flight setup
         // or verification while the lock page is already visible.
-        if (SettingsService.Instance.Data.LockOnMinimize) LockWorkspace();
+        if (SettingsService.Instance.Data.LockOnMinimize) LockWorkspace(preserveCamouflage: true);
     }
 
     private void OnSystemSessionLeaving()
     {
-        if (SettingsService.Instance.Data.LockOnSystemSessionEnd) LockWorkspace();
+        if (SettingsService.Instance.Data.LockOnSystemSessionEnd) LockWorkspace(preserveCamouflage: true);
     }
 
     private void OnWindowVisibilityChanged(bool visible) => DispatcherQueue.TryEnqueue(() =>
@@ -731,14 +765,18 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            bool minimized = BossKeyService.Instance.IsWindowMinimized
+                             || (CurrentHandle != IntPtr.Zero && !NativeMethods.IsWindowVisible(CurrentHandle));
+
             if (_camouflageVisible)
             {
+                if (minimized)
+                {
+                    BossKeyService.Instance.RestoreWindow();
+                }
                 HideCamouflage();
                 return;
             }
-
-            bool minimized = BossKeyService.Instance.IsWindowMinimized
-                             || (CurrentHandle != IntPtr.Zero && !NativeMethods.IsWindowVisible(CurrentHandle));
 
             if (minimized)
             {
@@ -846,6 +884,7 @@ public sealed partial class MainWindow : Window
     private void PrepareWorkspaceForPrivacy()
     {
         (NavFrame.Content as CleanerPage)?.CancelOperation();
+        (NavFrame.Content as PlayerPage)?.ExitAnyFullWindow();
         // Menus and dialogs live in the window's popup layer above the frame.
         // Close them in this turn as well as replacing the page beneath them.
         try
@@ -904,11 +943,13 @@ public sealed partial class MainWindow : Window
 
     #region Lock / unlock
 
-    public void LockWorkspace()
+    public void LockWorkspace() => LockWorkspace(preserveCamouflage: false);
+
+    public void LockWorkspace(bool preserveCamouflage)
     {
         if (!DispatcherQueue.HasThreadAccess)
         {
-            DispatcherQueue.TryEnqueue(LockWorkspace);
+            DispatcherQueue.TryEnqueue(() => LockWorkspace(preserveCamouflage));
             return;
         }
 
@@ -917,7 +958,8 @@ public sealed partial class MainWindow : Window
         try
         {
             bool firstLock = !_isLocked;
-            bool endingUnlockedSession = firstLock && VaultService.Instance.IsUnlocked;
+            var session = SettingsService.Instance.ActiveBookmarkSession;
+            bool clearClipboard = (session != null || VaultService.Instance.IsUnlocked) && SettingsService.Instance.Data.ClearClipboardOnLock;
             _isLocked = true;
             _idleTimer.Stop();
             SettingsService.Instance.SetBookmarkWorkspace(null);
@@ -926,21 +968,33 @@ public sealed partial class MainWindow : Window
             // another lock request while the lock page is already visible.
             PrepareWorkspaceForPrivacy();
             VaultService.Instance.Lock();
+            if (session?.Temporary == true)
+            {
+                var settings = SettingsService.Instance.Data;
+                ApplySettingsOnStartup();
+                UpdateTitle(GetCamouflageTitle(settings.CamouflageIndex));
+                BossKeyService.Instance.SetDisplayAffinityProtection(settings.DisplayAffinityProtected);
+                BossKeyService.Instance.SetTaskbarPeekProtection(settings.TaskbarPeekExcluded);
+                BossKeyService.Instance.EnableBossKey(settings.BossKeyEnabled);
+            }
 
             if (firstLock)
             {
                 // Isolated diagnostics must not clear the user's global clipboard.
-                if (endingUnlockedSession && !SmokeTest.Enabled && SettingsService.Instance.Data.ClearClipboardOnLock)
+                if (clearClipboard && !SmokeTest.Enabled)
                 {
                     try { Windows.ApplicationModel.DataTransfer.Clipboard.Clear(); } catch { }
                 }
 
                 // Guarantees WebView2s are destroyed even if the browser page is not the
                 // currently navigated page.
-                _ = Controls.BrowserTabControl.ShutdownAllAsync();
+                _ = AppPaths.FinishBrowserSessionAsync(Controls.BrowserTabControl.ShutdownAllAsync(), session?.DownloadDirectoryName);
             }
 
-            HideCamouflage();
+            if (!preserveCamouflage)
+            {
+                HideCamouflage();
+            }
             ExitFullScreenIfNeeded();
 
             _suppressNavSelection = true;
@@ -956,6 +1010,10 @@ public sealed partial class MainWindow : Window
             {
                 if (NavFrame.Content is Page leavingPage) SetPageNavigationBlocked(leavingPage, false);
                 NavFrame.Navigate(typeof(LockPage), null, new SuppressNavigationTransitionInfo());
+            }
+            else if (NavFrame.Content is LockPage existingLockPage)
+            {
+                existingLockPage.ClearSensitiveInputs();
             }
         }
         catch (Exception ex)
@@ -1272,14 +1330,21 @@ public sealed partial class MainWindow : Window
             try { _idleTimer.Stop(); } catch { }
             PrepareWorkspaceForPrivacy();
             try { BossKeyService.Instance.Uninitialize(); } catch { }
+            var session = SettingsService.Instance.ActiveBookmarkSession;
+            bool clearClipboard = (session != null || VaultService.Instance.IsUnlocked) && SettingsService.Instance.Data.ClearClipboardOnLock;
+            try { SettingsService.Instance.SetBookmarkWorkspace(null); } catch { }
             // Revoke keys immediately, before the first asynchronous browser operation.
             try { VaultService.Instance.Lock(); } catch { }
+            if (clearClipboard && !SmokeTest.Enabled)
+            {
+                try { Windows.ApplicationModel.DataTransfer.Clipboard.Clear(); } catch { }
+            }
             SmokeTest.Report("closing: vault locked=" + !VaultService.Instance.IsUnlocked);
             Task? finishingVaultWork = VaultWork.Current?.Completion;
             await CleanerService.Instance.WaitForCleaningToFinishAsync();
             try
             {
-                await Controls.BrowserTabControl.ShutdownAllAsync().WaitAsync(TimeSpan.FromSeconds(6));
+                await AppPaths.FinishBrowserSessionAsync(Controls.BrowserTabControl.ShutdownAllAsync(), session?.DownloadDirectoryName).WaitAsync(TimeSpan.FromSeconds(6));
                 SmokeTest.Report("closing: browser controls released");
             }
             catch (Exception ex) { AppLog.Warn("关闭浏览器标签超时/失败: " + ex.GetType().Name); }
@@ -1287,13 +1352,13 @@ public sealed partial class MainWindow : Window
             if (finishingVaultWork != null) await finishingVaultWork;
             try
             {
-                bool cleaned = await BrowserProfileManager.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8));
-                SmokeTest.Report("closing: browser profiles removed=" + cleaned);
+                bool cleaned = await BrowserProfileManager.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(16));
+                SmokeTest.Report("closing: browser session cleanup completed=" + cleaned);
             }
             catch (Exception ex)
             {
                 AppLog.Warn("关闭浏览器沙箱超时/失败: " + ex.GetType().Name);
-                SmokeTest.Report("closing: browser profiles removed=False, " + ex.GetType().Name);
+                SmokeTest.Report("closing: browser session cleanup completed=False, " + ex.GetType().Name);
             }
             try
             {

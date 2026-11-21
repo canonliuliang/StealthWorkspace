@@ -43,6 +43,8 @@ public sealed partial class BrowserTabControl : UserControl
     private readonly List<CookieDisplayItem> _allCookies = new();
     private readonly ObservableRangeCollection<CookieDisplayItem> _filteredCookies = new();
     private readonly BrowserTabPermissions _tabPermissions = new();
+    private readonly SettingsService.BookmarkSession? _workspace = SettingsService.Instance.ActiveBookmarkSession;
+    private bool CanAccessDownloads => !_isDisposed && BrowserDownloadPath.IsCurrentWorkspace(_workspace);
     private int _cookieLoadVersion;
     private string? _permissionPanelOrigin;
     private readonly ObservableCollection<HistorySessionItem> _sessionHistory = BrowserSessionHistory.Items;
@@ -52,6 +54,8 @@ public sealed partial class BrowserTabControl : UserControl
     private Task? _initializationTask;
     private TaskCompletionSource<bool>? _initializationCompletion;
     private CoreWebView2? _hookedCore;
+    private Windows.Foundation.TypedEventHandler<CoreWebView2, CoreWebView2DownloadStartingEventArgs>? _downloadStartingHandler;
+    private Windows.Foundation.TypedEventHandler<CoreWebView2, CoreWebView2PermissionRequestedEventArgs>? _permissionRequestedHandler;
     private WebView2? _browserControl;
     private readonly HashSet<CoreWebView2DownloadOperation> _activeDownloads = new();
     private readonly Dictionary<CoreWebView2DownloadOperation, BrowserDownloadPath> _downloadPaths = new();
@@ -82,9 +86,9 @@ public sealed partial class BrowserTabControl : UserControl
     private string? _pendingNavigationUrl;
     private string? _lastRequestedUrl;
     private string? _downloadNavigationUrl;
-    private string? _addressAtNavigationStart;
     private ulong? _activeNavigationId;
     private bool _documentReady;
+    private bool _hadReadyDocumentBeforeNav;
     private bool _historyRecorded;
     private bool _focusPageAfterNavigation;
     private bool _navigationFailed;
@@ -92,7 +96,7 @@ public sealed partial class BrowserTabControl : UserControl
     private bool _settingsSubscribed;
     private bool _environmentAcquired;
     private bool _isUpdatingToggles;
-    private string _hubStatus = "浏览数据保存在当前临时会话中。";
+    private string _hubStatus = "防跟踪采用平衡保护，限制已知的跨站跟踪器。";
     private int _blockedCounter;
     private volatile bool _isDisposed;
 
@@ -492,6 +496,7 @@ public sealed partial class BrowserTabControl : UserControl
                 try { download.Cancel(); } catch { }
                 DetachDownloadStateHandler(download);
             }
+            if (_downloadsFlyout?.Content is DownloadListControl downloadList) downloadList.Detach();
             _downloadsFlyout?.Hide();
             _downloadsFlyout = null;
             BrowserDownloads.PendingCountChanged -= UpdateDownloadBadge;
@@ -513,6 +518,8 @@ public sealed partial class BrowserTabControl : UserControl
                 // inside the native WebView2 runtime instead of throwing manageably.
                 if (_browserControl is { } browser)
                 {
+                    if (browser.CoreWebView2 is { } core && _environmentAcquired)
+                        await BrowserProfileManager.PrepareLastControllerForShutdownAsync(core);
                     browser.NavigationStarting -= BrowserControl_NavigationStarting;
                     browser.NavigationCompleted -= BrowserControl_NavigationCompleted;
                     browser.RemoveHandler(PointerPressedEvent, new PointerEventHandler(BrowserPointerPressed));
@@ -612,12 +619,11 @@ public sealed partial class BrowserTabControl : UserControl
     #region Initialization
 
     /// <summary>
-    /// Initializes the WebView2 with the shared volatile environment and navigates to
-    /// <paramref name="initialUrl"/> (or the configured private home page). Safe to
+    /// Initializes WebView2 for the current workspace and navigates when a URL is supplied. Safe to
     /// call again after a failure or a browser-process crash: it retries instead of
     /// only writing the error into the address bar.
     /// </summary>
-    private async Task InitializeAsync(string? initialUrl)
+    private async Task InitializeAsync(string? initialUrl, bool keepStartSurface = false)
     {
         if (_isDisposed) return;
 
@@ -668,10 +674,11 @@ public sealed partial class BrowserTabControl : UserControl
         {
             BrowserErrorBar.IsOpen = false;
             BrowserProgressBar.Visibility = Visibility.Visible;
+            StartMessage.Visibility = Visibility.Visible;
             StartMessage.Text = "正在启动浏览器…";
             SearchHomeBtn.IsEnabled = false;
 
-            CoreWebView2Environment environment = await BrowserProfileManager.GetSharedEnvironmentAsync();
+            CoreWebView2Environment environment = await BrowserProfileManager.GetSharedEnvironmentAsync(_workspace);
             if (_isDisposed) return;
 
             if (!_environmentAcquired)
@@ -701,6 +708,8 @@ public sealed partial class BrowserTabControl : UserControl
                 throw new InvalidOperationException("CoreWebView2 初始化后仍为空");
             }
 
+            await BrowserProfileManager.PrepareForNavigationAsync(core, environment, _workspace);
+            if (_isDisposed) return;
             ConfigureCoreWebView2(core);
             AttachCoreWebView2Handlers(core);
             // Apply the current policy before the new (or recreated) core can navigate.
@@ -713,10 +722,11 @@ public sealed partial class BrowserTabControl : UserControl
             string? pendingTarget = _pendingNavigationUrl;
             _pendingNavigationUrl = null;
             string? target = pendingTarget ?? initialUrl;
-            StartSurface.Visibility = Visibility.Collapsed;
+            StartSurface.Visibility = keepStartSurface && target == null ? Visibility.Visible : Visibility.Collapsed;
+            StartMessage.Visibility = Visibility.Collapsed;
             BrowserProgressBar.Visibility = Visibility.Collapsed;
-            if (SessionStateText != null) SessionStateText.Text = "临时会话已启动";
-            SetHubStatus("浏览数据保存在当前临时会话中。");
+            if (SessionStateText != null) SessionStateText.Text = "浏览器已启动";
+            SetHubStatus("平衡防跟踪已开启");
             LastInitializationError = string.Empty;
             Interlocked.Increment(ref _initializedTabCount);
             AppLog.Info("BrowserTabControl: WebView2 初始化成功");
@@ -755,7 +765,7 @@ public sealed partial class BrowserTabControl : UserControl
         return _browserControl = browser;
     }
 
-    private static void ConfigureCoreWebView2(CoreWebView2 core)
+    private void ConfigureCoreWebView2(CoreWebView2 core)
     {
         try
         {
@@ -766,9 +776,8 @@ public sealed partial class BrowserTabControl : UserControl
             ApplyBrowserColorScheme(core);
             // Resolve a writable local folder before a download starts. The system
             // Downloads folder may be redirected to an unavailable network share.
-            Directory.CreateDirectory(AppPaths.IsolatedDownloadsRoot);
-            AppPaths.Hide(AppPaths.IsolatedDownloadsRoot);
-            core.Profile.DefaultDownloadFolderPath = AppPaths.IsolatedDownloadsRoot;
+            if (!CanAccessDownloads) return;
+            core.Profile.DefaultDownloadFolderPath = BrowserDownloadFolders.Prepare(_workspace);
         }
         catch (Exception ex)
         {
@@ -859,7 +868,12 @@ public sealed partial class BrowserTabControl : UserControl
         const string name = "session-check";
         CoreWebView2CookieManager? manager = _browserControl?.CoreWebView2?.CookieManager;
         if (manager == null) return false;
-        if (create) manager.AddOrUpdateCookie(manager.CreateCookie(name, "1", host, "/"));
+        if (create)
+        {
+            var fixture = manager.CreateCookie(name, "1", host, "/");
+            fixture.Expires = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds();
+            manager.AddOrUpdateCookie(fixture);
+        }
         var cookies = await manager.GetCookiesAsync("https://" + host + "/");
         return cookies.Any(cookie => cookie.Name == name && cookie.Value == "1");
     }
@@ -871,6 +885,15 @@ public sealed partial class BrowserTabControl : UserControl
             BrowserProgressBar.Visibility = Visibility.Collapsed;
             StartSurface.Visibility = Visibility.Visible;
             if (_browserControl is { } browser) browser.Visibility = Visibility.Collapsed;
+            StartMessage.Visibility = Visibility.Visible;
+            var historyError = exception as BrowserHistoryUnavailableException ?? exception.InnerException as BrowserHistoryUnavailableException;
+            if (historyError != null)
+            {
+                StartMessage.Text = historyError.Message;
+                if (SessionStateText != null) SessionStateText.Text = "等待清理浏览记录";
+                ShowBrowserError("网页还未打开", historyError.Message);
+                return;
+            }
             StartMessage.Text = "可重试，或输入另一个地址。";
             if (SessionStateText != null) SessionStateText.Text = "浏览器启动失败";
             string detail = BrowserProfileManager.LastInitializationError;
@@ -923,9 +946,12 @@ public sealed partial class BrowserTabControl : UserControl
 
         try
         {
-            core.PermissionRequested += CoreWebView2_PermissionRequested;
+            _permissionRequestedHandler = (_, args) => CoreWebView2_PermissionRequested(core, args);
+            core.PermissionRequested += _permissionRequestedHandler;
             core.IsDocumentPlayingAudioChanged += CoreWebView2_IsDocumentPlayingAudioChanged;
-            core.DownloadStarting += CoreWebView2_DownloadStarting;
+            _downloadStartingHandler = (_, args) => CoreWebView2_DownloadStarting(core, args);
+            core.DownloadStarting += _downloadStartingHandler;
+            core.IsDefaultDownloadDialogOpenChanged += OnEngineDownloadDialogChanged;
             core.ContainsFullScreenElementChanged += CoreWebView2_ContainsFullScreenElementChanged;
             core.NewWindowRequested += CoreWebView2_NewWindowRequested;
             core.ContextMenuRequested += CoreWebView2_ContextMenuRequested;
@@ -962,9 +988,12 @@ public sealed partial class BrowserTabControl : UserControl
 
         try
         {
-            core.PermissionRequested -= CoreWebView2_PermissionRequested;
+            if (_permissionRequestedHandler != null) core.PermissionRequested -= _permissionRequestedHandler;
+            _permissionRequestedHandler = null;
             core.IsDocumentPlayingAudioChanged -= CoreWebView2_IsDocumentPlayingAudioChanged;
-            core.DownloadStarting -= CoreWebView2_DownloadStarting;
+            if (_downloadStartingHandler != null) core.DownloadStarting -= _downloadStartingHandler;
+            _downloadStartingHandler = null;
+            core.IsDefaultDownloadDialogOpenChanged -= OnEngineDownloadDialogChanged;
             core.ContainsFullScreenElementChanged -= CoreWebView2_ContainsFullScreenElementChanged;
             core.NewWindowRequested -= CoreWebView2_NewWindowRequested;
             core.ContextMenuRequested -= CoreWebView2_ContextMenuRequested;
@@ -1003,10 +1032,19 @@ public sealed partial class BrowserTabControl : UserControl
         _isInitialized = !browserExited;
         _navigationFailed = false;
         _documentReady = false;
+        _hadReadyDocumentBeforeNav = false;
         _isPlayingAudio = false;
         _isBrowserFullScreen = false;
         if (browserExited)
         {
+            // The tab object survives until the user retries or closes it.
+            // The native controller does not. Counting a dead controller can
+            // skip the live controller handoff when several tabs shared it.
+            if (_environmentAcquired)
+            {
+                _environmentAcquired = false;
+                BrowserProfileManager.ReleaseEnvironmentUse();
+            }
             // These native operations cannot resume after their browser process
             // has gone. Release hidden download owners and show a terminal state.
             foreach (var download in _activeDownloads.ToArray())
@@ -1176,7 +1214,7 @@ public sealed partial class BrowserTabControl : UserControl
 
     #region Permissions (CoreWebView2)
 
-    private void CoreWebView2_PermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
+    private async void CoreWebView2_PermissionRequested(CoreWebView2 core, CoreWebView2PermissionRequestedEventArgs e)
     {
         // By default WebView2 may cache the decision and bypass our handler on
         // the next request, even after the user changes this switch.
@@ -1187,9 +1225,32 @@ public sealed partial class BrowserTabControl : UserControl
             AppLog.Warn("WebView2 request-scoped permissions unavailable: " + ex.GetType().Name);
             return;
         }
-        _tabPermissions.SetDocument(_hookedCore?.Source);
-        if (!_isDisposed && !_retainedForDownloads &&
-            !_tabPermissions.Blocks(e.PermissionKind, e.Uri, SettingsService.Instance.Data)) return;
+        if (!CanAccessDownloads || _retainedForDownloads || !ReferenceEquals(core, _hookedCore))
+        {
+            e.State = CoreWebView2PermissionState.Deny;
+            e.Handled = true;
+            return;
+        }
+        _tabPermissions.SetDocument(core.Source);
+        if (IsForegroundTab && IsLoaded && _tabPermissions.CanAskForFilePermission(e.PermissionKind, e.Uri))
+        {
+            var deferral = e.GetDeferral();
+            e.State = CoreWebView2PermissionState.Deny;
+            e.Handled = true;
+            try
+            {
+                if (await ConfirmFilePermissionAsync(core, e.PermissionKind, e.Uri))
+                    e.State = CoreWebView2PermissionState.Allow;
+            }
+            catch (Exception ex) { AppLog.Warn("Confirm site permission: " + ex.GetType().Name); }
+            finally
+            {
+                try { deferral.Complete(); }
+                catch (Exception ex) { AppLog.Warn("Complete site permission: " + ex.GetType().Name); }
+            }
+            return;
+        }
+        if (!_tabPermissions.Blocks(e.PermissionKind, e.Uri, SettingsService.Instance.Data)) return;
 
         e.State = CoreWebView2PermissionState.Deny;
         e.Handled = true;
@@ -1198,8 +1259,36 @@ public sealed partial class BrowserTabControl : UserControl
         _blockedCounter++;
         UiMotion.SetVisible(ShieldBlockedBadge, true, MotionCue.Fade);
         ShieldBlockedCountText.Text = _blockedCounter.ToString(CultureInfo.InvariantCulture);
-        SetHubStatus($"此标签页已阻止 {_blockedCounter} 次权限请求");
+        SetHubStatus($"此标签页已阻止 {_blockedCounter} 次权限请求（{DescribePermissionKind(e.PermissionKind)}）");
     }
+
+    private async Task<bool> ConfirmFilePermissionAsync(CoreWebView2 core, CoreWebView2PermissionKind kind, string requester)
+    {
+        if (!CanAccessDownloads || _retainedForDownloads || !_tabPermissions.CanAskForFilePermission(kind, requester)) return false;
+        string origin = _tabPermissions.Origin!;
+        ulong document = _imageDocumentId;
+        bool files = kind == CoreWebView2PermissionKind.FileReadWrite;
+        bool accepted = await ConfirmForCurrentTabAsync(core, files ? "允许本地文件读写？" : "允许连续下载多个文件？",
+            files ? $"{origin} 请求读写你通过文件选择器选定的文件或文件夹。" : $"{origin} 请求在本次操作中连续下载多个文件。",
+            "允许本次请求");
+        return accepted && CanAccessDownloads && !_retainedForDownloads && document == _imageDocumentId && origin == _tabPermissions.Origin;
+    }
+
+    private static string DescribePermissionKind(CoreWebView2PermissionKind kind) => kind switch
+    {
+        CoreWebView2PermissionKind.Camera => "摄像头",
+        CoreWebView2PermissionKind.Microphone => "麦克风",
+        CoreWebView2PermissionKind.Geolocation => "位置信息",
+        CoreWebView2PermissionKind.Notifications => "通知",
+        CoreWebView2PermissionKind.ClipboardRead => "读取剪贴板",
+        CoreWebView2PermissionKind.MultipleAutomaticDownloads => "多文件连续下载",
+        CoreWebView2PermissionKind.FileReadWrite => "本地文件读写",
+        CoreWebView2PermissionKind.Autoplay => "自动播放",
+        CoreWebView2PermissionKind.LocalFonts => "本地字体枚举",
+        CoreWebView2PermissionKind.MidiSystemExclusiveMessages => "MIDI 设备",
+        CoreWebView2PermissionKind.WindowManagement => "多屏幕窗口管理",
+        _ => kind.ToString()
+    };
 
     private static void ApplyBrowserColorScheme(CoreWebView2 core)
     {
@@ -1320,7 +1409,7 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void CoreWebView2_DownloadStarting(object? sender, CoreWebView2DownloadStartingEventArgs e)
     {
-        if (_isDisposed || _retainedForDownloads)
+        if (!CanAccessDownloads || _retainedForDownloads || !ReferenceEquals(sender, _hookedCore))
         {
             e.Cancel = true;
             e.Handled = true;
@@ -1330,9 +1419,7 @@ public sealed partial class BrowserTabControl : UserControl
         BrowserDownloadPath? reservation = null;
         try
         {
-            string isolatedDirectory = AppPaths.IsolatedDownloadsRoot;
-            Directory.CreateDirectory(isolatedDirectory);
-            AppPaths.Hide(isolatedDirectory);
+            string isolatedDirectory = BrowserDownloadFolders.Prepare(_workspace);
 
             string fileName = Path.GetFileName(e.ResultFilePath);
             if (string.IsNullOrWhiteSpace(fileName))
@@ -1348,10 +1435,11 @@ public sealed partial class BrowserTabControl : UserControl
             // a blank one. Suppress the separate per-WebView native popup.
             e.Handled = true;
             _downloadNavigationUrl = operation.Uri;
-            if (string.Equals(_downloadNavigationUrl, _lastRequestedUrl, StringComparison.Ordinal))
+            if (SameDownloadUrl(_downloadNavigationUrl, _lastRequestedUrl))
             {
                 BrowserErrorBar.IsOpen = false;
                 _navigationFailed = false;
+                if (_activeNavigationId == null) RestoreDocumentAfterDownload();
             }
 
             string displayName = Path.GetFileName(targetPath);
@@ -1520,7 +1608,8 @@ public sealed partial class BrowserTabControl : UserControl
 
     private async void StoreDownload_Click(object sender, RoutedEventArgs args)
     {
-        if (DownloadVaultActions.DataContext is BrowserDownloadItem item) await item.StoreInVaultAsync();
+        if (CanAccessDownloads && DownloadVaultActions.DataContext is BrowserDownloadItem item &&
+            BrowserDownloads.Items.Contains(item)) await item.StoreInVaultAsync();
     }
 
     private void ShowDownloadToast(string glyph, string title, string description, BrowserDownloadItem? completed = null)
@@ -1540,6 +1629,19 @@ public sealed partial class BrowserTabControl : UserControl
         UiMotion.SetOverlayVisible(DownloadToast, false, MotionCue.FromBelow);
     }
 
+    internal void OpenDownloadsFromShortcut() => ShowDownloads_Click(this, new RoutedEventArgs());
+
+    private void OnEngineDownloadDialogChanged(CoreWebView2 sender, object args)
+    {
+        // A focused WebView can consume Ctrl+J in its own download UI before XAML sees the key.
+        bool open = sender.IsDefaultDownloadDialogOpen;
+        if (SmokeTest.BrowserAudit) SmokeTest.Report($"download flyout: engine download dialog open={open}");
+        if (!open) return;
+        sender.CloseDefaultDownloadDialog();
+        if (IsLoaded && IsForegroundTab && MainWindow.Current?.IsPrivacyCoverVisible == false)
+            OpenDownloadsFromShortcut();
+    }
+
     #endregion
 
     #region Shortcuts, Zoom & Find
@@ -1553,7 +1655,6 @@ public sealed partial class BrowserTabControl : UserControl
         // AltGr is reported as Ctrl+Alt on Windows. Keep these keystrokes available to text editors.
         if (isCtrl && isAlt || IsKeyPressed(VirtualKey.LeftWindows) || IsKeyPressed(VirtualKey.RightWindows)) return;
         bool plainCtrl = isCtrl && !shift;
-        if (plainCtrl && e.Key == VirtualKey.J) { e.Handled = true; ShowDownloads_Click(this, new RoutedEventArgs()); return; }
         if (plainCtrl && e.Key == VirtualKey.H) { e.Handled = true; OpenSessionHistory(); return; }
 
         if (plainCtrl && e.Key == VirtualKey.D)
@@ -1592,7 +1693,7 @@ public sealed partial class BrowserTabControl : UserControl
             ToggleFindBar();
             e.Handled = true;
         }
-        else if (isCtrl && !_nativeZoomDispatching && _browserControl?.FocusState == FocusState.Unfocused &&
+        else if (isCtrl && !_nativeZoomDispatching && (StartSurface.Visibility == Visibility.Visible || _browserControl?.FocusState == FocusState.Unfocused) &&
             e.Key is (VirtualKey)187 or VirtualKey.Add or (VirtualKey)189 or VirtualKey.Subtract or VirtualKey.Number0 or VirtualKey.NumberPad0)
         {
             // The page handles its own zoom shortcuts. Forward only when the
@@ -1728,12 +1829,17 @@ public sealed partial class BrowserTabControl : UserControl
         _permissionPanelOrigin = _tabPermissions.Origin;
         CurrentSiteScope.IsEnabled = _tabPermissions.Origin != null;
         ClearSiteStorageBtn.IsEnabled = CurrentSiteScope.IsEnabled;
+        ReloadSiteFilesBtn.IsEnabled = CurrentSiteScope.IsEnabled;
+        ForgetSiteButton.IsEnabled = CurrentSiteScope.IsEnabled && _hookedCore != null;
+        ClearAllAccountsBtn.IsEnabled = !_isDisposed && _workspace != null && !_isInitializing;
+        AccountModeDescription.Text = PrivacyModeExplanation;
+        DefaultProtectionText.Text = _workspace?.Temporary == true ? "临时空间 · 退出后清除登录和记录" : "主空间 · 退出后清记录，保留登录";
         PermissionScope.SelectedIndex = CurrentSiteScope.IsEnabled ? 0 : 1;
         LoadPermissionSettings();
         FlyoutDomainText.Text = DescribeHost(currentUrl);
         SessionStateText.Text = Uri.TryCreate(currentUrl, UriKind.Absolute, out var site) && site.Scheme is "http" or "https"
-            ? site.Scheme == "https" ? "HTTPS · 临时会话" : "HTTP · 连接未加密"
-            : _isInitialized ? "临时会话已启动" : "尚未打开网页";
+            ? site.Scheme == "https" ? "连接已加密" : "连接未加密"
+            : _isInitialized ? "浏览器已启动" : "尚未打开网页";
         UpdateEmptyNotices();
 
         if (PanelCookie.Visibility == Visibility.Visible)
@@ -1755,7 +1861,7 @@ public sealed partial class BrowserTabControl : UserControl
         PrivacySections.SelectionChanged += PrivacySections_SelectionChanged;
         CookieListView.ItemsSource = _filteredCookies;
         HistoryListView.ItemsSource = _sessionHistory;
-        SessionStateText.Text = _isInitialized ? "临时会话已启动" : "尚未打开网页";
+        SessionStateText.Text = _isInitialized ? "浏览器已启动" : "尚未打开网页";
         HubStatusText.Text = _hubStatus;
         LoadPermissionSettings();
         UpdateEmptyNotices();
@@ -1976,62 +2082,6 @@ public sealed partial class BrowserTabControl : UserControl
         }
     }
 
-    private async void DeleteSiteCookies_Click(object sender, RoutedEventArgs e)
-    {
-        if (_isDisposed) return;
-
-        CoreWebView2? core = _hookedCore;
-        if (core == null) return;
-
-        string currentUrl = GetCurrentDocumentUrl();
-        if (!TryCreateWebUri(currentUrl, out Uri? currentUri) || currentUri == null || string.IsNullOrEmpty(currentUri.Host))
-        {
-            SetHubStatus("当前没有可清理 Cookie 的活动站点");
-            return;
-        }
-
-        string host = currentUri.IdnHost;
-        int version = _cookieLoadVersion;
-        try
-        {
-            int count = await BrowserSiteData.DeleteCookiesForHostAsync(core, host,
-                () => !_isDisposed && ReferenceEquals(_hookedCore, core));
-            if (_isDisposed || !ReferenceEquals(_hookedCore, core) || version != _cookieLoadVersion) return;
-            await RefreshCookiesAsync();
-            SetHubStatus($"已清除 {host} 的 {count} 个 Cookie");
-            AppLog.Info("CookieManager: 已清除当前站点的 Cookie");
-        }
-        catch (Exception ex)
-        {
-            AppLog.Error("DeleteSiteCookies failed", ex);
-            SetHubStatus("清除站点 Cookie 失败（详情见诊断日志）");
-        }
-    }
-
-    private async void DeleteAllCookies_Click(object sender, RoutedEventArgs e)
-    {
-        if (_isDisposed) return;
-
-        CoreWebView2? core = _browserControl?.CoreWebView2;
-        if (core == null) return;
-
-        try
-        {
-            if (!await ConfirmSessionDataClearAsync(core, "清除所有网站的 Cookie？",
-                "本次会话的所有标签页都会受影响。已登录的网站可能要求你重新登录。")) return;
-            await core.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.Cookies);
-            if (_isDisposed || core != _hookedCore) return;
-            ClearCookieRows();
-            SetHubStatus("所有 Cookie 已清空");
-            AppLog.Info("CookieManager: 已清空全部 Cookie");
-        }
-        catch (Exception ex)
-        {
-            AppLog.Error("DeleteAllCookies failed", ex);
-            SetHubStatus("清空 Cookie 失败（详情见诊断日志）");
-        }
-    }
-
     #endregion
 
     #region Storage & Cache
@@ -2045,11 +2095,11 @@ public sealed partial class BrowserTabControl : UserControl
         {
             string address = page.GetComponents(UriComponents.SchemeAndServer, UriFormat.UriEscaped);
             if (!await ConfirmSessionDataClearAsync(core, "清除本站的离线数据？",
-                $"{address}\n本次会话中，此来源的本地存储、IndexedDB 数据库和离线缓存都将被清除，未同步草稿可能丢失。Cookie 会保留。") ||
+                $"{address}\n本站保存的草稿、离线内容和偏好会移除。网站的小记录会保留，但部分网站可能需要重新登录。") ||
                 documentId != _imageDocumentId || origin != _tabPermissions.Origin) return;
             await BrowserSiteData.ClearOfflineDataForOriginAsync(core, page);
             if (!_isDisposed && ReferenceEquals(core, _hookedCore) && documentId == _imageDocumentId)
-                SetHubStatus("已清除本站的本地存储、IndexedDB 和离线缓存");
+                SetHubStatus("已清除本站的离线内容和本地偏好");
         }
         catch (Exception ex)
         {
@@ -2058,13 +2108,16 @@ public sealed partial class BrowserTabControl : UserControl
         }
     }
 
-    private async Task<bool> ConfirmSessionDataClearAsync(CoreWebView2 core, string title, string detail)
+    private Task<bool> ConfirmSessionDataClearAsync(CoreWebView2 core, string title, string detail) =>
+        ConfirmForCurrentTabAsync(core, title, detail, "确认清除");
+
+    private async Task<bool> ConfirmForCurrentTabAsync(CoreWebView2? core, string title, string detail, string primary)
     {
         if (!IsLoaded || !IsForegroundTab || _isDisposed || core != _hookedCore) return false;
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot, Title = title, Content = detail,
-            PrimaryButtonText = "确认清除", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close
+            PrimaryButtonText = primary, CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close
         };
         var choice = await WorkspaceDialogs.ShowAsync(dialog);
         return choice == ContentDialogResult.Primary && !_isDisposed && IsLoaded && IsForegroundTab && core == _hookedCore;
@@ -2075,16 +2128,16 @@ public sealed partial class BrowserTabControl : UserControl
         if (_isDisposed) return;
 
         CoreWebView2? core = _browserControl?.CoreWebView2;
-        if (core == null) return;
-
         try
         {
-            if (!await ConfirmSessionDataClearAsync(core, "清除所有网站的本地存储？",
-                "本次会话中各网站保存的离线文件、数据库和未同步草稿都可能丢失。Cookie 会保留。")) return;
+            if (!await ConfirmForCurrentTabAsync(core, "清除所有网站的离线内容？",
+                "各网站保存的离线文件和未同步草稿可能丢失。Cookie 会保留，但部分网站可能需要重新登录。", "确认清除")) return;
+            core ??= await GetCoreForProfileActionAsync();
+            if (core == null) return;
             await core.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.AllDomStorage);
             if (_isDisposed || core != _hookedCore) return;
 
-            SetHubStatus("本地存储与缓存已清空（Cookie 需在上方单独清除）");
+            SetHubStatus("已清除各网站的离线内容和本地偏好");
         }
         catch (Exception ex)
         {
@@ -2097,14 +2150,13 @@ public sealed partial class BrowserTabControl : UserControl
     {
         if (_isDisposed) return;
 
-        CoreWebView2? core = _browserControl?.CoreWebView2;
-        if (core == null) return;
-
         try
         {
+            var core = await GetCoreForProfileActionAsync();
+            if (core == null) return;
             await BrowserSiteData.ClearHttpCacheAsync(core);
             if (_isDisposed || core != _hookedCore) return;
-            SetHubStatus("已清除 HTTP 磁盘缓存");
+            SetHubStatus("已清除网页临时文件，网站登录已保留");
         }
         catch (Exception ex)
         {
@@ -2141,11 +2193,22 @@ public sealed partial class BrowserTabControl : UserControl
         }
     }
 
-    private void ClearSessionHistory_Click(object sender, RoutedEventArgs e)
+    private async void ClearSessionHistory_Click(object sender, RoutedEventArgs e)
     {
         BrowserSessionHistory.Clear();
         UpdateEmptyNotices();
-        SetHubStatus("临时会话历史和最近关闭的标签记录已清空");
+        try
+        {
+            var core = await GetCoreForProfileActionAsync();
+            if (core == null) return;
+            await core.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.BrowsingHistory);
+            if (!_isDisposed && core == _hookedCore) SetHubStatus("已清空浏览记录和最近关闭的标签，网站登录已保留");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("浏览记录未全部清除：" + ex.GetType().Name);
+            if (!_isDisposed) SetHubStatus("列表已清空，浏览器未能清完访问记录，请重试");
+        }
     }
 
     private void AddSessionHistory(string title, string url)
@@ -2161,6 +2224,7 @@ public sealed partial class BrowserTabControl : UserControl
     private void RefreshStartBookmarks()
     {
         if (_isDisposed || StartSurface.Visibility != Visibility.Visible) return;
+        StartImportButton.Visibility = SettingsService.Instance.PersonalBookmarkSession != null ? Visibility.Visible : Visibility.Collapsed;
         var bookmarks = SettingsService.Instance.CurrentBookmarks.Where(item => !item.ContainsLoginInfo).Take(12).ToArray();
         // Loaded is raised again when returning to a tab. Retain the existing
         // controls and focus if the displayed bookmarks have not changed.
@@ -2175,8 +2239,14 @@ public sealed partial class BrowserTabControl : UserControl
         CancelInitialAddressFocus();
         if (MoreActionsContent == null) FindName(nameof(MoreActionsContent));
         UpdateAudioIcon();
-        PageImagesBtn.IsEnabled = _isInitialized && _hookedCore != null && _documentReady;
-        foreach (var control in ZoomMenuRow.Children.OfType<Control>()) control.IsEnabled = _isInitialized && _hookedCore != null;
+        bool start = StartSurface.Visibility == Visibility.Visible;
+        bool webPage = !start && _documentReady && _hookedCore != null;
+        PageActionsGroup.Visibility = webPage ? Visibility.Visible : Visibility.Collapsed;
+        bool transferable = webPage && TryCreateWebUri(_hookedCore!.Source, out var page) && string.IsNullOrEmpty(page?.UserInfo);
+        OpenInEdgeBtn.IsEnabled = transferable;
+        CopyCleanLinkBtn.IsEnabled = transferable;
+        foreach (var button in ZoomMenuRow.Children.OfType<Button>()) button.IsEnabled = start || _hookedCore != null;
+        ZoomMenuLabel.Text = start ? "首页缩放" : "网页缩放";
         _ = RefreshNativeZoomAsync();
     }
 
@@ -2204,37 +2274,47 @@ public sealed partial class BrowserTabControl : UserControl
     private async void OpenDownloadsFolder_Click(object sender, RoutedEventArgs e)
     {
         MoreActionsFlyout.Hide();
+        if (!CanAccessDownloads) return;
         try
         {
-            Directory.CreateDirectory(AppPaths.IsolatedDownloadsRoot);
-            AppPaths.Hide(AppPaths.IsolatedDownloadsRoot);
-            var folder = await Windows.Storage.StorageFolder.GetFolderFromPathAsync(AppPaths.IsolatedDownloadsRoot);
-            if (!await Launcher.LaunchFolderAsync(folder)) ShowBrowserError("无法打开下载文件夹", "请稍后重试。");
+            await DownloadFolderDialog.ShowFolderAsync(XamlRoot, _workspace);
         }
         catch (Exception ex)
         {
-            AppLog.Warn("Open downloads folder failed: " + ex.GetType().Name);
-            ShowBrowserError("无法打开下载文件夹", "文件仍保留在应用下载目录中，请稍后重试。");
+            AppLog.Warn($"Open downloads folder: {ex.GetType().Name} (0x{ex.HResult:X8})");
+            ShowBrowserError("无法打开下载文件夹", BrowserDownloadFolders.FailureMessage(ex));
         }
     }
 
     private void ShowDownloads_Click(object sender, RoutedEventArgs e)
     {
-        if (_isDisposed) return;
+        if (!CanAccessDownloads) return;
         CancelInitialAddressFocus();
         try
         {
-            EnsureDownloadsFlyout().ShowAt(DownloadsBtn);
+            var flyout = EnsureDownloadsFlyout();
+            if (!flyout.IsOpen) flyout.ShowAt(DownloadsBtn);
             UiMotion.SetVisible(DownloadToast, false);
         }
         catch (Exception ex) { AppLog.Warn("Download dialog failed: " + ex.GetType().Name); ShowBrowserError("无法显示下载记录", "可以从更多菜单打开下载文件夹。"); }
     }
 
-    private Flyout EnsureDownloadsFlyout() => _downloadsFlyout ??= new Flyout
+    private Flyout EnsureDownloadsFlyout()
     {
-        Content = new DownloadListControl(),
-        Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight,
-    };
+        if (_downloadsFlyout != null) return _downloadsFlyout;
+        var list = new DownloadListControl();
+        var flyout = new Flyout { Content = list, Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight };
+        bool folderRequested = false;
+        list.OpenFolderRequested += () => { folderRequested = true; flyout.Hide(); };
+        flyout.Closed += (_, _) =>
+        {
+            if (!folderRequested) return;
+            folderRequested = false;
+            if (SmokeTest.BrowserAudit) SmokeTest.Report($"downloads folder transition: current={CanAccessDownloads}, foreground={IsForegroundTab}, loaded={IsLoaded}");
+            if (CanAccessDownloads && IsForegroundTab && IsLoaded) OpenDownloadsFolder_Click(this, new RoutedEventArgs());
+        };
+        return _downloadsFlyout = flyout;
+    }
 
     private void CoreWebView2_DocumentTitleChanged(CoreWebView2 sender, object args)
     {
@@ -2249,12 +2329,13 @@ public sealed partial class BrowserTabControl : UserControl
         if (_isDisposed) return;
         BackBtn.IsEnabled = sender.CanGoBack;
         ForwardBtn.IsEnabled = sender.CanGoForward;
-        if (UrlTextBox.FocusState == FocusState.Unfocused) UrlTextBox.Text = DisplayAddress(sender.Source);
+        if (!IsEditingAddress) UrlTextBox.Text = DisplayAddress(sender.Source);
     }
 
     private void CoreWebView2_SourceChanged(CoreWebView2 sender, CoreWebView2SourceChangedEventArgs args)
     {
         if (_isDisposed) return;
+        if (args.IsNewDocument) _hadReadyDocumentBeforeNav = false;
         DocumentAddressChanged?.Invoke();
         _tabPermissions.SetDocument(sender.Source);
         UpdatePopupButton();
@@ -2262,11 +2343,7 @@ public sealed partial class BrowserTabControl : UserControl
         ClearCookieRows();
         // Commit the real address on redirects/SPA navigation without waiting for
         // slow images or ads. Preserve an address the user has started editing.
-        if (UrlTextBox.FocusState == FocusState.Unfocused || UrlTextBox.Text == _addressAtNavigationStart)
-        {
-            UrlTextBox.Text = DisplayAddress(sender.Source);
-            _addressAtNavigationStart = UrlTextBox.Text;
-        }
+        if (!IsEditingAddress) UrlTextBox.Text = DisplayAddress(sender.Source);
         UpdateBookmarkStarState();
         if (!args.IsNewDocument && _documentReady) AddSessionHistory(sender.DocumentTitle, sender.Source);
     }
@@ -2396,11 +2473,7 @@ public sealed partial class BrowserTabControl : UserControl
         // a real navigation has begun (notably a fast local or cached page).
         _focusAddressOnLoad = false;
 
-        if (!string.Equals(_lastRequestedUrl, uri.AbsoluteUri, StringComparison.Ordinal) ||
-            UrlTextBox.FocusState == FocusState.Unfocused)
-        {
-            UrlTextBox.Text = uri.AbsoluteUri;
-        }
+        if (!IsEditingAddress) UrlTextBox.Text = uri.AbsoluteUri;
 
         _lastRequestedUrl = uri.AbsoluteUri;
         CoreWebView2? core = _browserControl?.CoreWebView2;
@@ -2424,6 +2497,7 @@ public sealed partial class BrowserTabControl : UserControl
         {
             ResumeBrowser();
             core.Navigate(uri.AbsoluteUri);
+            StartSurface.Visibility = Visibility.Collapsed;
             if (_focusPageAfterNavigation)
             {
                 _focusPageAfterNavigation = false;
@@ -2558,11 +2632,13 @@ public sealed partial class BrowserTabControl : UserControl
             _blockedPopupUrls.Clear();
             _blockedPopupCount = 0;
             UpdatePopupButton();
-            _addressAtNavigationStart = UrlTextBox.Text;
             _activeNavigationId = args.NavigationId;
         }
         if (_privacyCoverActive) ScheduleBackgroundSleep();
         else _backgroundTimer?.Stop();
+        // Redirects and a second navigation can start before the previous one commits.
+        // SourceChanged clears this flag when WebView2 actually replaces the old page.
+        _hadReadyDocumentBeforeNav |= _documentReady && !IsBlankDocumentUrl(_hookedCore?.Source);
         _documentReady = false;
         _historyRecorded = false;
         if (TryCreateWebUri(args.Uri, out Uri? target)) _lastRequestedUrl = target!.AbsoluteUri;
@@ -2572,6 +2648,30 @@ public sealed partial class BrowserTabControl : UserControl
         BrowserProgressBar.Visibility = Visibility.Visible;
         BeginFaviconNavigation(args.Uri);
         UpdateNavigationVisuals();
+    }
+
+    private static bool SameDownloadUrl(string? a, string? b)
+    {
+        if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+        if (string.Equals(a, b, StringComparison.Ordinal)) return true;
+        if (Uri.TryCreate(a, UriKind.Absolute, out Uri? ua) && Uri.TryCreate(b, UriKind.Absolute, out Uri? ub))
+        {
+            // WebView2 may escape literal brackets when handing off to its
+            // downloader. Keep encoded separators such as %2F and %26 distinct.
+            static string RequestUrl(Uri uri) => uri.GetComponents(UriComponents.HttpRequestUrl, UriFormat.UriEscaped)
+                .Replace("%5B", "[", StringComparison.OrdinalIgnoreCase).Replace("%5D", "]", StringComparison.OrdinalIgnoreCase);
+            return RequestUrl(ua) == RequestUrl(ub);
+        }
+        return false;
+    }
+
+    private bool RestoreDocumentAfterDownload()
+    {
+        if (!_hadReadyDocumentBeforeNav || _hookedCore is not { } core || IsBlankDocumentUrl(core.Source)) return false;
+        _documentReady = true;
+        if (_favicon == null) CoreWebView2_FaviconChanged(core, EventArgs.Empty);
+        NavigationVisualChanged?.Invoke();
+        return true;
     }
 
     private void BrowserControl_NavigationCompleted(WebView2 sender, CoreWebView2NavigationCompletedEventArgs args)
@@ -2605,9 +2705,17 @@ public sealed partial class BrowserTabControl : UserControl
              args.WebErrorStatus == CoreWebView2WebErrorStatus.ValidAuthenticationCredentialsRequired);
         if (!args.IsSuccess && !serverResponse)
         {
-            if (args.WebErrorStatus == CoreWebView2WebErrorStatus.ConnectionAborted &&
-                string.Equals(_downloadNavigationUrl, _lastRequestedUrl, StringComparison.Ordinal) && _downloadNavigationUrl != null) return;
-            if (args.WebErrorStatus == CoreWebView2WebErrorStatus.OperationCanceled) return;
+            bool downloadAborted = args.WebErrorStatus == CoreWebView2WebErrorStatus.ConnectionAborted &&
+                _downloadNavigationUrl != null && SameDownloadUrl(_downloadNavigationUrl, _lastRequestedUrl);
+            if (downloadAborted || args.WebErrorStatus == CoreWebView2WebErrorStatus.OperationCanceled)
+            {
+                if (!RestoreDocumentAfterDownload() && args.WebErrorStatus == CoreWebView2WebErrorStatus.OperationCanceled && IsBlankDocumentUrl(core?.Source))
+                {
+                    // Initial load stopped before commit: mark so Reload retries _lastRequestedUrl instead of about:blank.
+                    _navigationFailed = true;
+                }
+                return;
+            }
             _navigationFailed = true;
             string reason = args.WebErrorStatus.ToString();
             var failure = BrowserNavigationFailure.Describe(args.WebErrorStatus);
@@ -2616,10 +2724,12 @@ public sealed partial class BrowserTabControl : UserControl
             return;
         }
 
+        _documentReady = true;
+        _hadReadyDocumentBeforeNav = false;
         string url = core?.Source ?? string.Empty;
         if (IsBlankDocumentUrl(url))
         {
-            if (UrlTextBox.FocusState == FocusState.Unfocused || UrlTextBox.Text == _addressAtNavigationStart)
+            if (!IsEditingAddress)
                 UrlTextBox.Text = DisplayAddress(url);
             string? documentTitle = core?.DocumentTitle;
             CurrentTitle = !string.IsNullOrWhiteSpace(documentTitle) && !IsBlankDocumentUrl(documentTitle)
@@ -2629,8 +2739,7 @@ public sealed partial class BrowserTabControl : UserControl
             return;
         }
 
-        if (UrlTextBox.FocusState == FocusState.Unfocused ||
-            string.Equals(UrlTextBox.Text, _addressAtNavigationStart, StringComparison.Ordinal))
+        if (!IsEditingAddress)
         {
             UrlTextBox.Text = url;
         }

@@ -11,6 +11,13 @@ public sealed partial class SettingsPage : Page
     private bool _isLoaded;
     private VaultWork? _work;
     private bool _picking;
+    private SettingsService.BookmarkSession? _pageSession;
+    private static (SettingsService.BookmarkSession Session, string Message, InfoBarSeverity Severity)? _pendingNotification;
+
+    static SettingsPage()
+    {
+        VaultService.Instance.Locked += () => _pendingNotification = null;
+    }
 
     public SettingsPage()
     {
@@ -36,6 +43,7 @@ public sealed partial class SettingsPage : Page
     private void SettingsPage_Loaded(object sender, RoutedEventArgs e)
     {
         _isLoaded = false;
+        _pageSession = SettingsService.Instance.ActiveBookmarkSession;
         RuntimeArchitectureText.Text = $"运行架构：{System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture} · .NET {Environment.Version.Major}";
         var cfg = SettingsService.Instance.Data;
 
@@ -88,9 +96,14 @@ public sealed partial class SettingsPage : Page
 
         RefreshVaultSecuritySection();
 
-        if (!BossKeyService.Instance.IsBossKeyEnabled && cfg.BossKeyEnabled)
+        if (_pendingNotification is { } pending && ReferenceEquals(pending.Session, _pageSession))
         {
-            ShowInfo("全局老板键 Ctrl+Alt+B 未能注册，可能已被其他程序占用。", InfoBarSeverity.Warning);
+            _pendingNotification = null;
+            ShowInfoCore(pending.Message, pending.Severity);
+        }
+        else if (!BossKeyService.Instance.IsBossKeyEnabled && cfg.BossKeyEnabled)
+        {
+            ShowInfoCore("全局老板键 Ctrl+Alt+B 未能注册，可能已被其他程序占用。", InfoBarSeverity.Warning);
         }
 
         _isLoaded = true;
@@ -249,13 +262,13 @@ public sealed partial class SettingsPage : Page
             BossKeyToggle.IsOn = false;
             _isLoaded = true;
             ShowInfo(BossKeyService.Instance.LastBossKeyError, InfoBarSeverity.Error);
-            SettingsService.Instance.Data.BossKeyEnabled = false;
-            SavePreferences();
+            MainWindow.Current?.RefreshStatusBadge();
             return;
         }
 
         SettingsService.Instance.Data.BossKeyEnabled = requested;
         SavePreferences();
+        MainWindow.Current?.RefreshStatusBadge();
     }
 
     private void BossKeyActionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -522,6 +535,10 @@ public sealed partial class SettingsPage : Page
         {
             AppLog.Error("重置保险箱失败", ex);
             ShowInfo("重置失败：" + ex.Message, InfoBarSeverity.Error);
+            if (!VaultService.Instance.IsUnlocked || VaultService.Instance.IsCorrupted)
+            {
+                MainWindow.Current?.LockWorkspace();
+            }
         }
         finally
         {
@@ -568,7 +585,20 @@ public sealed partial class SettingsPage : Page
 
     private void ShowInfo(string message, InfoBarSeverity severity)
     {
-        if (!IsLoaded) return;
+        if (_pageSession == null || !ReferenceEquals(_pageSession, SettingsService.Instance.ActiveBookmarkSession)) return;
+        if (!IsLoaded)
+        {
+            if (VaultService.Instance.IsUnlocked)
+            {
+                _pendingNotification = (_pageSession, message, severity);
+            }
+            return;
+        }
+        ShowInfoCore(message, severity);
+    }
+
+    private void ShowInfoCore(string message, InfoBarSeverity severity)
+    {
         SettingsProgress.IsIndeterminate = false;
         SettingsProgress.Visibility = Visibility.Collapsed;
         SettingsInfoBar.IsClosable = true;
@@ -644,9 +674,10 @@ public sealed partial class SettingsPage : Page
 
     private void UpdateActions()
     {
+        RefreshVaultSecuritySection();
         bool busy = VaultWork.IsBusy || _picking;
         ImportBookmarksButton.IsEnabled = !busy && !SettingsService.Instance.ReadDeferred;
-        ExportBookmarksButton.IsEnabled = !busy && SettingsService.Instance.CurrentBookmarks.Count > 0;
+        ExportBookmarksButton.IsEnabled = !busy && (SettingsService.Instance.CurrentBookmarks.Count > 0 || SettingsService.Instance.HasBookmarkFolders);
         BackupButton.IsEnabled = !busy;
         VerifyBackupButton.IsEnabled = !busy;
         ChangeMasterPwdBtn.IsEnabled = !busy;

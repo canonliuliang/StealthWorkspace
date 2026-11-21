@@ -43,7 +43,8 @@ internal static class MediaAcceptance
                 File.Move(video + ".part", video);
             }
             File.Copy(video, Path.Combine(root, "第二段视频.mp4"), overwrite: true);
-            var paths = Directory.GetFiles(root).Where(p => Path.GetExtension(p) is ".jpg" or ".png" or ".mp4").ToList();
+            WriteSilentWave(Path.Combine(root, "八秒音频.wav"));
+            var paths = Directory.GetFiles(root).Where(p => Path.GetExtension(p) is ".jpg" or ".png" or ".mp4" or ".wav").ToList();
             if (SmokeTest.SharedFixtureRoot is { } shared)
             {
                 Directory.CreateDirectory(shared);
@@ -54,7 +55,7 @@ internal static class MediaAcceptance
             expected = paths.ToDictionary(p => p, HashFile);
             File.WriteAllText(manifestPath, JsonSerializer.Serialize(expected));
             var result = await page.ImportFilesAsync(paths);
-            Require(result.Imported == paths.Count && result.Failed == 0, "JPG/PNG/MP4 import including configured shared source");
+            Require(result.Imported == paths.Count && result.Failed == 0, "JPG/PNG/MP4/WAV import including configured shared source");
             Require(await page.WaitForSmokeThumbnailAsync(), "decoded gallery thumbnail");
             var displayTimes = page.DisplayedItems.Select(item => item.ImportedAt).ToArray();
             Require(displayTimes.SequenceEqual(displayTimes.OrderDescending()), "gallery defaults to newest imports first");
@@ -99,6 +100,8 @@ internal static class MediaAcceptance
             {
                 var element = (Microsoft.UI.Xaml.Controls.MediaPlayerElement)player()!.FindName("PlayerElement");
                 var media = element.MediaPlayer;
+                Require(!media.CommandManager.IsEnabled && !media.SystemMediaTransportControls.IsEnabled,
+                    "private playback leaves Windows media transport commands disabled");
                 bool originalMute = media.IsMuted;
                 try
                 {
@@ -132,6 +135,11 @@ internal static class MediaAcceptance
                 Require(Math.Abs(media.Volume - 0.55) < 0.001, "up arrow increases volume");
                 videoPage.HandlePlaybackKey(Windows.System.VirtualKey.Down);
                 Require(Math.Abs(media.Volume - 0.5) < 0.001, "down arrow decreases volume");
+                if (item.MediaType == "Audio")
+                {
+                    Require(!videoPage.HandlePlaybackKey(Windows.System.VirtualKey.F), "audio playback leaves video full screen disabled");
+                    continue;
+                }
                 videoPage.HandlePlaybackKey(Windows.System.VirtualKey.F);
                 Require(MainWindow.Current?.AppWindow.Presenter.Kind == Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen,
                     "F enters full-screen video");
@@ -179,6 +187,19 @@ internal static class MediaAcceptance
     {
         using var stream = File.OpenRead(path);
         return Convert.ToHexString(SHA256.HashData(stream));
+    }
+
+    private static void WriteSilentWave(string path)
+    {
+        const int sampleRate = 16000;
+        const short bytesPerSample = sizeof(short);
+        byte[] samples = new byte[8 * sampleRate * bytesPerSample];
+        using var output = new BinaryWriter(File.Create(path));
+        output.Write("RIFF"u8); output.Write(36 + samples.Length); output.Write("WAVE"u8);
+        output.Write("fmt "u8); output.Write(16); output.Write((short)1); output.Write((short)1);
+        output.Write(sampleRate); output.Write(sampleRate * bytesPerSample);
+        output.Write(bytesPerSample); output.Write((short)(8 * bytesPerSample));
+        output.Write("data"u8); output.Write(samples.Length); output.Write(samples);
     }
 
     internal static async Task CreateImageAsync(string path, uint width, uint height, Guid encoderId, bool orientation = false)

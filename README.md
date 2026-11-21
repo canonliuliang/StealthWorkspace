@@ -2,15 +2,21 @@
 
 面向 Windows 的原生浏览器与本地加密媒体工作台。基于 WinUI 3、Windows App SDK 和 Microsoft Edge WebView2。
 
-**r16.1 可以迁移浏览器收藏、单独清理一个来源的离线数据，并在 Windows 锁屏时一起锁定工作台。** 提供 Windows 11 x64 和 ARM64 便携包。
+**R16.1 第二次预览支持从 Chrome 导入分层收藏，在主空间保留网站登录，并从下载目录查看以前保存的文件。** 提供 Windows 11 x64 和 ARM64 便携包。
 
-[官网](https://canonliuliang.github.io/StealthWorkspace/) · [r16.1 下载与 SHA-256](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview) · [安装和升级](docs/INSTALL.md) · [问题反馈](https://github.com/canonliuliang/StealthWorkspace/issues)
+[官网](https://canonliuliang.github.io/StealthWorkspace/) · [第二次预览下载与 SHA-256](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview.2) · [安装和升级](docs/INSTALL.md) · [问题反馈](https://github.com/canonliuliang/StealthWorkspace/issues)
 
 > 当前渠道提供未签名预览版。WebView2 会话可能写入磁盘，普通下载按明文保存。保险箱备份依赖原 Windows 用户的 DPAPI。项目尚未接受独立安全审计。
 
-![Stealth r16.1 导入 HTML 收藏并显示去重结果](website/assets/r161-bookmarks.png)
+![Stealth R16.1 第二次预览实机新标签页，含收藏栏、文件夹和示例网页](website/assets/r161-daily.png)
 
-## r16.1 的变化
+## R16.1 第二次预览
+
+[日常浏览验收与性能测量](docs/R161-DAILY-BROWSING.md) · [网站数据和隐私边界](docs/PRIVACY.md)
+
+主空间在退出时清除本地浏览记录，保留网站允许跨重启使用的账号状态。地址栏的盾牌分别管理账号、临时文件和网站权限。Chrome 收藏 HTML 可从新标签页导入，在收藏栏直接打开嵌套文件夹中的链接。可在应用内打开下载目录、切换原目录与备用目录，或将文件复制进加密媒体库。原始下载按明文保留。
+
+## R16.1 首次预览的变化
 
 - **迁移收藏。** 在设置中按 Ctrl+F 搜索「收藏」，可导入其他浏览器导出的 HTML，自动去重。主空间能导出明文 HTML。诱饵空间有独立的临时收藏，锁定后清空。
 - **修复一个网站。** 清理本站离线存储时保留登录 Cookie、其他来源和其他顶层站点的存储分区。Ctrl+H 可在本次会话内按标题或网址查历史。
@@ -44,16 +50,16 @@
 dotnet build
 dotnet run
 # 打包并执行核心自检
-./tools/Build-Release.ps1 -Runtime win-arm64 -Version 2026.11.21-r16.1-preview
+./tools/Build-Release.ps1 -Runtime win-arm64 -Version 2026.11.21-r16.1-preview.2
 # 官网本地预览
 node tools/site.mjs serve
 ```
 
-两个架构分别在原生 Windows runner 上构建、自检。两个公开 ZIP 均经下载校验、解压和实际启动验证。[开发说明](docs/DEVELOPMENT.md) · [r16.1 研究与架构](docs/R161-REVIEW.md) · [公开包与发布渠道验收](docs/VALIDATION.md) · [构建记录](https://github.com/canonliuliang/StealthWorkspace/actions/workflows/build.yml)
+两个架构分别在原生 Windows runner 上构建、自检。各次发行的测试环境和公开包验收日期见验证记录。[开发说明](docs/DEVELOPMENT.md) · [r16.1 研究与架构](docs/R161-REVIEW.md) · [公开包与发布渠道验收](docs/VALIDATION.md) · [首次预览发布记录](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview) · [构建记录](https://github.com/canonliuliang/StealthWorkspace/actions/workflows/build.yml)
 
 ## 使用前应了解
 
-锁定和加密帮助保护本地内容，但不能对抗同用户恶意程序、管理员或内核级取证。临时浏览器配置可能写盘，崩溃后清理可能延迟。普通下载不因结束会话而删除；捕获排除和文件清理受 Windows 与硬件实现限制。详见 [隐私与数据说明](docs/PRIVACY.md)。
+锁定和加密帮助保护本地内容，但不能对抗同用户恶意程序、管理员或内核级取证。主空间的网站数据保存在本机，异常退出后浏览记录的清理可能延迟。普通下载不因结束会话而删除；捕获排除和文件清理受 Windows 与硬件实现限制。详见 [隐私与数据说明](docs/PRIVACY.md)。
 
 [故障排查](docs/TROUBLESHOOTING.md) · [更新记录](CHANGELOG.md) · [安全报告](SECURITY.md) · [参与开发](CONTRIBUTING.md)
 

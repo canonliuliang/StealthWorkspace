@@ -100,6 +100,7 @@ public static class SelfTest
                 && MainWindow.MillisecondsUntilIdleLock(5, 100, uint.MaxValue - 99) == 299_800,
                 "Idle deadline handles new input, overdue lock and Windows tick counter wrap");
             await BookmarkHtmlSelfTest.RunAsync(testRoot, Report);
+            await WorkspaceSessionSelfTest.RunAsync(Report);
             BrowserAddressSelfTest.Run(Report, testRoot);
             await BrowserShareLinkTests.RunAsync(Report);
             await VaultIntegritySelfTest.RunAsync(testRoot, Report, Skip);
@@ -135,6 +136,7 @@ public static class SelfTest
             await AppLog.FlushAsync(TimeSpan.FromSeconds(5));
             Report(AppLog.ReadAll().Contains("Logging recovered after sharing violation"), "Diagnostic writer recovers after a locked file");
             BrowserProfileSafetyTests.Run(testRoot, Report);
+            await BrowserProfileSafetyTests.CheckAccountsAsync(testRoot, Report);
             Report(VaultImageDecoder.GetDecodeSize(800, 12000, 16384, 16 * 1024 * 1024) == (800u, 12000u),
                 "Long image preserves original readable width");
             var hugeImageSize = VaultImageDecoder.GetDecodeSize(40000, 30000, 16384, 16 * 1024 * 1024);
@@ -152,12 +154,33 @@ public static class SelfTest
             using (var afterExisting = BrowserDownloadPath.Reserve(testRoot, "same-name.bin"))
                 Report(Path.GetFileName(afterExisting.FilePath) != "same-name.bin" && File.ReadAllText(Path.Combine(testRoot, "same-name.bin")) == "keep existing bytes",
                     "Download reservation preserves an existing file");
-            foreach (string unsafeName in new[] { "CON.txt", "COM¹.txt", "lpt².tar.gz", "CONOUT$.txt", "..", "NUL", "x/y\\z.bin", new string('a', 180) + ".jpg" })
+            string listing = Directory.CreateDirectory(Path.Combine(testRoot, "download-file-list")).FullName;
+            string probeName = ".write-" + Guid.NewGuid().ToString("N");
+            using (new FileStream(Path.Combine(listing, probeName), FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose))
+            {
+                using var reportDownload = BrowserDownloadPath.Reserve(listing, ".write-report.pdf");
+                File.WriteAllText(reportDownload.FilePath, "completed download");
+                File.WriteAllText(Path.Combine(listing, probeName + ".jpg"), "second completed download");
+                File.WriteAllText(Path.Combine(listing, "pending.CRDOWNLOAD"), "partial transfer");
+                var listed = BrowserDownloadFolders.EnumerateCompletedFiles(listing).Select(f => f.Name).ToHashSet(StringComparer.Ordinal);
+                Report(listed.SetEquals([".write-report.pdf", probeName + ".jpg"]),
+                    "The download folder shows completed .write- names and omits the active write probe and unfinished transfer");
+            }
+            foreach (string unsafeName in new[] { "CON.txt", "COM¹.txt", "lpt².tar.gz", "CONOUT$.txt", "..", "NUL", "x/y\\z.bin", new string('a', 180) + ".jpg", new string('a', 119) + " ", new string('a', 115) + ".v2.jpg" })
             {
                 using var reserved = BrowserDownloadPath.Reserve(testRoot, unsafeName);
-                try { File.WriteAllText(reserved.FilePath, "fixture"); Report(File.Exists(reserved.FilePath), "Download name accepted by Windows: " + unsafeName); }
+                try
+                {
+                    File.WriteAllText(reserved.FilePath, "fixture");
+                    string fileName = Path.GetFileName(reserved.FilePath);
+                    Report(File.Exists(reserved.FilePath) && !fileName.Contains("..", StringComparison.Ordinal) && !fileName.EndsWith(' ') && !fileName.EndsWith('.'),
+                        "Download name accepted by Windows: " + unsafeName);
+                }
                 catch (Exception ex) { Report(false, "Download name accepted by Windows: " + unsafeName, ex.GetType().Name); }
             }
+            Report(SafeFileSystem.IsSafeInPlaceReparseTag(0x9000001Au) && SafeFileSystem.IsSafeInPlaceReparseTag(0x9000301Au) &&
+                !SafeFileSystem.IsSafeInPlaceReparseTag(0xA000000Cu) && !SafeFileSystem.IsSafeInPlaceReparseTag(0xA0000003u),
+                "SafeFileSystem distinguishes Cloud Files tags from symlink and junction surrogates");
             foreach (var (domain, host, expected) in new (string, string, bool)[] {
                 ("example.com", "example.com", true), (".example.com", "sub.example.com", true),
                 (".example.com", "EXAMPLE.COM", true), ("example.com", "sub.example.com", false),
@@ -770,7 +793,16 @@ public static class SmokeTest
             }
 
             bool ok = ready && !anyUnhandled && pagesOk && webViewOk && (!UiSmoke || completed);
-            builder.AppendLine(ShutdownAudit ? "SHUTDOWN AUDIT: " + (Lines.Any(l => (l.Contains("shutdown audit: live WebView", StringComparison.Ordinal) || l.Contains("shutdown audit: initializing WebView", StringComparison.Ordinal))) && Lines.Any(l => l.Contains("closing: vault locked=True", StringComparison.Ordinal)) && Lines.Any(l => l.Contains("closing: browser profiles removed=True", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : RenderAudit ? "RENDER AUDIT: " + (Lines.Any(l => l.Contains("render audit complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserAudit ? "AUDIT RESULT: " + (Lines.Any(l => l.Contains("audit complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : ExperienceTest ? "EXPERIENCE RESULT: " + (Lines.Any(l => l.Contains("experience complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserSoakMinutes > 0 ? "SOAK RESULT: " + (Lines.Any(l => l.Contains("soak complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserProbeUrl != null ? "NETWORK PROBE: completed; inspect metrics separately" : Interactive ? "MANUAL SESSION: completed; inspect UI evidence separately" : "SMOKE RESULT: " + (ok ? "OK" : "FAILED"));
+            if (LoginRetentionAcceptance.Requested)
+            {
+                bool passed = !anyUnhandled &&
+                    Lines.Any(l => l.Contains("login retention phase passed: " + LoginRetentionAcceptance.Phase, StringComparison.Ordinal)) &&
+                    Lines.Any(l => l.Contains("closing: vault locked=True", StringComparison.Ordinal)) &&
+                    Lines.Any(l => l.Contains("closing: browser session cleanup completed=True", StringComparison.Ordinal));
+                builder.AppendLine("LOGIN RETENTION: " + (passed ? "OK" : "FAILED"));
+            }
+            else
+                builder.AppendLine(ShutdownAudit ? "SHUTDOWN AUDIT: " + (Lines.Any(l => (l.Contains("shutdown audit: live WebView", StringComparison.Ordinal) || l.Contains("shutdown audit: initializing WebView", StringComparison.Ordinal))) && Lines.Any(l => l.Contains("closing: vault locked=True", StringComparison.Ordinal)) && Lines.Any(l => l.Contains("closing: browser session cleanup completed=True", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : RenderAudit ? "RENDER AUDIT: " + (Lines.Any(l => l.Contains("render audit complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserAudit ? "AUDIT RESULT: " + (Lines.Any(l => l.Contains("audit complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : ExperienceTest ? "EXPERIENCE RESULT: " + (Lines.Any(l => l.Contains("experience complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserSoakMinutes > 0 ? "SOAK RESULT: " + (Lines.Any(l => l.Contains("soak complete", StringComparison.Ordinal)) && !anyUnhandled ? "OK" : "FAILED") : BrowserProbeUrl != null ? "NETWORK PROBE: completed; inspect metrics separately" : Interactive ? "MANUAL SESSION: completed; inspect UI evidence separately" : "SMOKE RESULT: " + (ok ? "OK" : "FAILED"));
             string? dir = Path.GetDirectoryName(OutputPath);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
             File.WriteAllText(OutputPath, builder.ToString(), Encoding.UTF8);

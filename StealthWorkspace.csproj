@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <Version>2026.11.21-r16.1-preview</Version>
-    <FileVersion>2026.11.21.161</FileVersion>
+    <Version>2026.11.21-r16.1-preview.2</Version>
+    <FileVersion>2026.11.21.162</FileVersion>
     <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>StealthWorkspace</RootNamespace>

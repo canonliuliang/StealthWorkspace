@@ -78,6 +78,7 @@ public sealed partial class VaultPage : Page
 
     private void VaultPage_Loaded(object sender, RoutedEventArgs e)
     {
+        if (!ReferenceEquals(Frame?.Content, this)) return;
         if (_loaded) return;
         _loaded = true;
         _totalsDirty = true;
@@ -102,7 +103,18 @@ public sealed partial class VaultPage : Page
     }
 
     private void VaultPage_Unloaded(object sender, RoutedEventArgs e)
+        => StopGallery();
+
+    protected override void OnNavigatedFrom(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
+        StopGallery();
+        base.OnNavigatedFrom(e);
+    }
+
+    private void StopGallery()
+    {
+        if (!_loaded) return;
+        _loaded = false;
         _searchDebounce.Stop();
         VaultService.Instance.VisibleItems.CollectionChanged -= VisibleItems_CollectionChanged;
         VaultWork.Changed -= UpdateSelectionCommands;
@@ -112,17 +124,15 @@ public sealed partial class VaultPage : Page
         _thumbnailImages.Clear();
         _thumbnailLifetime?.Dispose();
         _thumbnailLifetime = null;
-        _loaded = false;
     }
 
     private void ReleaseThumbnail(Image image)
     {
         // The async operation disposes its token after cancellation has unwound.
         if (_thumbnailLoads.Remove(image, out var pending)) pending.Token.Cancel();
-        var previous = image.Source as IDisposable;
+        // A recycled card can still have a native composition frame in flight.
         image.Source = null;
         image.Tag = null;
-        previous?.Dispose();
     }
 
     internal async Task<bool> WaitForSmokeThumbnailAsync(string? id = null)
@@ -173,12 +183,13 @@ public sealed partial class VaultPage : Page
                     (preview, duration) = await VaultVideoPreview.DecodeAsync(item, token);
                 }
                 else preview = (await VaultImageDecoder.DecodeAsync(item, 400, token)).Source;
-                if (!token.IsCancellationRequested && ReferenceEquals(image.Tag, item) && VaultService.Instance.IsUnlocked)
+                if (!token.IsCancellationRequested && _loaded && ReferenceEquals(Frame?.Content, this) &&
+                    ReferenceEquals(image.Tag, item) && VaultService.Instance.IsUnlocked)
                 {
                     item.SetVideoDuration(duration);
                     image.Source = preview;
                     if (SmokeTest.Enabled && item.MediaType == "Video") SmokeTest.Report("video preview: rendered " + item.DisplayDuration);
-                    UiMotion.Reveal(image, MotionCue.Fade);
+                    if (image.IsLoaded) UiMotion.Reveal(image, MotionCue.Fade);
                 }
                 else preview.Dispose();
             }
@@ -505,13 +516,30 @@ public sealed partial class VaultPage : Page
         if (_busy || VaultWork.IsBusy) return;
         if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
 
+        var session = SettingsService.Instance.ActiveBookmarkSession;
+        List<string> paths;
         var deferral = e.GetDeferral();
         try
         {
             var items = await e.DataView.GetStorageItemsAsync();
-            var paths = items.OfType<StorageFile>().Select(f => f.Path)
+            paths = items.OfType<StorageFile>().Select(f => f.Path)
                 .Where(p => !string.IsNullOrEmpty(p)).ToList();
-            if (paths.Count > 0)
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("拖拽读取文件失败", ex);
+            StatusText.Text = "拖拽导入失败：" + ex.Message;
+            return;
+        }
+        finally
+        {
+            // Complete the OLE drag deferral before showing dialogs or encrypting files so File Explorer never freezes.
+            deferral.Complete();
+        }
+
+        try
+        {
+            if (paths.Count > 0 && IsLoaded && session != null && ReferenceEquals(session, SettingsService.Instance.ActiveBookmarkSession))
             {
                 await ImportFilesAsync(paths);
             }
@@ -522,7 +550,6 @@ public sealed partial class VaultPage : Page
             AppLog.Error("拖拽导入失败", ex);
             StatusText.Text = "拖拽导入失败：" + ex.Message;
         }
-        finally { deferral.Complete(); }
     }
 
     #endregion
@@ -566,6 +593,7 @@ public sealed partial class VaultPage : Page
 
     private void MediaGridView_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
     {
+        if (!_loaded || !ReferenceEquals(Frame?.Content, this)) return;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(args.ItemContainer,
             args.InRecycleQueue ? string.Empty : (args.Item as VaultItem)?.OriginalFileName ?? string.Empty);
         if (args.ItemContainer.ContentTemplateRoot is not FrameworkElement root ||
@@ -670,6 +698,7 @@ public sealed partial class VaultPage : Page
 
     private void FlyoutPlay_Click(object sender, RoutedEventArgs e)
     {
+        if (_busy || VaultWork.IsBusy) return;
         VaultItem? item = FindItemById((sender as FrameworkElement)?.Tag as string);
         if (item != null) MainWindow.Current?.NavigateToPlayer(item);
     }

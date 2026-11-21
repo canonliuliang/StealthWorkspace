@@ -245,7 +245,7 @@
         <Border x:Name="BookmarkTransferSection" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
           <StackPanel Spacing="8">
             <TextBlock Text="迁移浏览器收藏" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
-            <TextBlock Text="从其他浏览器导入 HTML 收藏，或导出给另一台电脑。单个导入文件上限 32 MiB，文件夹合并为一份列表。导出的标题和网址是明文。" Style="{StaticResource StealthCaptionStyle}" TextWrapping="Wrap" />
+            <TextBlock Text="在 Chrome 书签管理器中选择“导出书签”，再导入 HTML。收藏栏、嵌套文件夹和其中的链接会一并保留。单个文件上限 32 MiB。导出的标题和网址是明文。" Style="{StaticResource StealthCaptionStyle}" TextWrapping="Wrap" />
             <StackPanel Orientation="Horizontal" Spacing="8">
               <Button x:Name="ImportBookmarksButton" Content="导入 HTML" Click="ImportBookmarks_Click" AutomationProperties.Name="从 HTML 导入收藏" />
               <Button x:Name="ExportBookmarksButton" Content="导出 HTML" Click="ExportBookmarks_Click" AutomationProperties.Name="导出明文 HTML 收藏" />
@@ -280,10 +280,10 @@
               <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
             <StackPanel Spacing="4">
-              <TextBlock Text="会话数据" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
-              <TextBlock Text="锁定、退出或点击“结束会话”时关闭标签并清除 Cookie、网页存储和缓存。切换至媒体库会保留当前网页；收藏和已下载的文件会保留。" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+              <TextBlock Text="退出后的登录和浏览记录" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+              <TextBlock Text="主空间会保留网站登录和离线内容。关闭应用会清除浏览记录、最近关闭的标签和网页临时文件。网站可以让登录过期，也可能在你的账号里保存观看记录。" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
             </StackPanel>
-            <FontIcon Glyph="&#xE72E;" FontSize="18" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Grid.Row="1" HorizontalAlignment="Left" />
+            <TextBlock Grid.Row="1" Text="地址栏的盾牌可以管理当前网站。平衡防跟踪限制已知的跨站跟踪器，并兼顾正常登录和视频播放。" Style="{StaticResource StealthCaptionStyle}" TextWrapping="Wrap" />
           </Grid>
         </Border>
       </StackPanel>
@@ -304,7 +304,7 @@
               <TextBlock Text="启动时自动扫描 Windows 缩略图缓存" Style="{ThemeResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
               <TextBlock Text="启动时检查 Windows 缩略图缓存并提示发现的项目；不会自动删除。" Style="{StaticResource StealthCaptionStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
             </StackPanel>
-            <ToggleSwitch x:Name="AutoCheckThumbToggle" Toggled="AutoCheckThumbToggle_Toggled" IsOn="True" OnContent="已开启" OffContent="已关闭" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="启动时自动扫描 Windows 缩略图缓存" Grid.Column="1" />
+            <ToggleSwitch x:Name="AutoCheckThumbToggle" Toggled="AutoCheckThumbToggle_Toggled" OnContent="已开启" OffContent="已关闭" VerticalAlignment="Center" HorizontalAlignment="Right" AutomationProperties.Name="启动时自动扫描 Windows 缩略图缓存" Grid.Column="1" />
           </Grid>
         </Border>
         <!-- Card 2: DNS Cache Flush -->

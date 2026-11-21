@@ -1,0 +1,37 @@
+<ContentDialog
+    x:Class="StealthWorkspace.Controls.DownloadFolderDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:StealthWorkspace.Controls"
+    Title="下载文件夹" CloseButtonText="关闭" DefaultButton="Close">
+    <Grid RowSpacing="8" MinWidth="280">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid ColumnSpacing="8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <ComboBox x:Name="Locations" AutomationProperties.Name="下载位置" HorizontalAlignment="Stretch" SelectionChanged="LocationChanged">
+                <ComboBox.ItemTemplate><DataTemplate x:DataType="controls:DownloadFolderLocation"><TextBlock Text="{x:Bind Name}"/></DataTemplate></ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Grid.Column="1" x:Name="RefreshFiles" Content="刷新" Click="Refresh_Click"/>
+        </Grid>
+        <StackPanel Grid.Row="1" Spacing="4">
+            <TextBox x:Name="FolderAddress" IsReadOnly="True" AutomationProperties.Name="文件夹路径" HorizontalAlignment="Stretch"/>
+            <TextBlock x:Name="FolderStatus" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" AutomationProperties.LiveSetting="Polite"/>
+        </StackPanel>
+        <ListView x:Name="Files" Grid.Row="2" MaxHeight="290" MinHeight="88" SelectionChanged="FileChanged" AutomationProperties.Name="已下载文件">
+            <ListView.ItemTemplate>
+                <DataTemplate x:DataType="controls:DownloadFolderFile">
+                    <StackPanel Padding="0,4" Spacing="2">
+                        <TextBlock Text="{x:Bind Name}" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="{x:Bind Detail}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+        <StackPanel Grid.Row="3" Spacing="6">
+            <Button x:Name="OpenExplorer" Content="在资源管理器中打开" HorizontalAlignment="Stretch" Click="OpenExplorer_Click"/>
+            <Button x:Name="StoreFile" IsEnabled="False" Content="复制到加密媒体库" HorizontalAlignment="Stretch" Click="Store_Click"/>
+        </StackPanel>
+    </Grid>
+</ContentDialog>

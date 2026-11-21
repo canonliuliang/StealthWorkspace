@@ -25,7 +25,16 @@
         }
         return '';
     };
-    for (const image of document.images) {
+    function* pageImages(root) {
+        const walkers = [document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT)];
+        while (walkers.length) {
+            const element = walkers[walkers.length - 1].nextNode();
+            if (!element) { walkers.pop(); continue; }
+            if (element instanceof HTMLImageElement) yield element;
+            if (element.shadowRoot) walkers.push(document.createTreeWalker(element.shadowRoot, NodeFilter.SHOW_ELEMENT));
+        }
+    }
+    for (const image of pageImages(document)) {
         const source = resolveImageSource(image);
         if (!source || seen.has(source)) continue;
         const box = image.getBoundingClientRect();
@@ -38,6 +47,21 @@
         pictures.push({ element: image, source, title: image.alt || image.title || '', visibleArea,
             requested: source === startSource || image.currentSrc === startSource });
         if (pictures.length >= 2000) break;
+    }
+    if (startSource && !pictures.some(p => p.requested)) {
+        try {
+            const url = new URL(startSource, document.baseURI);
+            if (/^(https?:|blob:|data:image\/)/i.test(url.href) && !seen.has(url.href)) {
+                seen.add(url.href);
+                pictures.unshift({
+                    element: null,
+                    source: url.href,
+                    title: '',
+                    visibleArea: 0,
+                    requested: true
+                });
+            }
+        } catch { }
     }
     if (!pictures.length) return { status: 'empty' };
 
@@ -147,8 +171,8 @@
         const picture = pictures[index];
         const image = create('img', 'display:block;flex:none;max-width:none;max-height:none;object-fit:contain;user-select:none;');
         currentImage = image; image.alt = picture.title || ('图片 ' + (index + 1)); image.draggable = false;
-        image.decoding = 'async'; image.loading = 'eager'; image.referrerPolicy = picture.element.referrerPolicy;
-        if (picture.element.crossOrigin !== null) image.crossOrigin = picture.element.crossOrigin;
+        image.decoding = 'async'; image.loading = 'eager'; image.referrerPolicy = picture.element?.referrerPolicy ?? 'no-referrer';
+        if (picture.element?.crossOrigin != null) image.crossOrigin = picture.element.crossOrigin;
         let decoding = false;
         image.onload = async () => {
             if (image !== currentImage || disposed || decoding) return;
@@ -181,7 +205,7 @@
         counter.textContent = (index + 1) + ' / ' + pictures.length;
         title.textContent = picture.title || '图片阅读'; title.title = picture.title;
         enable(previous, index > 0); enable(next, index < pictures.length - 1);
-        image.src = resolveImageSource(picture.element) || picture.source;
+        image.src = (picture.element && resolveImageSource(picture.element)) || picture.source;
         viewport.scrollTo(0, 0);
         if (image.complete && image.naturalWidth) image.onload();
     }

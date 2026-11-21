@@ -12,6 +12,31 @@ public sealed partial class BrowserTabControl
         await using var neighbor = new BrowserHttpFixture();
         await NavigateAuditAsync(site.Address + "/page");
         var core = _hookedCore ?? throw new InvalidOperationException("Site data fixture requires WebView2");
+        if (core.Profile.PreferredTrackingPreventionLevel != CoreWebView2TrackingPreventionLevel.Balanced)
+            throw new InvalidOperationException("The active browser profile did not apply balanced tracking prevention");
+        SmokeTest.Report("site data: active WebView2 profile reports balanced tracking prevention");
+        if (!SameDownloadUrl(site.Address + "/file[2].zip#section", site.Address + "/file%5B2%5D.zip") ||
+            SameDownloadUrl(site.Address + "/one%2Ftwo", site.Address + "/one/two") ||
+            SameDownloadUrl(site.Address + "/?x=a%26b", site.Address + "/?x=a&b"))
+            throw new InvalidOperationException("Download matching conflated distinct HTTP paths or query parameters");
+        const string draft = "unsubmitted synthetic address";
+        var editor = FindAddressEditor(UrlTextBox) ?? throw new InvalidOperationException("Address text editor is missing");
+        editor.Focus(Microsoft.UI.Xaml.FocusState.Keyboard);
+        editor.Text = draft;
+        for (int i = 0; i < 40 && !IsEditingAddress; i++) await Task.Delay(25);
+        if (!IsEditingAddress || UrlTextBox.Text != draft) throw new InvalidOperationException("Native address edit was not observed");
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnCompleted(CoreWebView2 sender, CoreWebView2NavigationCompletedEventArgs args) => completed.TrySetResult();
+        core.NavigationCompleted += OnCompleted;
+        try
+        {
+            core.Navigate(site.Address + "/redirect");
+            await completed.Task.WaitAsync(TimeSpan.FromSeconds(8));
+        }
+        finally { core.NavigationCompleted -= OnCompleted; }
+        if (UrlTextBox.Text != draft) throw new InvalidOperationException("A background redirect replaced the focused address draft");
+        _browserControl?.Focus(Microsoft.UI.Xaml.FocusState.Programmatic);
+        SmokeTest.Report("audit: focused unsubmitted address survives new navigation, redirect and completion");
         async Task<bool> CheckAsync(string expression)
         {
             string reply = await core.CallDevToolsProtocolMethodAsync("Runtime.evaluate",

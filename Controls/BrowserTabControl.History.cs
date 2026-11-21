@@ -23,6 +23,11 @@ public sealed partial class BrowserTabControl
     {
         _sessionHistory.CollectionChanged -= SessionHistory_CollectionChanged;
         if (HistorySearchBox == null || HistoryListView == null) return;
+        if (_isDisposed)
+        {
+            HistoryListView.ItemsSource = null;
+            return;
+        }
         if (active) _sessionHistory.CollectionChanged += SessionHistory_CollectionChanged;
         else HistorySearchBox.Text = "";
         FilterSessionHistory();
@@ -34,11 +39,16 @@ public sealed partial class BrowserTabControl
     private void FilterSessionHistory()
     {
         if (HistoryListView == null || HistorySearchBox == null || HistoryEmptyText == null) return;
+        if (_isDisposed)
+        {
+            HistoryListView.ItemsSource = null;
+            return;
+        }
         string query = HistorySearchBox.Text.Trim();
         HistoryListView.ItemsSource = query.Length == 0 ? _sessionHistory :
             _sessionHistory.Where(item => item.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || item.Url.Contains(query, StringComparison.OrdinalIgnoreCase)).ToArray();
-        HistoryEmptyText.Text = query.Length == 0 ? "暂无内存会话历史" : "没有匹配的浏览记录";
+        HistoryEmptyText.Text = query.Length == 0 ? "本次还没有浏览记录" : "没有匹配的浏览记录";
         UpdateEmptyNotices();
     }
 

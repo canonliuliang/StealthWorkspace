@@ -46,6 +46,7 @@
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="0,0,0,1"
                 Padding="12,8">
+            <StackPanel>
             <Grid ColumnSpacing="8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
@@ -87,9 +88,9 @@
                                 CornerRadius="4"
                                 Style="{ThemeResource SubtleButtonStyle}"
                                 AutomationProperties.Name="站点隐私"
-                                ToolTipService.ToolTip="站点隐私与权限">
+                                ToolTipService.ToolTip="隐私保护 · 登录、浏览记录和网站权限" Background="{ThemeResource StealthBrandSubtleBrush}">
                             <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
-                                <FontIcon Glyph="&#xE946;" FontSize="14" />
+                                <FontIcon Glyph="&#xEA18;" FontSize="19" Foreground="{ThemeResource StealthBrandBrush}" />
                                 <Border x:Name="ShieldBlockedBadge" Background="{ThemeResource StealthBrandSubtleBrush}" CornerRadius="4" Padding="4,0" Visibility="Collapsed">
                                     <TextBlock x:Name="ShieldBlockedCountText" Text="0" FontSize="12" Foreground="{ThemeResource StealthBrandBrush}" FontWeight="SemiBold" />
                                 </Border>
@@ -130,10 +131,11 @@
                                                     <ColumnDefinition Width="Auto" />
                                                     <ColumnDefinition Width="Auto" />
                                                 </Grid.ColumnDefinitions>
-                                                <FontIcon Glyph="&#xE946;" FontSize="20" Foreground="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Center" />
+                                                <FontIcon Glyph="&#xEA18;" FontSize="20" Foreground="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Center" />
                                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                     <TextBlock x:Name="FlyoutDomainText" Text="站点隐私" FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis" />
                                                     <TextBlock x:Name="SessionStateText" Text="尚未打开网页" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    <TextBlock x:Name="DefaultProtectionText" FontSize="12" TextWrapping="Wrap" />
                                                 </StackPanel>
                                                 <Button Grid.Column="3" Click="CloseFlyout_Click" Style="{ThemeResource SubtleButtonStyle}" Width="32" Height="32" Padding="0" AutomationProperties.Name="关闭站点隐私" ToolTipService.ToolTip="关闭">
                                                     <FontIcon Glyph="&#xE711;" FontSize="12" />
@@ -145,9 +147,9 @@
                                         <Border Grid.Row="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="6,4" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
                                             <SelectorBar x:Name="PrivacySections" AutomationProperties.Name="站点隐私分类" HorizontalAlignment="Center">
                                                 <SelectorBarItem x:Name="PermissionsSection" Text="权限" AutomationProperties.Name="网页权限" />
-                                                <SelectorBarItem x:Name="CookiesSection" Text="Cookie" />
-                                                <SelectorBarItem x:Name="StorageSection" Text="存储" AutomationProperties.Name="网站存储" />
-                                                <SelectorBarItem x:Name="HistorySection" Text="历史" AutomationProperties.Name="会话历史" />
+                                                <SelectorBarItem x:Name="CookiesSection" Text="登录" />
+                                                <SelectorBarItem x:Name="StorageSection" Text="网站文件" AutomationProperties.Name="网站存储" />
+                                                <SelectorBarItem x:Name="HistorySection" Text="浏览记录" AutomationProperties.Name="会话历史" />
                                             </SelectorBar>
                                         </Border>
 
@@ -161,7 +163,7 @@
                                                         <ComboBoxItem x:Name="CurrentSiteScope" Content="本站 · 离开本站或关闭标签页后还原" />
                                                         <ComboBoxItem Content="所有网站 · 保存为默认设置" />
                                                     </ComboBox>
-                                                    <TextBlock Text="开启以阻止新请求，关闭后由浏览器处理。" TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="0,6,0,2" />
+                                                    <TextBlock Text="开启开关会拒绝网站访问对应设备或发送通知。视频通话需要摄像头和麦克风，可仅为当前网站放行。" TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="0,6,0,2" />
                                                     <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="0,10">
                                                         <Grid ColumnSpacing="12" MinHeight="36">
                                                             <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
@@ -217,86 +219,37 @@
                                                     </Grid>
                                                 </StackPanel>
                                             </ScrollViewer>
-<!-- Panel 2: Cookie Inspector & Manager -->
-                                            <Grid x:Name="PanelCookie" Padding="10,8" RowSpacing="6" Visibility="Collapsed">
-                                                <Grid.RowDefinitions>
-                                                    <RowDefinition Height="Auto" />
-                                                    <RowDefinition Height="*" />
-                                                    <RowDefinition Height="Auto" />
-                                                </Grid.RowDefinitions>
-
-                                                <!-- Search & Refresh -->
-                                                <Grid Grid.Row="0" ColumnSpacing="4">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="Auto" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBox x:Name="CookieSearchBox"
-                                                             AutomationProperties.Name="搜索 Cookie 名称或域名"
-                                                             PlaceholderText="搜索 Cookie 名称或域名..."
-                                                             TextChanged="CookieSearchBox_TextChanged"
-                                                             Padding="6,3"
-                                                             FontSize="12"
-                                                             CornerRadius="4" />
-                                                    <Button AutomationProperties.Name="刷新" Grid.Column="1" Click="RefreshCookies_Click" Style="{ThemeResource SubtleButtonStyle}" Padding="6,4" ToolTipService.ToolTip="刷新">
-                                                        <FontIcon Glyph="&#xE72C;" FontSize="12" />
-                                                    </Button>
-                                                </Grid>
-
-                                                <!-- Cookie List -->
-                                                <Grid Grid.Row="1">
-                                                    <ListView x:Name="CookieListView"
-                                                              SelectionMode="None"
-                                                              Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                                              BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                                              BorderThickness="1"
-                                                              CornerRadius="6">
-                                                        <ListView.ItemTemplate>
-                                                            <DataTemplate>
-                                                                <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="6,4">
-                                                                    <Grid ColumnSpacing="6">
-                                                                        <Grid.ColumnDefinitions>
-                                                                            <ColumnDefinition Width="*" />
-                                                                            <ColumnDefinition Width="Auto" />
-                                                                        </Grid.ColumnDefinitions>
-                                                                        <StackPanel Grid.Column="0" Spacing="1">
-                                                                            <StackPanel Orientation="Horizontal" Spacing="4">
-                                                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12" TextTrimming="CharacterEllipsis" />
-                                                                                <Border Background="{ThemeResource SubtleFillColorSecondaryBrush}" CornerRadius="3" Padding="3,0" Visibility="{Binding SecureBadgeVisibility}">
-                                                                                    <TextBlock Text="Sec" FontSize="12" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
-                                                                                </Border>
-                                                                                <Border Background="{ThemeResource SubtleFillColorSecondaryBrush}" CornerRadius="3" Padding="3,0" Visibility="{Binding HttpOnlyBadgeVisibility}">
-                                                                                    <TextBlock Text="Http" FontSize="12" Foreground="Orange" />
-                                                                                </Border>
-                                                                            </StackPanel>
-                                                                            <TextBlock Text="{Binding Domain}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
-                                                                        </StackPanel>
-                                                                        <Button AutomationProperties.Name="删除" Grid.Column="1" Click="DeleteSingleCookie_Click" Tag="{Binding}" Style="{ThemeResource SubtleButtonStyle}" ToolTipService.ToolTip="删除" Padding="4">
-                                                                            <FontIcon Glyph="&#xE74D;" FontSize="12" Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
-                                                                        </Button>
-                                                                    </Grid>
-                                                                </Border>
-                                                            </DataTemplate>
-                                                        </ListView.ItemTemplate>
-                                                    </ListView>
-
-                                                    <StackPanel x:Name="CookieEmptyNotice" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4" Visibility="Collapsed">
-                                                        <FontIcon Glyph="&#xE765;" FontSize="20" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center" />
-                                                        <TextBlock Text="当前页面没有匹配的 Cookie" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center" />
-                                                    </StackPanel>
-                                                </Grid>
-
-                                                <!-- Actions -->
-                                                <Grid Grid.Row="2" ColumnSpacing="6">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <Button Grid.Column="0" Content="清除本站 Cookie" HorizontalAlignment="Stretch" Click="DeleteSiteCookies_Click" CornerRadius="4" Padding="4,4" FontSize="12" />
-                                                    <Button Grid.Column="1" Content="清空所有 Cookie" HorizontalAlignment="Stretch" Click="DeleteAllCookies_Click" CornerRadius="4" Padding="4,4" FontSize="12" />
-                                                </Grid>
-                                            </Grid>
-
+                                            <ScrollViewer x:Name="PanelCookie" Padding="12,10" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled">
+                                                <StackPanel Spacing="10">
+                                                    <TextBlock Text="网站登录" FontWeight="SemiBold" FontSize="16"/>
+                                                    <TextBlock x:Name="AccountModeDescription" TextWrapping="Wrap"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                                    <Button x:Name="ForgetSiteButton" Click="ForgetSite_Click" Content="清除本站账号和数据…" HorizontalAlignment="Stretch" />
+                                                    <Button x:Name="ClearAllAccountsBtn" Click="ClearAllAccounts_Click" Content="清除所有网站账号和数据…" HorizontalAlignment="Stretch" />
+                                                    <Expander Header="查看 Cookie 详情" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                                                        <StackPanel Spacing="6">
+                                                            <TextBlock Text="这些是网站保存在本机的小记录，可能用于登录、偏好或识别设备。" FontSize="12" TextWrapping="Wrap" />
+                                                            <Grid ColumnSpacing="4">
+                                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                                <TextBox x:Name="CookieSearchBox" PlaceholderText="搜索名称或域名" AutomationProperties.Name="搜索 Cookie 名称或域名" TextChanged="CookieSearchBox_TextChanged"/>
+                                                                <Button Grid.Column="1" Click="RefreshCookies_Click" Style="{ThemeResource SubtleButtonStyle}" AutomationProperties.Name="刷新 Cookie 列表"><FontIcon Glyph="&#xE72C;" FontSize="14"/></Button>
+                                                            </Grid>
+                                                            <Grid MinHeight="54">
+                                                                <ListView x:Name="CookieListView" SelectionMode="None" MaxHeight="180" HorizontalContentAlignment="Stretch">
+                                                                    <ListView.ItemTemplate><DataTemplate>
+                                                                        <Grid ColumnSpacing="6" Padding="2,4">
+                                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                                            <StackPanel><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Domain}" FontSize="12" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/></StackPanel>
+                                                                            <Button Grid.Column="1" Tag="{Binding}" Click="DeleteSingleCookie_Click" AutomationProperties.Name="移除此 Cookie" Style="{ThemeResource SubtleButtonStyle}"><FontIcon Glyph="&#xE74D;" FontSize="14"/></Button>
+                                                                        </Grid>
+                                                                    </DataTemplate></ListView.ItemTemplate>
+                                                                </ListView>
+                                                                <StackPanel x:Name="CookieEmptyNotice" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"><TextBlock Text="没有匹配的记录" FontSize="12"/></StackPanel>
+                                                            </Grid>
+                                                        </StackPanel>
+                                                    </Expander>
+                                                </StackPanel>
+                                            </ScrollViewer>
                                             <!-- Panel 3: Storage & Cache Purge (Truthful wording - Item 8) -->
                                             <ScrollViewer x:Name="PanelStorage" Padding="10,8" Visibility="Collapsed">
                                                 <StackPanel Spacing="6">
@@ -306,7 +259,7 @@
                                                             <FontIcon Glyph="&#xE774;" FontSize="15" Foreground="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Center" />
                                                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                                 <TextBlock Text="本站的离线数据" FontWeight="SemiBold" FontSize="12" />
-                                                                <TextBlock Text="清除本地存储、IndexedDB 和离线缓存，保留 Cookie" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                                                <TextBlock Text="移除这个网站的草稿、离线内容和偏好，部分网站可能要求重新登录" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                                                             </StackPanel>
                                                             <Button x:Name="ClearSiteStorageBtn" Grid.Column="2" Content="清除…" AutomationProperties.Name="清除本站的离线数据" Click="ClearSiteStorage_Click" CornerRadius="4" Padding="8,4" FontSize="12" />
                                                         </Grid>
@@ -337,10 +290,10 @@
                                                             </Grid.ColumnDefinitions>
                                                             <FontIcon Glyph="&#xE74D;" FontSize="15" Foreground="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Center" />
                                                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                                <TextBlock Text="HTTP 磁盘缓存" FontWeight="SemiBold" FontSize="12" />
+                                                                <TextBlock Text="网页临时文件" FontWeight="SemiBold" FontSize="12" />
                                                                 <TextBlock Text="保留登录状态和网页应用的离线内容" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                                                             </StackPanel>
-                                                            <Button Grid.Column="2" Content="清除" AutomationProperties.Name="清除 HTTP 磁盘缓存" Click="ClearHttpCache_Click" CornerRadius="4" Padding="8,4" FontSize="12" />
+                                                            <Button Grid.Column="2" Content="清除" AutomationProperties.Name="清除 网页临时文件" Click="ClearHttpCache_Click" CornerRadius="4" Padding="8,4" FontSize="12" />
                                                         </Grid>
                                                     </Border>
 
@@ -355,9 +308,9 @@
                                                             <FontIcon Glyph="&#xE72C;" FontSize="15" Foreground="{ThemeResource StealthBrandBrush}" VerticalAlignment="Center" />
                                                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                                 <TextBlock Text="重新加载当前页面" FontWeight="SemiBold" FontSize="12" />
-                                                                <TextBlock Text="重新请求本页内容，不会清除 Cookie 与存储" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Text="重新下载本页，保留账号和离线内容" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
                                                             </StackPanel>
-                                                            <Button Grid.Column="2" Content="重载" Click="CleanReload_Click" CornerRadius="4" Padding="8,4" FontSize="12" />
+                                                            <Button x:Name="ReloadSiteFilesBtn" Grid.Column="2" Content="重载" Click="CleanReload_Click" CornerRadius="4" Padding="8,4" FontSize="12" />
                                                         </Grid>
                                                     </Border>
                                                 </StackPanel>
@@ -409,11 +362,11 @@
 
                                                     <StackPanel x:Name="HistoryEmptyNotice" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4" Visibility="Collapsed">
                                                         <FontIcon Glyph="&#xE81C;" FontSize="20" Foreground="{ThemeResource TextFillColorTertiaryBrush}" HorizontalAlignment="Center" />
-                                                        <TextBlock x:Name="HistoryEmptyText" Text="暂无内存会话历史" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center" />
+                                                        <TextBlock x:Name="HistoryEmptyText" Text="本次还没有浏览记录" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center" />
                                                     </StackPanel>
                                                 </Grid>
 
-                                                <Button Grid.Row="2" Content="清空当前临时历史" HorizontalAlignment="Stretch" Click="ClearSessionHistory_Click" CornerRadius="4" Padding="4,4" FontSize="12" />
+                                                <Button Grid.Row="2" Content="清空本次浏览记录" HorizontalAlignment="Stretch" Click="ClearSessionHistory_Click" CornerRadius="4" Padding="4,4" FontSize="12" />
                                             </Grid>
                                         </Grid>
 
@@ -480,10 +433,10 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="*" />
                                 </Grid.RowDefinitions>
-                                <StackPanel Spacing="4" Margin="4,0,4,12">
-                                    <TextBlock Text="收藏夹" FontWeight="SemiBold" FontSize="16" />
-                                    <TextBlock Text="点击地址栏的星标收藏网页（Ctrl+D）" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                                </StackPanel>
+                                <Grid Margin="4,0,4,8">
+                                    <TextBlock Text="收藏夹" FontWeight="SemiBold" FontSize="16" VerticalAlignment="Center" />
+                                    <Button Content="管理收藏" HorizontalAlignment="Right" Click="ManageBookmarks_Click" />
+                                </Grid>
                                 <TextBox x:Name="BookmarkSearchBox" Grid.Row="1" PlaceholderText="搜索收藏名称或网址" AutomationProperties.Name="搜索收藏" MaxLength="200" Margin="4,0,4,8" TextChanged="BookmarkSearch_Changed" />
                                 <ListView x:Name="BookmarksListView" Grid.Row="2" SelectionMode="None" HorizontalContentAlignment="Stretch">
                                     <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="0" /></Style></ListView.ItemContainerStyle>
@@ -527,29 +480,41 @@
                     <FontIcon Glyph="&#xE712;" FontSize="16" />
                     <Button.Flyout>
                         <Flyout x:Name="MoreActionsFlyout" Placement="BottomEdgeAlignedRight" Opening="MoreActionsFlyout_Opening" Closed="MoreActionsFlyout_Closed">
-                            <StackPanel x:Name="MoreActionsContent" x:Load="False" Width="260" Spacing="4">
-                                <Button Content="页内查找    Ctrl+F" Click="FindInPageBtn_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
-                                <Button x:Name="PageImagesBtn" Content="查看网页图片" Click="PageImages_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
-                                <Button x:Name="CopyCleanLinkBtn" Content="复制净化链接" Click="CopyCleanLink_Click" AutomationProperties.HelpText="仅移除已知跟踪参数，保留网页地址和其他参数" ToolTipService.ToolTip="仅移除已知跟踪参数，保留其他参数" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
-                                <Button AutomationProperties.Name="重新获取此页资源，保留当前登录与其他标签页" Content="忽略缓存并刷新    Ctrl+Shift+R" Click="HardReload_Click" ToolTipService.ToolTip="重新获取此页资源，保留当前登录与其他标签页" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
-                                <Button Content="本次会话历史 (Ctrl+H)" Click="ShowHistory_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
-                                <Button AutomationProperties.Name="转到独立的 Edge InPrivate 窗口；本应用的锁定和结束会话不会关闭它。" x:Name="OpenInEdgeBtn" Content="在 Edge 隐私窗口打开" Click="OpenInEdge_Click" ToolTipService.ToolTip="转到独立的 Edge InPrivate 窗口；本应用的锁定和结束会话不会关闭它。" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
-                                <Button Content="打开下载文件夹" Click="OpenDownloadsFolder_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
-                                <Button x:Name="AudioMuteBtn" Content="静音标签页" Click="AudioMuteBtn_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
-                                <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="4,6" />
-                                <Grid x:Name="ZoomMenuRow" ColumnSpacing="6" Padding="8,0,0,0">
+                            <StackPanel x:Name="MoreActionsContent" x:Load="False" Width="248" Spacing="2">
+                                <Grid x:Name="ZoomMenuRow" ColumnSpacing="6" Padding="8,2,2,2">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                    <TextBlock Text="缩放" VerticalAlignment="Center" />
-                                    <Button Grid.Column="1" Content="−" AutomationProperties.Name="缩小" ToolTipService.ToolTip="缩小 (Ctrl+−)" Click="ZoomOutBtn_Click" Style="{ThemeResource SubtleButtonStyle}" />
+                                    <TextBlock x:Name="ZoomMenuLabel" Text="网页缩放" VerticalAlignment="Center" />
+                                    <Button x:Name="ZoomMenuMinus" Grid.Column="1" Content="−" AutomationProperties.Name="缩小" ToolTipService.ToolTip="缩小 (Ctrl+−)" Click="ZoomOutBtn_Click" Style="{ThemeResource SubtleButtonStyle}" />
                                     <Button Grid.Column="2" x:Name="ZoomResetBtn" Content="100%" AutomationProperties.Name="重置缩放" ToolTipService.ToolTip="重置缩放 (Ctrl+0)" Click="ZoomResetBtn_Click" Style="{ThemeResource SubtleButtonStyle}" />
-                                    <Button Grid.Column="3" Content="+" AutomationProperties.Name="放大" ToolTipService.ToolTip="放大 (Ctrl++)" Click="ZoomInBtn_Click" Style="{ThemeResource SubtleButtonStyle}" />
+                                    <Button x:Name="ZoomMenuPlus" Grid.Column="3" Content="+" AutomationProperties.Name="放大" ToolTipService.ToolTip="放大 (Ctrl++)" Click="ZoomInBtn_Click" Style="{ThemeResource SubtleButtonStyle}" />
                                 </Grid>
+                                <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="4,3" />
+                                <StackPanel x:Name="PageActionsGroup" Spacing="2">
+                                    <Button x:Name="FindMenuButton" Content="页内查找    Ctrl+F" Click="FindInPageBtn_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
+                                    <Button x:Name="PageImagesBtn" Content="查看网页图片" Click="PageImages_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
+                                    <Button x:Name="CopyCleanLinkBtn" Content="复制净化链接" Click="CopyCleanLink_Click" AutomationProperties.HelpText="仅移除已知跟踪参数，保留网页地址和其他参数" ToolTipService.ToolTip="仅移除已知跟踪参数，保留其他参数" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
+                                    <Button x:Name="HardReloadMenuButton" AutomationProperties.Name="重新获取此页资源，保留当前登录与其他标签页" Content="忽略缓存并刷新    Ctrl+Shift+R" Click="HardReload_Click" ToolTipService.ToolTip="重新获取此页资源，保留当前登录与其他标签页" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
+                                    <Button AutomationProperties.Name="转到独立的 Edge InPrivate 窗口；本应用的锁定和结束会话不会关闭它。" x:Name="OpenInEdgeBtn" Content="在 Edge 隐私窗口打开" Click="OpenInEdge_Click" ToolTipService.ToolTip="转到独立的 Edge InPrivate 窗口；本应用的锁定和结束会话不会关闭它。" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
+                                    <Button x:Name="AudioMuteBtn" Content="静音标签页" Click="AudioMuteBtn_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
+                                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="4,3" />
+                                </StackPanel>
+                                <Button x:Name="SessionHistoryMenuButton" Content="本次会话历史 (Ctrl+H)" Click="ShowHistory_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
+                                <Button x:Name="FolderMenuButton" Content="打开下载文件夹" Click="OpenDownloadsFolder_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
                             </StackPanel>
                         </Flyout>
                     </Button.Flyout>
                 </Button>
                 </StackPanel>
             </Grid>
+            <Grid x:Name="BookmarkBar" Margin="0,6,0,0" ColumnSpacing="6" Loaded="BookmarkBar_Loaded" Visibility="Collapsed">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <ScrollViewer HorizontalScrollMode="Enabled" HorizontalScrollBarVisibility="Auto" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="BookmarkBarEntries" Spacing="3" Orientation="Horizontal" />
+                </ScrollViewer>
+                <Button Grid.Column="1" Content="所有收藏" Click="ManageBookmarks_Click" FontSize="12" Padding="7,2"
+                        Style="{ThemeResource SubtleButtonStyle}" AutomationProperties.Name="管理收藏栏和文件夹" />
+            </Grid>
+            </StackPanel>
         </Border>
 
         <!-- Floating In-Page Find Bar (Ctrl + F - Item 12) -->
@@ -620,49 +585,65 @@
             </Border>
 
             <Border x:Name="StartSurface" Background="{ThemeResource StealthCanvasBrush}">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-                <Grid>
-                <StackPanel x:Name="StartContent" Spacing="28" MaxWidth="680" Margin="32,40" VerticalAlignment="Center" HorizontalAlignment="Stretch">
-                    <StackPanel Spacing="16" HorizontalAlignment="Center">
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="16">
-                            <Image Source="ms-appx:///Assets/AppIcon.png" Width="52" Height="52" AutomationProperties.Name="Stealth" />
-                            <TextBlock Text="Stealth" FontSize="38" CharacterSpacing="45" FontWeight="SemiBold" VerticalAlignment="Center" />
-                        </StackPanel>
-                        <TextBlock Text="留一处空间，专注于此刻。" FontSize="16" TextWrapping="Wrap" TextAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    </StackPanel>
-                    <StackPanel Spacing="12">
-                    <AutoSuggestBox x:Name="StartSearchBox" PlaceholderText="搜索或输入网址" QueryIcon="Find" FontSize="16" Padding="16,14" CornerRadius="12"
-                                    AutomationProperties.Name="搜索或输入网址" TextChanged="AddressTextChanged" QuerySubmitted="AddressQuerySubmitted"
-                                    SuggestionChosen="AddressSuggestionChosen" TextMemberPath="Input" ItemTemplate="{StaticResource AddressSuggestionTemplate}" />
-                    <TextBlock x:Name="StartMessage" Text="切换功能保留网页；锁定或结束会话时清除本次浏览数据。" FontSize="12" TextWrapping="Wrap" TextAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" AutomationProperties.LiveSetting="Polite" />
-                    </StackPanel>
-                    <StackPanel Spacing="12">
-                        <Grid>
-                            <TextBlock Text="常用收藏" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
-                            <Button Content="查看全部" Click="ShowFavorites_Click" HorizontalAlignment="Right" Style="{ThemeResource SubtleButtonStyle}" />
-                        </Grid>
-                        <ItemsControl x:Name="StartBookmarks">
-                            <ItemsControl.ItemsPanel><ItemsPanelTemplate><VariableSizedWrapGrid Orientation="Horizontal" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate><DataTemplate>
-                                <Button Click="BookmarkItem_Click" PointerPressed="BookmarkItem_PointerPressed" Tag="{Binding}" AutomationProperties.Name="{Binding Title}" Width="148" Height="84" Margin="0,0,12,12" HorizontalContentAlignment="Stretch" Padding="14" CornerRadius="10" ToolTipService.ToolTip="{Binding Url}">
-                                    <StackPanel Spacing="8">
-                                        <FontIcon Glyph="&#xE734;" FontSize="18" HorizontalAlignment="Left" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
-                                        <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
-                                    </StackPanel>
+                <ScrollViewer x:Name="StartPageScroller" ZoomMode="Enabled" MinZoomFactor="0.5" MaxZoomFactor="2"
+                              HorizontalScrollMode="Auto" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                              HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+                    <Grid>
+                        <StackPanel x:Name="StartContent" MaxWidth="740" Margin="24,36" Spacing="22"
+                                    VerticalAlignment="Top" HorizontalAlignment="Stretch">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <Image Source="ms-appx:///Assets/AppIcon.png" Width="34" Height="34" AutomationProperties.AccessibilityView="Raw"/>
+                                <TextBlock Grid.Column="1" Text="新标签页" FontSize="26" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <Button Grid.Column="2" Click="OpenDownloadsFolder_Click" AutomationProperties.Name="打开下载文件夹">
+                                    <StackPanel Orientation="Horizontal" Spacing="7"><FontIcon Glyph="&#xE8B7;" FontSize="15"/><TextBlock Text="下载文件夹"/></StackPanel>
                                 </Button>
-                            </DataTemplate></ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                        <Border Visibility="{Binding Visibility, ElementName=StartBookmarksEmpty}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="18">
-                            <TextBlock x:Name="StartBookmarksEmpty" Text="喜欢的网页，留在手边。点击地址栏的星标，即可添加收藏。" FontSize="13" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        </Border>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
-                        <Button x:Name="SearchHomeBtn" Content="搜索首页" Click="HomeBtn_Click" Style="{ThemeResource SubtleButtonStyle}" />
-                        <Button Content="下载文件夹" Click="OpenDownloadsFolder_Click" Style="{ThemeResource SubtleButtonStyle}" />
-                    </StackPanel>
-                    <TextBlock Text="Ctrl+L 地址栏  ·  Ctrl+T 新标签  ·  Ctrl+Shift+T 恢复关闭标签" FontSize="12" TextWrapping="Wrap" TextAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                </StackPanel>
-                </Grid>
+                            </Grid>
+                            <Border CornerRadius="12" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" Padding="16">
+                                <StackPanel Spacing="8">
+                                    <AutoSuggestBox x:Name="StartSearchBox" PlaceholderText="搜索或输入网址" QueryIcon="Find" FontSize="16" MinHeight="44"
+                                                    AutomationProperties.Name="搜索或输入网址" TextChanged="AddressTextChanged" QuerySubmitted="AddressQuerySubmitted"
+                                                    SuggestionChosen="AddressSuggestionChosen" TextMemberPath="Input" ItemTemplate="{StaticResource AddressSuggestionTemplate}"/>
+                                    <Button x:Name="SearchHomeBtn" Click="HomeBtn_Click" Style="{ThemeResource SubtleButtonStyle}" Padding="6,2" HorizontalAlignment="Left">
+                                        <StackPanel Orientation="Horizontal" Spacing="6"><FontIcon Glyph="&#xE774;" FontSize="13"/><TextBlock Text="打开搜索引擎首页" FontSize="12"/></StackPanel>
+                                    </Button>
+                                    <TextBlock x:Name="StartMessage" Visibility="Collapsed" TextWrapping="Wrap" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" AutomationProperties.LiveSetting="Polite"/>
+                                </StackPanel>
+                            </Border>
+                            <StackPanel Spacing="12">
+                                <TextBlock Text="我的收藏" FontSize="20" FontWeight="SemiBold"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Click="ManageBookmarks_Click" Style="{ThemeResource AccentButtonStyle}" AutomationProperties.Name="管理收藏">
+                                        <StackPanel Orientation="Horizontal" Spacing="7"><FontIcon Glyph="&#xE8B7;" FontSize="15"/><TextBlock Text="管理收藏"/></StackPanel>
+                                    </Button>
+                                    <Button x:Name="StartImportButton" Click="ImportBrowserBookmarks_Click" AutomationProperties.Name="从 Chrome 导入收藏">
+                                        <StackPanel Orientation="Horizontal" Spacing="7"><FontIcon Glyph="&#xE8B5;" FontSize="15"/><TextBlock Text="从 Chrome 导入"/></StackPanel>
+                                    </Button>
+                                </StackPanel>
+                                <ItemsRepeater x:Name="StartBookmarks" HorizontalAlignment="Stretch">
+                                    <ItemsRepeater.Layout><UniformGridLayout MinItemWidth="196" MinItemHeight="62" MinColumnSpacing="8" MinRowSpacing="8" ItemsStretch="Fill"/></ItemsRepeater.Layout>
+                                    <ItemsRepeater.ItemTemplate><DataTemplate>
+                                        <Button Click="BookmarkItem_Click" PointerPressed="BookmarkItem_PointerPressed" Tag="{Binding}" AutomationProperties.Name="{Binding Title}"
+                                                HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Padding="10,6" ToolTipService.ToolTip="{Binding Url}">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                                <Border Width="30" Height="30" CornerRadius="8" Background="{ThemeResource StealthBrandSubtleBrush}" VerticalAlignment="Center">
+                                                    <FontIcon Glyph="&#xE734;" FontSize="14" Foreground="{ThemeResource StealthBrandBrush}"/>
+                                                </Border>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding DisplayHost}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Button>
+                                    </DataTemplate></ItemsRepeater.ItemTemplate>
+                                </ItemsRepeater>
+                                <TextBlock x:Name="StartBookmarksEmpty" Text="打开网页后，点击地址栏的星标即可收藏。" FontSize="13"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
                 </ScrollViewer>
             </Border>
 

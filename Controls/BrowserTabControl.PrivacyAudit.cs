@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Web.WebView2.Core;
 using StealthWorkspace.Services;
 
 namespace StealthWorkspace.Controls;
@@ -9,6 +10,25 @@ public sealed partial class BrowserTabControl
     {
         await using var fixture = new BrowserHttpFixture();
         await NavigateAuditAsync(fixture.Address + "/page");
+        var core = _hookedCore ?? throw new InvalidOperationException("Permission fixture has no browser");
+        foreach (var kind in new[] { CoreWebView2PermissionKind.FileReadWrite, CoreWebView2PermissionKind.MultipleAutomaticDownloads })
+        {
+            if (!_tabPermissions.Blocks(kind, core.Source, SettingsService.Instance.Data) ||
+                await ConfirmFilePermissionAsync(core, kind, "https://other.example/"))
+                throw new InvalidOperationException("A file permission escaped its one-time confirmation or origin");
+            var decision = ConfirmFilePermissionAsync(core, kind, core.Source);
+            Microsoft.UI.Xaml.Controls.Button? allow = null;
+            for (int i = 0; i < 80 && allow == null && !decision.IsCompleted; i++)
+            {
+                await Task.Delay(25);
+                allow = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetOpenPopupsForXamlRoot(XamlRoot)
+                    .Select(popup => ImageExperienceAcceptance.FindConfirm(popup.Child, "允许本次请求")).FirstOrDefault(button => button != null);
+            }
+            if (allow == null || decision.IsCompleted) throw new InvalidOperationException("File permission did not wait for explicit consent");
+            MediaAcceptance.Invoke(allow);
+            if (!await decision) throw new InvalidOperationException("Current document did not receive its one-time permission");
+        }
+        SmokeTest.Report("privacy: same-origin file writes and multiple downloads waited for individual native confirmations; another origin was denied");
         await EvaluateAuditAsync("""
             (() => {
               window.geoResult = 'pending';

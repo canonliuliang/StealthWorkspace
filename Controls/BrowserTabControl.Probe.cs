@@ -21,8 +21,10 @@ public sealed partial class BrowserTabControl
             StartSurface.Visibility = Visibility.Collapsed;
             reference = new WebView2();
             BrowserHost.Children.Add(reference);
-            await reference.EnsureCoreWebView2Async(await BrowserProfileManager.GetSharedEnvironmentAsync());
+            var environment = await BrowserProfileManager.GetSharedEnvironmentAsync(_workspace);
+            await reference.EnsureCoreWebView2Async(environment);
             core = reference.CoreWebView2;
+            await BrowserProfileManager.PrepareForNavigationAsync(core, environment, _workspace);
         }
         else
         {
