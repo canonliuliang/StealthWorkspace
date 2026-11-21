@@ -62,16 +62,14 @@ public sealed partial class MainWindow
                 foreach (var shield in new[] { StatusShield, addressShield })
                 {
                     byte[] pixels = await UiCapture.PixelsAsync(shield);
-                    int cyan = 0, blue = 0;
+                    int ink = 0, clear = 0;
                     for (int i = 0; i < pixels.Length; i += 4)
                     {
-                        if (pixels[i+3] < 220) continue;
-                        int b = pixels[i], g = pixels[i+1], r = pixels[i+2];
-                        if (g > 150 && g > r + 55 && b > 195) cyan++;
-                        if (b > 120 && b > g + 70 && b > r + 90) blue++;
+                        if (pixels[i+3] < 16) clear++;
+                        else if (pixels[i+3] > 72) ink++;
                     }
-                    if (cyan < 3 || blue < 3) throw new InvalidOperationException($"Missing shield layers in {theme}: cyan={cyan}, blue={blue}.");
-                    SmokeTest.Report($"shield layers {theme} {shield.ActualWidth} DIP: cyan={cyan}, blue={blue}");
+                    if (!shield.Compact || ink < 12 || clear < pixels.Length / 8)
+                        throw new InvalidOperationException($"Toolbar shield lost its outline in {theme}.");
                 }
         }
 

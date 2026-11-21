@@ -45,8 +45,8 @@
                 <!-- Calm Ready Indicator (click = open trace cleaner when residue found) -->
                 <Button x:Name="StatusBadge"
                         Style="{ThemeResource SubtleButtonStyle}"
-                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        Background="Transparent"
+                        BorderBrush="Transparent"
                         BorderThickness="1"
                         CornerRadius="10"
                         Padding="8,3"
@@ -54,8 +54,8 @@
                         AutomationProperties.Name="工作区状态，打开痕迹清理"
                         ToolTipService.ToolTip="查看工作区状态与痕迹清理">
                     <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                        <Grid Width="20" Height="20">
-                            <controls:PrivacyShield x:Name="StatusShield" />
+                        <Grid Width="16" Height="16">
+                            <controls:PrivacyShield x:Name="StatusShield" Compact="True" />
                             <ProgressRing x:Name="StatusProgress" Width="15" Height="15" IsActive="False" Visibility="Collapsed" />
                         </Grid>
                         <TextBlock x:Name="StatusBadgeText" Text="隐私清理" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium" />

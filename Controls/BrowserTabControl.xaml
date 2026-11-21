@@ -90,7 +90,7 @@
                                 AutomationProperties.Name="站点隐私"
                                 ToolTipService.ToolTip="隐私保护 · 登录、浏览记录和网站权限">
                             <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
-                                <icons:PrivacyShield xmlns:icons="using:StealthWorkspace.Controls" x:Name="AddressPrivacyShield" Width="24" Height="24" />
+                                <icons:PrivacyShield xmlns:icons="using:StealthWorkspace.Controls" x:Name="AddressPrivacyShield" Compact="True" Width="18" Height="18" />
                                 <Border x:Name="ShieldBlockedBadge" Background="{ThemeResource StealthBrandSubtleBrush}" CornerRadius="4" Padding="4,0" Visibility="Collapsed">
                                     <TextBlock x:Name="ShieldBlockedCountText" Text="0" FontSize="12" Foreground="{ThemeResource StealthBrandBrush}" FontWeight="SemiBold" />
                                 </Border>
