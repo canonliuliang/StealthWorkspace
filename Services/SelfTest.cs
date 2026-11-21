@@ -154,6 +154,18 @@ public static class SelfTest
             using (var afterExisting = BrowserDownloadPath.Reserve(testRoot, "same-name.bin"))
                 Report(Path.GetFileName(afterExisting.FilePath) != "same-name.bin" && File.ReadAllText(Path.Combine(testRoot, "same-name.bin")) == "keep existing bytes",
                     "Download reservation preserves an existing file");
+            string listing = Directory.CreateDirectory(Path.Combine(testRoot, "download-file-list")).FullName;
+            string probeName = ".write-" + Guid.NewGuid().ToString("N");
+            using (new FileStream(Path.Combine(listing, probeName), FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose))
+            {
+                using var reportDownload = BrowserDownloadPath.Reserve(listing, ".write-report.pdf");
+                File.WriteAllText(reportDownload.FilePath, "completed download");
+                File.WriteAllText(Path.Combine(listing, probeName + ".jpg"), "second completed download");
+                File.WriteAllText(Path.Combine(listing, "pending.CRDOWNLOAD"), "partial transfer");
+                var listed = BrowserDownloadFolders.EnumerateCompletedFiles(listing).Select(f => f.Name).ToHashSet(StringComparer.Ordinal);
+                Report(listed.SetEquals([".write-report.pdf", probeName + ".jpg"]),
+                    "The download folder shows completed .write- names and omits the active write probe and unfinished transfer");
+            }
             foreach (string unsafeName in new[] { "CON.txt", "COM¹.txt", "lpt².tar.gz", "CONOUT$.txt", "..", "NUL", "x/y\\z.bin", new string('a', 180) + ".jpg", new string('a', 119) + " ", new string('a', 115) + ".v2.jpg" })
             {
                 using var reserved = BrowserDownloadPath.Reserve(testRoot, unsafeName);

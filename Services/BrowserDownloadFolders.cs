@@ -13,6 +13,15 @@ internal static class BrowserDownloadFolders
     private static readonly object Gate = new();
     private static string? _selectedHome;
     private static string? _selectedForRoot;
+    private const string WriteProbePrefix = ".write-";
+
+    internal static IEnumerable<FileInfo> EnumerateCompletedFiles(string directory) =>
+        new DirectoryInfo(directory).EnumerateFiles().Where(file =>
+            !file.Extension.Equals(".crdownload", StringComparison.OrdinalIgnoreCase) && !IsWriteProbe(file.Name));
+
+    private static bool IsWriteProbe(string name) =>
+        name.Length == WriteProbePrefix.Length + 32 && name.StartsWith(WriteProbePrefix, StringComparison.Ordinal) &&
+        Guid.TryParseExact(name.AsSpan(WriteProbePrefix.Length), "N", out _);
 
     internal static string PathFor(string home, string? decoySession) => decoySession == null
         ? Path.Combine(home, "IsolatedDownloads")
@@ -58,7 +67,7 @@ internal static class BrowserDownloadFolders
                     Directory.CreateDirectory(directory);
                     if (!SafeFileSystem.IsPlainPath(directory)) throw new UnauthorizedAccessException("下载目录含有重定向。");
                     // An existing, readable folder may still deny new files to this process.
-                    using (new FileStream(Path.Combine(directory, ".write-" + Guid.NewGuid().ToString("N")),
+                    using (new FileStream(Path.Combine(directory, WriteProbePrefix + Guid.NewGuid().ToString("N")),
                         FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose)) { }
                     AppPaths.Hide(directory);
                     _selectedHome = home;

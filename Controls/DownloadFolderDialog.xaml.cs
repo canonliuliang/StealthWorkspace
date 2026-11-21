@@ -57,13 +57,12 @@ public sealed partial class DownloadFolderDialog : ContentDialog
                 var entries = new List<DownloadFolderFile>();
                 int skipped = 0;
                 if (!SafeFileSystem.IsPlainPath(location.Directory)) throw new UnauthorizedAccessException();
-                foreach (var info in new DirectoryInfo(location.Directory).EnumerateFiles())
+                foreach (var info in BrowserDownloadFolders.EnumerateCompletedFiles(location.Directory))
                 {
                     _lifetime.Token.ThrowIfCancellationRequested();
                     try
                     {
-                        if (info.Name.StartsWith(".write-", StringComparison.Ordinal) || info.Extension.Equals(".crdownload", StringComparison.OrdinalIgnoreCase)
-                            || SafeFileSystem.HasLinkReparsePoint(info.FullName)) continue;
+                        if (SafeFileSystem.HasLinkReparsePoint(info.FullName)) continue;
                         double kib = info.Length / 1024d;
                         string size = kib >= 1024 ? $"{kib / 1024:N1} MB" : $"{Math.Ceiling(kib):N0} KB";
                         entries.Add(new(info.FullName, info.Name, info.LastWriteTime, size + " · " + info.LastWriteTime.ToString("g", CultureInfo.CurrentCulture)));
