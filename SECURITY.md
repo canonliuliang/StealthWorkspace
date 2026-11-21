@@ -4,6 +4,8 @@
 
 r16.1 中已验证的地址输入、工作区隔离、备份校验与恢复边界可在[本轮审查](docs/R161-REVIEW.md)及[数据完整性对照](docs/R161-DATA.md)中查阅。
 
+主空间按保险箱保留网站允许跨重启使用的账号状态。强制终止与下一次使用浏览器之间，内核历史数据库可能仍含上一次访问记录。[第二次预览的数据清理验证](docs/R161-DAILY-BROWSING.md)
+
 不要在公开 Issue 中提交密码、私密媒体、保险箱、Cookie、访问令牌或未审阅的日志。
 
 仓库已启用 GitHub 私密漏洞报告。请提供受影响版本、平台与使用合成数据观察到的行为。维护者可在同一报告中跟进修复和验证。[提交私密安全报告](https://github.com/canonliuliang/StealthWorkspace/security/advisories/new)

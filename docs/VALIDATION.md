@@ -1,6 +1,30 @@
 # 验证范围
 
-## r16.1 发行验证
+## R16.1 第二次预览
+
+GitHub 于 **2026-11-21 06:29:31 UTC** 公开 Windows ARM64 和 x64 未签名便携预览包。标签 [`v2026.11.21-r16.1-preview.2`](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview.2) 指向 [`374789f`](https://github.com/canonliuliang/StealthWorkspace/commit/374789f8ce52951748051737cf41f497a578336f)，对应[功能与修复 PR #8](https://github.com/canonliuliang/StealthWorkspace/pull/8)。[标签构建与发布](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44875495179) · [main 双架构构建](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44875488460) · [发布后官网部署](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44875784778)
+
+| 从 Release 完整下载的资产 | 字节 | SHA-256 |
+| --- | ---: | --- |
+| Windows ARM64 ZIP | 96,274,317 | `5896455bcf7065e454227a6f35d2340d1739bc111be92eee9c168dd5c77c6a11` |
+| Windows x64 ZIP | 98,651,962 | `f361a752deed629d0a5eba060d167fdfe038c700333067e4d70e7ea720363498` |
+| SHA256SUMS.txt | 228 | `138db154a1c6002a430357daeca6e6f496a103cf824cfda80770ae8ea14763b5` |
+
+从官网的三个下载链接匿名完整下载 ZIP 和清单。两包的 SHA-256 均与公开清单、GitHub 资产摘要及标签构建中的原始 ZIP 相符。解压后 ARM64 有 547 个文件、x64 有 551 个文件。主程序集的嵌入版本和提交均与本次标签一致。[公开下载与校验清单](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview.2)
+
+标签流水线在原生 Windows 运行器完成核心检查。ARM64 通过 314 项、失败 0 项、跳过 1 项，x64 通过 312 项、失败 0 项、跳过 3 项。两架构各有一项缺少现存 SUBST 盘符映射。x64 测试卷另有两项无法产生独立的 8.3 短文件名。[ARM64 构建记录](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44875495179/job/136759174963) · [x64 构建记录](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44875495179/job/136759174749)
+
+- **发布候选的账号与历史。** 两个回环网站和 11 个独立低权限进程验证了 HttpOnly 登录 Cookie、localStorage、IndexedDB 和 CacheStorage。正常关窗或锁定后主空间仍能登录。用相同地址发起请求，正常关窗再启动后服务器收到新的请求。清除一个站点后另一站仍能登录。强制终止时磁盘仍有两条测试访问，下次使用浏览器前清理，再次正常关窗后原生历史表中的本批访问为零。网站可自行令账号过期，已登录的服务也可保留观看历史。[数据、用例与重跑方法](R161-DAILY-BROWSING.md)
+- **收藏、下载与菜单。** 从全新 Chrome 配置真正导出的 HTML 经系统文件选择器导入，得到 3 条链接和 5 个文件夹。沿收藏栏打开多级目录中的视频链接，核对了目标路径。下载 4 MiB 合成文件后清空任务列表，仍能从应用内目录找到文件并导入保险箱。正常权限下资源管理器打开正确目录。受限权限下验证了应用内目录。网页缩放以实际像素比核对，首页缩放以原生控件倍率核对。[操作路径与性能数据](R161-DAILY-BROWSING.md)
+- **媒体与锁定。** 旧候选的 3 个专项进程中有 2 个在快速返回图库时触发原生崩溃。修复后 3 个独立进程完成 72 次锁定、解锁和返回图库，其中 36 次立即切页、36 次按已加载的图库按钮。另有 6 轮完整操作、两种首次密码设置，以及 WAV、MP4 播放和备份还原。12 个进程均正常退出。动画 WebP 在真实图片控件上显示了三种预期画面，播放两轮后停止。
+
+本机使用 Windows 11 ARM64（系统构建 26300），x64 界面通过 Windows on Arm 仿真运行。两架构最终本地包各有 313 项核心检查通过，0 项失败，另有 2 项 SUBST 别名检查因环境受限而跳过。一项缺少对应现成盘符映射，另一项被系统拒绝创建临时盘符。上述账号和媒体测试均使用合成资料。
+
+**深目录仍有限制。** 在 Windows 长路径支持关闭（`LongPathsEnabled=0`）的测试机上，将公开 ARM64 包的合成测试数据置于 154 个字符的诊断父目录，核心检查第一次得到 308 通过、5 失败、2 跳过。未通过的五项是旧下载清理与新会话隔离、重置旧库后重载或迁移、重置标记写入失败时保留内容、清理联接目录并保护外部目标，以及媒体库重命名、批量导出和部分删除重试的组合检查。同一批文件改用 70 个字符的诊断父目录时，ARM64 和 x64 各为 313 通过、0 失败、2 跳过。既有保险箱先备份并校验，便携安装可选较短的固定目录。[安装与更新](INSTALL.md)
+
+两版 ARM64 各预热后交错测量 7 次，从创建进程到锁页首次完成加载。第一次预览为 354.9 ms 中位数（347.4–372.0 ms），本次为 357.8 ms（351.0–369.9 ms）。这是热文件缓存下的启动，未创建首个网页。另用三分钟反复开关 12 个标签，三个保留标签的页面状态通过检查。宿主私有内存采样峰值为 72.2 MiB，渲染进程另计。
+
+## R16.1 第一次预览
 
 GitHub 于 **2026-11-20 17:59:04 UTC（UTC+8 为 11 月 21 日 01:59:04）**发布 Windows x64 / ARM64 未签名便携预览版。[公开下载与清单](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview) · [标签原生构建、校验和发布](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44787842133) · [官网生产部署](https://github.com/canonliuliang/StealthWorkspace/actions/runs/44788449507)
 
