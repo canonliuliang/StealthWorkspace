@@ -598,7 +598,8 @@
             </Border>
         </Grid>
 
-            <Grid x:Name="BookmarkBar" Grid.Column="1" Width="152" Padding="8,10,6,8" RowSpacing="6" Background="{ThemeResource StealthSurfaceBrush}" BorderThickness="1,0,0,0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Loaded="BookmarkBar_Loaded" Visibility="Collapsed">
+            <Border Grid.Column="1" Visibility="{Binding Visibility, ElementName=TopNavBar}">
+            <Grid x:Name="BookmarkBar" Width="152" Padding="8,10,6,8" RowSpacing="6" Background="{ThemeResource StealthSurfaceBrush}" BorderThickness="1,0,0,0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Loaded="BookmarkBar_Loaded" Visibility="Collapsed">
                 <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                 <TextBlock Text="收藏夹" Margin="6,2" FontSize="13" FontWeight="SemiBold"/>
                 <ScrollViewer Grid.Row="1" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto">
@@ -663,6 +664,7 @@
                     <Button x:Name="ManageBarBookmarks" Content="整理" Click="ManageBookmarks_Click" Style="{ThemeResource SubtleButtonStyle}" AutomationProperties.Name="整理收藏夹栏" Padding="7,2"/>
                 </StackPanel>
             </Grid>
+            </Border>
         </Grid>
     </Grid>
 </UserControl>

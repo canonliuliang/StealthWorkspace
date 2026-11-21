@@ -23,7 +23,7 @@ public sealed partial class BrowserTabControl
         BookmarkBarEntries.Children.Clear();
         var session = settings.ActiveBookmarkSession;
         var entries = library.Children("").Take(12).ToArray();
-        BookmarkBar.Visibility = session != null && !_isBrowserFullScreen ? Visibility.Visible : Visibility.Collapsed;
+        BookmarkBar.Visibility = session != null ? Visibility.Visible : Visibility.Collapsed;
         if (session == null) return;
         foreach (object row in entries)
         {

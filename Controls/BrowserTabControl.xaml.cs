@@ -1206,7 +1206,6 @@ public sealed partial class BrowserTabControl : UserControl
             }
             ScheduleBackgroundSleep();
             TopNavBar.Visibility = _isBrowserFullScreen ? Visibility.Collapsed : Visibility.Visible;
-            BookmarkBar.Visibility = !_isBrowserFullScreen && SettingsService.Instance.ActiveBookmarkSession != null ? Visibility.Visible : Visibility.Collapsed;
             FullScreenModeChanged?.Invoke(_isBrowserFullScreen);
         }
         catch (Exception ex)
