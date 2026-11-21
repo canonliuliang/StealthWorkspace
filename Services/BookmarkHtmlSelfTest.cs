@@ -142,6 +142,18 @@ internal static class BookmarkHtmlSelfTest
             && added == 0 && foldersAdded == 0 && library.Items.Single(b => b.Title == "旧收藏").FolderId == "",
             "Reimport skips duplicates within each folder while preserving the same URL in distinct folders and legacy root bookmarks", "");
         var fresh = new SettingsService(settingsRoot, null).GetBookmarkLibrary();
+        var large = library with { Items = library.Items.AddRange(Enumerable.Range(0, 300).Select(i =>
+            new BookmarkItem { Title = "large-" + i, Url = $"https://example.test/watch/{i}", FolderId = nested.Id, Position = i })) };
+        var otherTab = new BookmarkLibrary(large.Items, large.Folders);
+        var movedSnapshot = large with { Folders = large.Folders.Replace(nested, nested with { ParentId = photos.Id }) };
+        var duplicateAddress = new Uri("https://video.example/watch?v=7");
+        report(ReferenceEquals(settings.FirstBookmark(large.Items, duplicateAddress), large.Items.First(b => b.Url == duplicateAddress.AbsoluteUri)) &&
+            settings.FirstBookmark(large.Items, new Uri("https://example.test/absent")) == null &&
+            ReferenceEquals(large.Children(nested.Id), otherTab.Children(nested.Id)) &&
+            !large.Children(photos.Id).Any() && movedSnapshot.Children(photos.Id).OfType<BookmarkFolder>().Single().Id == nested.Id &&
+            otherTab.Children(nested.Id).OfType<BookmarkItem>().Select(b => b.Position).SequenceEqual(
+                large.Items.Where(b => b.FolderId == nested.Id).OrderBy(b => b.Position ?? int.MaxValue).Select(b => b.Position)),
+            "Large folder and star indexes share a snapshot, preserve duplicate URLs and mixed order, and refresh after a folder-only edit", "");
         report(fresh.Items.Count == library.Items.Count && fresh.Folders.SequenceEqual(library.Folders) &&
             fresh.Items.Select(b => b.FolderId).SequenceEqual(library.Items.Select(b => b.FolderId)),
             "Bookmark folders and bookmark parents survive encrypted settings reload", "");

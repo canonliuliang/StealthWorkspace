@@ -39,7 +39,7 @@ public sealed partial class BrowserTabControl
         var library = settings.GetBookmarkLibrary();
         if (library.Folders.Count != 0 && settings.ActiveBookmarkSession is { } current)
         {
-            await SaveToBookmarkFolderAsync(title, url, current, library);
+            await SaveToBookmarkFolderAsync(title, address!, current, library);
             return;
         }
         bool saved = await SaveBookmarkEditAsync(settings.ActiveBookmarkSession, session => bookmarked ?

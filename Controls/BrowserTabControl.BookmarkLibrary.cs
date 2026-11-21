@@ -149,10 +149,11 @@ public sealed partial class BrowserTabControl
             await ShowBookmarkManagerAsync("", message);
     }
 
-    private async Task SaveToBookmarkFolderAsync(string title, string url, SettingsService.BookmarkSession session, BookmarkLibrary library)
+    private async Task SaveToBookmarkFolderAsync(string title, Uri address, SettingsService.BookmarkSession session, BookmarkLibrary library)
     {
         if (_bookmarkDialog != null) return;
-        var existing = library.Items.Find(b => BrowserAddress.SamePage(b.Url, url));
+        var existing = SettingsService.Instance.FirstBookmark(library.Items, address);
+        string url = address.AbsoluteUri;
         var name = new TextBox { Header = "名称", Text = existing?.Title ?? title, MaxLength = 200 };
         var folders = BookmarkManager.Destinations(library, null);
         var select = new ComboBox { Header = "保存到", ItemsSource = folders, HorizontalAlignment = HorizontalAlignment.Stretch,

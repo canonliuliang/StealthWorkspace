@@ -6,6 +6,10 @@ namespace StealthWorkspace.Services;
 internal sealed record BookmarkLibrary(ImmutableList<BookmarkItem> Items, ImmutableList<BookmarkFolder> Folders)
 {
     private static readonly ConditionalWeakTable<ImmutableList<BookmarkFolder>, Dictionary<string, BookmarkFolder>> FolderIndexes = new();
+    // Use both immutable snapshots as weak keys. Tabs in the same workspace
+    // share the arrays; edits to folders alone invalidate the matching index.
+    private static readonly ConditionalWeakTable<ImmutableList<BookmarkItem>,
+        ConditionalWeakTable<ImmutableList<BookmarkFolder>, Dictionary<string, object[]>>> ChildIndexes = new();
     private Dictionary<string, BookmarkFolder> ById => FolderIndexes.GetValue(Folders,
         static folders => folders.ToDictionary(f => f.Id, StringComparer.Ordinal));
     internal string PathName(string id)
@@ -20,9 +24,22 @@ internal sealed record BookmarkLibrary(ImmutableList<BookmarkItem> Items, Immuta
         return names.Count == 0 ? "收藏栏" : string.Join(" › ", names);
     }
 
-    internal IEnumerable<object> Children(string id) =>
-        Folders.Where(f => f.ParentId == id).Cast<object>().Concat(Items.Where(b => b.FolderId == id))
-            .OrderBy(row => (row is BookmarkFolder folder ? folder.Position : ((BookmarkItem)row).Position) ?? int.MaxValue);
+    internal IEnumerable<object> Children(string id)
+    {
+        if (Items.Count + Folders.Count < 256)
+            return Folders.Where(f => f.ParentId == id).Cast<object>().Concat(Items.Where(b => b.FolderId == id)).OrderBy(Position);
+        var indexes = ChildIndexes.GetValue(Items, static _ => new());
+        if (!indexes.TryGetValue(Folders, out var groups)) groups = indexes.GetValue(Folders, BuildChildIndex);
+        return groups.TryGetValue(id, out var rows) ? rows : Array.Empty<object>();
+    }
+
+    private Dictionary<string, object[]> BuildChildIndex(ImmutableList<BookmarkFolder> folders) =>
+        folders.Cast<object>().Concat(Items)
+            .GroupBy(row => row is BookmarkFolder f ? f.ParentId : ((BookmarkItem)row).FolderId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.OrderBy(Position).ToArray(), StringComparer.Ordinal);
+
+    private static int Position(object row) =>
+        (row is BookmarkFolder f ? f.Position : ((BookmarkItem)row).Position) ?? int.MaxValue;
 
     internal bool IsDescendant(string id, string ancestor)
     {
