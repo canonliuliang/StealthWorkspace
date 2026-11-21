@@ -1,5 +1,8 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Controls;
 using StealthWorkspace.Services;
+using System.Diagnostics;
 
 namespace StealthWorkspace.Controls;
 
@@ -49,15 +52,38 @@ public sealed partial class BrowserTabControl
         BrowserProgressBar.Visibility = originalVisibility;
         if (!stable) throw new InvalidOperationException("Browser viewport resized when the load indicator changed");
 
+        var dismiss = ((StackPanel)DownloadToast.Child).Children.OfType<Button>()
+            .Single(button => AutomationProperties.GetName(button) == "关闭下载提示");
+        var deadline = TimeSpan.FromSeconds(5);
+        async Task ClickDismissAsync()
+        {
+            var clicked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnClick(object sender, RoutedEventArgs args) => clicked.TrySetResult();
+            dismiss.Click += OnClick;
+            try
+            {
+                MediaAcceptance.Invoke(dismiss);
+                await clicked.Task.WaitAsync(deadline);
+            }
+            finally { dismiss.Click -= OnClick; }
+        }
+
         ShowDownloadToast("\uE896", "正在下载", "测试文件");
-        DismissDownloadToast_Click(this, new RoutedEventArgs());
+        await ClickDismissAsync();
+        var firstExit = UiMotion.ObserveOverlayExitAsync(DownloadToast);
         ShowDownloadToast("\uE73E", "下载完成", "测试文件");
-        await Task.Delay(350);
+        await firstExit.WaitAsync(deadline);
         if (DownloadToast.Visibility != Visibility.Visible || DownloadToastTitle.Text != "下载完成" || !DownloadToast.IsHitTestVisible)
             throw new InvalidOperationException("An interrupted dismissal hid the new download notification");
-        DismissDownloadToast_Click(this, new RoutedEventArgs());
-        await Task.Delay(350);
+        await ClickDismissAsync();
+        if (DownloadToast.Visibility == Visibility.Visible && DownloadToast.IsHitTestVisible)
+            throw new InvalidOperationException("Dismissed notification still intercepts clicks");
+        var finalExit = UiMotion.ObserveOverlayExitAsync(DownloadToast);
+        bool waitedForCompositor = !finalExit.IsCompleted;
+        var wait = Stopwatch.StartNew();
+        await finalExit.WaitAsync(deadline);
         if (DownloadToast.Visibility != Visibility.Collapsed) throw new InvalidOperationException("Download notification did not close");
+        SmokeTest.Report($"download notification: closed; compositor callback awaited={waitedForCompositor}; elapsed={wait.ElapsedMilliseconds} ms");
         SmokeTest.Report("browser motion: stable native viewport; notification dismiss/reopen/dismiss passed");
     }
 }
