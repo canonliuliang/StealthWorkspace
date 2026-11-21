@@ -101,6 +101,7 @@ public static class SelfTest
                 "Idle deadline handles new input, overdue lock and Windows tick counter wrap");
             await BookmarkHtmlSelfTest.RunAsync(testRoot, Report);
             await WorkspaceSessionSelfTest.RunAsync(Report);
+            await WorkspacePathSelfTest.RunAsync(testRoot, Report);
             BrowserAddressSelfTest.Run(Report, testRoot);
             await BrowserShareLinkTests.RunAsync(Report);
             await VaultIntegritySelfTest.RunAsync(testRoot, Report, Skip);

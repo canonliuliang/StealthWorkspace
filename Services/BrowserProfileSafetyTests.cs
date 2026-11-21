@@ -159,6 +159,22 @@ internal static class BrowserProfileSafetyTests
         vault.Lock();
     }
 
+    // Windows PowerShell 5 enforces the legacy directory limit when creating a junction.
+    // Both inputs here are self-test paths. Environment variables keep names out of the command text.
+    private static bool CreateFixtureJunction(string link, string target)
+    {
+        var start = new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"))
+        {
+            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true,
+            Arguments = "/d /v:off /c mklink /j \"%STEALTH_TEST_LINK%\" \"%STEALTH_TEST_TARGET%\""
+        };
+        start.Environment["STEALTH_TEST_LINK"] = WorkspaceFileName.ForWin32(link);
+        start.Environment["STEALTH_TEST_TARGET"] = WorkspaceFileName.FullPath(target);
+        using var process = System.Diagnostics.Process.Start(start)!;
+        process.WaitForExit();
+        return process.ExitCode == 0;
+    }
+
     internal static void Run(string testRoot, Action<bool, string, string> report)
     {
         string root = Path.Combine(testRoot, "profile-cleanup");
@@ -191,21 +207,28 @@ internal static class BrowserProfileSafetyTests
         Directory.CreateDirectory(target);
         string sentinel = Path.Combine(target, "keep.txt");
         File.WriteAllText(sentinel, "retain");
-        var start = new System.Diagnostics.ProcessStartInfo("powershell.exe") { UseShellExecute = false, CreateNoWindow = true };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-Command");
-        start.ArgumentList.Add("New-Item -ItemType Junction -Path $env:STEALTH_TEST_LINK -Target $env:STEALTH_TEST_TARGET -ErrorAction Stop | Out-Null");
-        start.Environment["STEALTH_TEST_LINK"] = Path.Combine(linked, "junction");
-        start.Environment["STEALTH_TEST_TARGET"] = target;
-        using (var process = System.Diagnostics.Process.Start(start)!)
+        string junction = Path.Combine(linked, "junction");
+        bool created = CreateFixtureJunction(junction, target) && File.Exists(Path.Combine(junction, "keep.txt"));
+        Directory.SetLastWriteTimeUtc(linked, DateTime.UtcNow.AddDays(-2));
+        report(created && BrowserProfileManager.TryDeleteAbandonedProfile(linked, root) &&
+            !Directory.Exists(linked) && File.ReadAllText(sentinel) == "retain",
+            "Profile cleanup unlinks a directory junction while preserving its external target",
+            created ? "" : "Synthetic junction creation failed");
+        string rootAlias = Path.Combine(target, "profile-root-alias");
+        string protectedProfile = Create(true);
+        bool aliased = CreateFixtureJunction(rootAlias, root);
+        report(aliased && !BrowserProfileManager.TryDeleteAbandonedProfile(Path.Combine(rootAlias, Path.GetFileName(protectedProfile)), rootAlias) &&
+            File.Exists(Path.Combine(protectedProfile, "fixture-data")),
+            "Profile cleanup refuses a junction in the parent path and preserves the actual profile", "");
+        if (aliased)
         {
-            process.WaitForExit();
-            Directory.SetLastWriteTimeUtc(linked, DateTime.UtcNow.AddDays(-2));
-            report(process.ExitCode == 0 && BrowserProfileManager.TryDeleteAbandonedProfile(linked, root) &&
-                !Directory.Exists(linked) && File.ReadAllText(sentinel) == "retain",
-                "Profile cleanup unlinks a directory junction while preserving its external target", "");
+            var redirectedVault = new VaultService(Path.Combine(rootAlias, "blocked-vault"));
+            redirectedVault.ReloadConfig();
+            report(redirectedVault.IsCorrupted && !Directory.Exists(Path.Combine(root, "blocked-vault")),
+                "Opening and retrying a vault under a redirected parent leave the external directory untouched", "");
+            Directory.Delete(rootAlias);
         }
+        else report(false, "Opening and retrying a vault under a redirected parent leave the external directory untouched", "Synthetic junction creation failed");
         string legacy = Create(false);
         report(!BrowserProfileManager.TryDeleteAbandonedProfile(legacy, root) && Directory.Exists(legacy),
             "Profile cleanup preserves unmarked legacy profiles", "");
