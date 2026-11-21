@@ -161,10 +161,16 @@ try {
             throw 'Restricted handoff did not satisfy the clipboard, confirmation and launch checks.'
         }
     }
+    $timer.Restart()
+    while (!$child.WaitForExit(150) -and $timer.Elapsed.TotalSeconds -lt 90) {
+        if ((Get-Content $report -Tail 1) -match 'waiting for real foreground activation') {
+            & (Join-Path $PSScriptRoot 'Set-UiTestForeground.ps1') -TestProcess $testApp | Out-Null
+        }
+    }
+    if (!$child.HasExited -or $child.ExitCode -ne 0) { throw 'The synthetic application did not exit successfully.' }
+    if ((Get-Content $report -Raw) -notmatch 'AUDIT RESULT: OK') { throw "The complete menu workflow failed. Inspect $report" }
     [pscustomobject]@{ appId=$testApp.Id; appIntegrityRid=$rid; verifiedMode=$(if ($Low) {'manual InPrivate guidance'} else {'external InPrivate browser'}); passed=$true } |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'edge-handoff.json')
-    if (!$child.WaitForExit(90000) -or $child.ExitCode -ne 0) { throw 'The synthetic application did not exit successfully.' }
-    if ((Get-Content $report -Raw) -notmatch 'AUDIT RESULT: OK') { throw "The complete menu workflow failed. Inspect $report" }
     Write-Output "Verified both menu entries with app RID $rid. Reports: $out"
 } finally {
     $remaining = Find-TestEdge

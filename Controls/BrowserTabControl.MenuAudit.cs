@@ -71,6 +71,7 @@ public sealed partial class BrowserTabControl
                 else if (fixture.CountRequests("/page") != beforeEdge)
                     throw new InvalidOperationException("Restricted handoff sent the page without the user opening Edge");
             }
+            await RequireKeyboardForegroundAsync("menu zoom");
             Click(ZoomMenuPlus);
             await WaitAsync(() => ZoomPanel.Visibility == Visibility.Visible && !Equals(ZoomPanelReset.Content, "100%"), "web plus changed the engine zoom and displayed the measured value");
             Click(ZoomPanelMinus);
