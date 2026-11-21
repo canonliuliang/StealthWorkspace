@@ -128,7 +128,7 @@ public sealed partial class BrowserTabControl
         {
             core.Navigate("about:blank");
             if (!await complete.Task.WaitAsync(TimeSpan.FromSeconds(8)) || UrlTextBox.Text != "about:blank" ||
-                BookmarkStarBtn.IsEnabled || CurrentTitle == "Partition fixture")
+                CanBookmarkCurrentPage || CurrentTitle == "Partition fixture")
                 throw new InvalidOperationException("Blank navigation left stale site identity in browser chrome");
         }
         finally { core.NavigationCompleted -= Completed; }

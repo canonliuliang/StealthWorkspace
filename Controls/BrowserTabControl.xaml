@@ -21,17 +21,6 @@
     </UserControl.Resources>
 
     <Grid Background="{ThemeResource LayerFillColorDefaultBrush}">
-        <VisualStateManager.VisualStateGroups>
-            <VisualStateGroup x:Name="BookmarkStates">
-                <VisualState x:Name="NotBookmarked" />
-                <VisualState x:Name="Bookmarked">
-                    <VisualState.Setters>
-                        <Setter Target="BookmarkStarIcon.Glyph" Value="&#xE735;" />
-                        <Setter Target="BookmarkStarIcon.Foreground" Value="{ThemeResource AccentTextFillColorPrimaryBrush}" />
-                    </VisualState.Setters>
-                </VisualState>
-            </VisualStateGroup>
-        </VisualStateManager.VisualStateGroups>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -599,71 +588,17 @@
         </Grid>
 
             <Border Grid.Column="1" Visibility="{Binding Visibility, ElementName=TopNavBar}">
-            <Grid x:Name="BookmarkBar" Width="152" Padding="8,10,6,8" RowSpacing="6" Background="{ThemeResource StealthSurfaceBrush}" BorderThickness="1,0,0,0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Loaded="BookmarkBar_Loaded" Visibility="Collapsed">
-                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                <TextBlock Text="收藏夹" Margin="6,2" FontSize="13" FontWeight="SemiBold"/>
-                <ScrollViewer Grid.Row="1" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto">
-                    <StackPanel x:Name="BookmarkBarEntries" Spacing="2" Orientation="Vertical" />
-                </ScrollViewer>
-                <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="2">
-                    <Button x:Name="BookmarkStarBtn"
-
-                                Click="BookmarkStarBtn_Click"
-                                Padding="4,2"
-                                CornerRadius="4"
-                                Style="{ThemeResource SubtleButtonStyle}"
-                                AutomationProperties.Name="收藏本页"
-                                ToolTipService.ToolTip="收藏本页">
-                            <FontIcon x:Name="BookmarkStarIcon" Glyph="&#xE734;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        </Button>
-                    <Button x:Name="FavoritesBtn" VerticalAlignment="Center"
-                        Style="{ThemeResource SubtleButtonStyle}"
-                        AutomationProperties.Name="收藏夹" ToolTipService.ToolTip="收藏夹"
-                        Width="32" Height="32" Padding="0">
-                    <FontIcon Glyph="&#xE728;" FontSize="16" />
-                    <Button.Flyout>
-                        <Flyout x:Name="BookmarksFlyout" Placement="BottomEdgeAlignedRight" Opening="BookmarksFlyout_Opening" Closed="BookmarksFlyout_Closed">
-                            <Grid x:Name="BookmarksContent" x:Load="False" Width="340" MaxHeight="440">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="*" />
-                                </Grid.RowDefinitions>
-                                <Grid Margin="4,0,4,8">
-                                    <TextBlock Text="收藏夹" FontWeight="SemiBold" FontSize="16" VerticalAlignment="Center" />
-                                    <Button Content="管理收藏" HorizontalAlignment="Right" Click="ManageBookmarks_Click" />
-                                </Grid>
-                                <TextBox x:Name="BookmarkSearchBox" Grid.Row="1" PlaceholderText="搜索收藏名称或网址" AutomationProperties.Name="搜索收藏" MaxLength="200" Margin="4,0,4,8" TextChanged="BookmarkSearch_Changed" />
-                                <ListView x:Name="BookmarksListView" Grid.Row="2" SelectionMode="None" HorizontalContentAlignment="Stretch">
-                                    <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="0" /></Style></ListView.ItemContainerStyle>
-                                    <ListView.ItemTemplate>
-                                        <DataTemplate>
-                                            <Grid ColumnSpacing="6" Padding="4,4">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <Button Grid.Column="0" Click="BookmarkItem_Click" PointerPressed="BookmarkItem_PointerPressed" Tag="{Binding}" AutomationProperties.Name="{Binding Title}" ToolTipService.ToolTip="{Binding Url}" Style="{ThemeResource SubtleButtonStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="4,2">
-                                                    <StackPanel Spacing="1">
-                                                        <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="Medium" TextTrimming="CharacterEllipsis" />
-                                                        <TextBlock Text="{Binding Url}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
-                                                    </StackPanel>
-                                                </Button>
-                                                <Button Grid.Column="1" Click="BookmarkOptions_Click" Tag="{Binding}" Style="{ThemeResource SubtleButtonStyle}" AutomationProperties.Name="收藏选项" ToolTipService.ToolTip="收藏选项" Width="32" Height="32" Padding="0">
-                                                    <FontIcon Glyph="&#xE712;" FontSize="14" />
-                                                </Button>
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ListView.ItemTemplate>
-                                </ListView>
-                                <TextBlock x:Name="BookmarksEmptyText" Grid.Row="2" Text="还没有收藏的网页" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,20,0,20" Visibility="Collapsed" />
-                            </Grid>
-                        </Flyout>
-                    </Button.Flyout>
-                </Button>
-                    <Button x:Name="ManageBarBookmarks" Content="整理" Click="ManageBookmarks_Click" Style="{ThemeResource SubtleButtonStyle}" AutomationProperties.Name="整理收藏夹栏" Padding="7,2"/>
-                </StackPanel>
-            </Grid>
+                <Grid x:Name="BookmarkBar" Width="40" Loaded="BookmarkBar_Loaded"
+                      BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="1,0,0,0"
+                      Background="{ThemeResource StealthSurfaceBrush}" Visibility="Collapsed">
+                    <Button x:Name="ManageBarBookmarks" HorizontalAlignment="Center" VerticalAlignment="Top"
+                            Width="32" Height="32" Margin="0,8,0,0" Padding="0" Click="ManageBookmarks_Click"
+                            Style="{ThemeResource SubtleButtonStyle}" AutomationProperties.Name="展开收藏夹"
+                            ToolTipService.ToolTip="展开收藏夹">
+                        <FontIcon Glyph="&#xE728;" FontSize="16"/>
+                    </Button>
+                    <Grid x:Name="BookmarkManagerHost" Visibility="Collapsed"/>
+                </Grid>
             </Border>
         </Grid>
     </Grid>
