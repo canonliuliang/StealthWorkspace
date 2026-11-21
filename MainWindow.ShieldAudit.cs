@@ -77,7 +77,48 @@ public sealed partial class MainWindow
         StatusShield.PreviewSystemContrast();
         addressShield.PreviewSystemContrast();
         await Capture(systemContrast ? "system-high-contrast" : "system-color-preview");
+        if (!File.Exists(fixture)) await CheckBookmarkPaneAsync(tab);
         await tab.CaptureShieldAccountsAsync();
         SmokeTest.Report("shield visual audit complete");
+    }
+
+    private async Task CheckBookmarkPaneAsync(BrowserTabControl tab)
+    {
+        MediaAcceptance.Invoke((Button)tab.FindName("ManageHomeBookmarks"));
+        await Task.Delay(350);
+        var pane = (ContentControl)tab.FindName("BookmarkPane");
+        var manager = (BookmarkManager)pane.Content;
+        var library = SettingsService.Instance;
+        foreach (string folder in new[] { "视频", "图片" })
+        {
+            MediaAcceptance.Invoke((Button)manager.FindName("Create"));
+            await Task.Delay(80);
+            ((TextBox)manager.FindName("EntryName")).Text = folder;
+            await SaveAsync();
+        }
+        var video = library.GetBookmarkLibrary().Folders.Single(f => f.Name == "视频");
+        MediaAcceptance.Invoke((Button)manager.FindName("AddLink"));
+        await Task.Delay(80);
+        ((TextBox)manager.FindName("EntryName")).Text = "影片详情";
+        ((TextBox)manager.FindName("Address")).Text = "https://example.com/watch/42";
+        var dest = (ComboBox)manager.FindName("ParentFolder");
+        dest.SelectedItem = dest.Items.OfType<BookmarkManager.Destination>().Single(d => d.Id == video.Id);
+        await SaveAsync();
+        if (!library.GetBookmarkLibrary().Items.Any(i => i.FolderId == video.Id && i.Url == "https://example.com/watch/42"))
+            throw new InvalidOperationException("The bookmark was not saved in the selected folder.");
+        var list = (ListView)manager.FindName("Rows");
+        await Task.Delay(550);
+        if (list.Items.Count != 2 || list.ContainerFromIndex(0) is not ListViewItem { ActualHeight: > 0 })
+            throw new InvalidOperationException($"Folder list is not visible ({list.Items.Count} rows, {list.ActualHeight} DIP).");
+        await UiCapture.SaveAsync(RootGrid, "bookmark-pane.png");
+        manager.ClosePane?.Invoke();
+        if (pane.Content != null) throw new InvalidOperationException("Closing the pane retained the manager.");
+        async Task SaveAsync()
+        {
+            MediaAcceptance.Invoke((Button)manager.FindName("Save"));
+            var editor = (StackPanel)manager.FindName("Editor");
+            for (int i = 0; i < 100 && editor.Visibility == Visibility.Visible; i++) await Task.Delay(40);
+            if (editor.Visibility == Visibility.Visible) throw new InvalidOperationException("Bookmark editor failed to save.");
+        }
     }
 }

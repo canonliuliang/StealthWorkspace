@@ -580,7 +580,9 @@
         </InfoBar>
 
         <!-- WebView2 Browser Control: Maximized Viewport Area -->
-        <Grid Grid.Row="3">
+        <SplitView x:Name="BookmarkSplit" PaneClosed="BookmarkSplit_PaneClosed" Grid.Row="3" PanePlacement="Right" DisplayMode="Inline" OpenPaneLength="352" PaneBackground="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+            <SplitView.Pane><ContentControl x:Name="BookmarkPane" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/></SplitView.Pane>
+            <Grid>
             <Grid x:Name="BrowserHost" />
             <ProgressBar x:Name="BrowserProgressBar" VerticalAlignment="Top" Height="2" Canvas.ZIndex="10"
                          IsHitTestVisible="False" IsIndeterminate="True" Visibility="Collapsed" AutomationProperties.Name="正在加载网页" />
@@ -597,7 +599,7 @@
             </Border>
 
             <Border x:Name="StartSurface" Background="{ThemeResource StealthCanvasBrush}">
-                <ScrollViewer x:Name="StartPageScroller" ZoomMode="Enabled" MinZoomFactor="0.5" MaxZoomFactor="2"
+                <ScrollViewer x:Name="StartPageScroller" SizeChanged="StartPageScroller_SizeChanged" ZoomMode="Enabled" MinZoomFactor="0.5" MaxZoomFactor="2"
                               HorizontalScrollMode="Auto" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
                               HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
                     <Grid>
@@ -625,8 +627,8 @@
                             </Border>
                             <StackPanel Spacing="12">
                                 <TextBlock Text="我的收藏" FontSize="20" FontWeight="SemiBold"/>
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Button Click="ManageBookmarks_Click" Style="{ThemeResource AccentButtonStyle}" AutomationProperties.Name="管理收藏">
+                                <StackPanel x:Name="HomeBookmarkActions" Orientation="Horizontal" Spacing="8">
+                                    <Button x:Name="ManageHomeBookmarks" Click="ManageBookmarks_Click" Style="{ThemeResource AccentButtonStyle}" AutomationProperties.Name="管理收藏">
                                         <StackPanel Orientation="Horizontal" Spacing="7"><FontIcon Glyph="&#xE8B7;" FontSize="15"/><TextBlock Text="管理收藏"/></StackPanel>
                                     </Button>
                                     <Button x:Name="StartImportButton" Click="ImportBrowserBookmarks_Click" AutomationProperties.Name="从 Chrome 导入收藏">
@@ -687,5 +689,6 @@
                 </StackPanel>
             </Border>
         </Grid>
+        </SplitView>
     </Grid>
 </UserControl>

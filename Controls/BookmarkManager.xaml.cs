@@ -4,22 +4,28 @@ using StealthWorkspace.Services;
 
 namespace StealthWorkspace.Controls;
 
+public sealed record BookmarkManagerEntry(object Value, string Title, string Detail, string Glyph)
+{
+    public string ActionName => "编辑 " + Title;
+}
+
 public sealed partial class BookmarkManager : UserControl
 {
     internal sealed record Destination(string Id, string Name)
     {
         public override string ToString() => Name;
     }
-    public sealed record Entry(object Value, string Title, string Detail, string Glyph)
-    {
-        public string ActionName => "编辑 " + Title;
-    }
-
     private readonly SettingsService _settings = SettingsService.Instance;
     private SettingsService.BookmarkSession? _session;
     private string _current = "";
     private object? _editing;
     private bool _deletePending;
+    internal Action? ClosePane { get; set; }
+    internal Func<Task>? Import { get; set; }
+    internal void FocusSearch() => Filter.Focus(FocusState.Programmatic);
+    private void Close_Click(object sender, RoutedEventArgs args) => ClosePane?.Invoke();
+    private async void Import_Click(object sender, RoutedEventArgs args) { if (Import != null) await Import(); }
+    private void AddLink_Click(object sender, RoutedEventArgs args) => BeginEdit(null, true);
     internal Action<string>? OpenUrl { get; set; }
     internal void ShowImportResult(string message) => Message(message);
 
@@ -29,6 +35,7 @@ public sealed partial class BookmarkManager : UserControl
     {
         _session = session;
         _current = folder;
+        ImportButton.Visibility = session.Temporary ? Visibility.Collapsed : Visibility.Visible;
         Refresh();
     }
 
@@ -45,8 +52,8 @@ public sealed partial class BookmarkManager : UserControl
             .Concat(library.Items).Where(row => row is BookmarkFolder f ? Has(f.Name) : row is BookmarkItem b && (Has(b.Title) || Has(b.Url)));
         bool Has(string value) => value.Contains(query, StringComparison.OrdinalIgnoreCase);
         var rows = entries.Select(row => row is BookmarkFolder f
-            ? new Entry(f, f.Name, query.Length == 0 ? "文件夹" : library.PathName(f.ParentId), "\uE8B7")
-            : new Entry(row, ((BookmarkItem)row).Title, ((BookmarkItem)row).Url, "\uE734")).ToList();
+            ? new BookmarkManagerEntry(f, f.Name, query.Length == 0 ? "文件夹" : library.PathName(f.ParentId), "\uE8B7")
+            : new BookmarkManagerEntry(row, ((BookmarkItem)row).Title, ((BookmarkItem)row).Url, "\uE734")).ToList();
         Rows.ItemsSource = rows;
         Empty.Text = query.Length == 0 ? "这个文件夹还没有收藏" : "没有找到匹配的收藏或文件夹";
         Empty.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -62,14 +69,14 @@ public sealed partial class BookmarkManager : UserControl
     private void Filter_Changed(object sender, TextChangedEventArgs args) { if (_session != null) { EndEdit(); Refresh(); } }
     private void Row_Click(object sender, ItemClickEventArgs args)
     {
-        if (!ReferenceEquals(_session, _settings.ActiveBookmarkSession) || args.ClickedItem is not Entry row) return;
+        if (!ReferenceEquals(_session, _settings.ActiveBookmarkSession) || args.ClickedItem is not BookmarkManagerEntry row) return;
         EndEdit();
         if (row.Value is BookmarkFolder f) { _current = f.Id; Filter.Text = ""; Refresh(); }
         else OpenUrl?.Invoke(((BookmarkItem)row.Value).Url);
     }
     private void Edit_Click(object sender, RoutedEventArgs args)
     {
-        if (sender is Button {Tag: Entry entry}) BeginEdit(entry.Value);
+        if (sender is Button {Tag: BookmarkManagerEntry entry}) BeginEdit(entry.Value);
     }
     private void Create_Click(object sender, RoutedEventArgs args) => BeginEdit(null);
     internal static List<Destination> Destinations(BookmarkLibrary library, string? excluded)
@@ -79,9 +86,11 @@ public sealed partial class BookmarkManager : UserControl
         rows.Insert(0, new("", "收藏栏"));
         return rows;
     }
-    private void BeginEdit(object? entry)
+    private void BeginEdit(object? entry, bool addLink = false)
     {
         _editing = entry;
+        Address.Visibility = addLink || entry is BookmarkItem ? Visibility.Visible : Visibility.Collapsed;
+        Address.Text = (entry as BookmarkItem)?.Url ?? "";
         _deletePending = false;
         EntryName.Text = entry is BookmarkFolder f ? f.Name : (entry as BookmarkItem)?.Title ?? "";
         EntryName.IsEnabled = ParentFolder.IsEnabled = entry is not BookmarkFolder { Id: BookmarkFolder.Other };
@@ -100,9 +109,17 @@ public sealed partial class BookmarkManager : UserControl
     {
         if (_session is not { } session || ParentFolder.SelectedItem is not Destination parent) return;
         string name = EntryName.Text.Trim();
+        string url = Address.Text.Trim();
+        if (Address.Visibility == Visibility.Visible)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || uri.UserInfo.Length != 0)
+            { Message("请输入完整的 http 或 https 网址。"); Address.Focus(FocusState.Programmatic); return; }
+            if (name.Length == 0) name = uri.Host;
+        }
         if (name.Length == 0) { Message("请输入名称。"); return; }
         var entry = _editing;
-        await ChangeAsync(() => entry is BookmarkItem b ? _settings.EditBookmark(session, b, name, b.Url, parent.Id)
+        bool link = Address.Visibility == Visibility.Visible;
+        await ChangeAsync(() => link ? _settings.EditBookmark(session, entry as BookmarkItem, name, url, parent.Id)
             : _settings.EditBookmarkFolder(session, (entry as BookmarkFolder)?.Id, parent.Id, name), "已保存");
     }
     private async void Delete_Click(object sender, RoutedEventArgs args)

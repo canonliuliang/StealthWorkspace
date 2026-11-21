@@ -182,6 +182,7 @@ public sealed partial class BrowserTabControl
     private void DetachBookmarkUi()
     {
         _bookmarkImport?.Cancel();
+        CloseBookmarkPane();
         _barSnapshot = null;
         BookmarkBarEntries.Children.Clear();
         _bookmarkToRename = null;

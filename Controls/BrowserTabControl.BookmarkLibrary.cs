@@ -95,25 +95,54 @@ public sealed partial class BrowserTabControl
     private async void ManageBookmarks_Click(object sender, RoutedEventArgs args) => await ShowBookmarkManagerAsync("");
     private async void ImportBrowserBookmarks_Click(object sender, RoutedEventArgs args) => await ImportBrowserBookmarksAsync();
 
-    private async Task ShowBookmarkManagerAsync(string folder, string? message = null)
+    private Task ShowBookmarkManagerAsync(string folder, string? message = null)
     {
         var settings = SettingsService.Instance;
-        if (_isDisposed || !IsLoaded || _bookmarkDialog != null || settings.ActiveBookmarkSession is not { } session) return;
+        if (_isDisposed || !IsLoaded || settings.ActiveBookmarkSession is not { } session) return Task.CompletedTask;
         BookmarksFlyout.Hide();
         var manager = new BookmarkManager();
         manager.Open(session, folder);
+        manager.ClosePane = CloseBookmarkPane;
+        manager.Import = ImportBrowserBookmarksAsync;
+        manager.OpenUrl = url =>
+        {
+            if (ReferenceEquals(settings.ActiveBookmarkSession, session)) NavigateToText(url);
+        };
         if (message != null) manager.ShowImportResult(message);
-        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "管理收藏", Content = manager,
-            PrimaryButtonText = session.Temporary ? "" : "从 Chrome 导入", CloseButtonText = "完成" };
-        string? open = null;
-        manager.OpenUrl = url => { open = url; dialog.Hide(); };
-        _bookmarkDialog = dialog;
-        ContentDialogResult result;
-        try { result = await WorkspaceDialogs.ShowAsync(dialog); }
-        finally { manager.OpenUrl = null; _bookmarkDialog = null; }
-        if (_isDisposed || !IsLoaded || !ReferenceEquals(settings.ActiveBookmarkSession, session)) return;
-        if (open != null && MainWindow.Current?.IsPrivacyCoverVisible != true) NavigateToText(open);
-        else if (result == ContentDialogResult.Primary) await ImportBrowserBookmarksAsync();
+        BookmarkPane.Content = manager;
+        BookmarkSplit.SizeChanged -= BookmarkSplit_SizeChanged;
+        BookmarkSplit.SizeChanged += BookmarkSplit_SizeChanged;
+        ResizeBookmarkPane();
+        BookmarkSplit.IsPaneOpen = true;
+        HomeBookmarkActions.Visibility = Visibility.Collapsed;
+        manager.FocusSearch();
+        return Task.CompletedTask;
+    }
+
+    private void BookmarkSplit_SizeChanged(object sender, SizeChangedEventArgs args) => ResizeBookmarkPane();
+
+    private void ResizeBookmarkPane()
+    {
+        BookmarkSplit.OpenPaneLength = Math.Min(352, Math.Max(1, BookmarkSplit.ActualWidth));
+        BookmarkSplit.DisplayMode = BookmarkSplit.ActualWidth < 660 ? SplitViewDisplayMode.Overlay : SplitViewDisplayMode.Inline;
+    }
+
+    private void StartPageScroller_SizeChanged(object sender, SizeChangedEventArgs args)
+    {
+        StartContent.MaxWidth = Math.Clamp(args.NewSize.Width - 48, 1, 740);
+    }
+
+    private void BookmarkSplit_PaneClosed(SplitView sender, object args)
+    {
+        if (!sender.IsPaneOpen) CloseBookmarkPane();
+    }
+
+    private void CloseBookmarkPane()
+    {
+        BookmarkSplit.IsPaneOpen = false;
+        BookmarkSplit.SizeChanged -= BookmarkSplit_SizeChanged;
+        BookmarkPane.Content = null;
+        HomeBookmarkActions.Visibility = Visibility.Visible;
     }
 
     private async Task ImportBrowserBookmarksAsync()
