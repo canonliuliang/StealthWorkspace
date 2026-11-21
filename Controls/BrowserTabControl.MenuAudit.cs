@@ -163,8 +163,11 @@ public sealed partial class BrowserTabControl
                 }
                 else if (Environment.GetCommandLineArgs().Contains("--verify-explorer"))
                     await WaitAsync(() => File.Exists(acknowledgement), "Explorer showed the exact folder for " + button.Name, 14000);
-                var close = FindFixtureButton(dialog, "CloseButton") ?? throw new InvalidOperationException("The download folder has no enabled Close button");
-                Click(close);
+                Button? close = null;
+                await WaitAsync(() => (close = FindFixtureButton(dialog, "CloseButton")) is
+                    { IsLoaded: true, Visibility: Visibility.Visible, ActualWidth: > 0, ActualHeight: > 0 },
+                    "native folder Close button is ready");
+                Click(close!);
                 await WaitAsync(() => FolderDialog() == null, "folder dialog closed");
             }
             await MenuAsync();
