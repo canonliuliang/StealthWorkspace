@@ -113,6 +113,12 @@ public sealed partial class MainWindow
         await UiCapture.SaveAsync(manager, "bar-editor.png");
         manager.ClosePane?.Invoke();
         await Task.Delay(450);
+        var bar = (Grid)tab.FindName("BookmarkBar");
+        var page = (Grid)tab.FindName("WebContentArea");
+        var entries = (StackPanel)tab.FindName("BookmarkBarEntries");
+        double left = bar.TransformToVisual(page).TransformPoint(default).X;
+        if (Math.Abs(left - page.ActualWidth) > 1 || entries.Orientation != Orientation.Vertical || entries.Children.Count < 2)
+            throw new InvalidOperationException("Bookmark folders must be stacked to the right of the page.");
         await UiCapture.SaveAsync(RootGrid, "bookmark-bar.png");
         if (tab.ActiveBarEditor != null) throw new InvalidOperationException("Closing the pane retained the manager.");
         async Task SaveAsync()

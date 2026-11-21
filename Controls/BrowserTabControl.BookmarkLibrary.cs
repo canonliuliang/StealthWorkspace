@@ -23,7 +23,7 @@ public sealed partial class BrowserTabControl
         BookmarkBarEntries.Children.Clear();
         var session = settings.ActiveBookmarkSession;
         var entries = library.Children("").Take(12).ToArray();
-        BookmarkBar.Visibility = session != null ? Visibility.Visible : Visibility.Collapsed;
+        BookmarkBar.Visibility = session != null && !_isBrowserFullScreen ? Visibility.Visible : Visibility.Collapsed;
         if (session == null) return;
         foreach (object row in entries)
         {
@@ -32,14 +32,16 @@ public sealed partial class BrowserTabControl
             string title = folder?.Name ?? link!.Title;
             var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
             label.Children.Add(new FontIcon { Glyph = folder != null ? "\uE8B7" : "\uE734", FontSize = 13 });
-            label.Children.Add(new TextBlock { Text = title, MaxWidth = 136, TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12 });
+            label.Children.Add(new TextBlock { Text = title, MaxWidth = 96, TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12 });
             var button = new Button { Content = label, Padding = new Thickness(6,2,6,2), MinHeight = 28 };
             button.Style = FavoritesBtn.Style;
+            button.HorizontalAlignment = HorizontalAlignment.Stretch;
+            button.HorizontalContentAlignment = HorizontalAlignment.Left;
             AutomationProperties.SetName(button, folder == null ? title : "打开文件夹 " + title);
             ToolTipService.SetToolTip(button, link?.Url ?? title);
             if (folder != null)
             {
-                var menu = new MenuFlyout();
+                var menu = new MenuFlyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.Left };
                 menu.Opening += (_, _) =>
                 {
                     menu.Items.Clear();
@@ -113,7 +115,7 @@ public sealed partial class BrowserTabControl
         CloseBookmarkPane();
         manager.Width = Math.Max(180, Math.Min(350, ActualWidth - 70));
         manager.MaxHeight = Math.Max(180, Math.Min(500, ActualHeight - 100));
-        var flyout = new Flyout { Content = manager, Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight };
+        var flyout = new Flyout { Content = manager, Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.Left };
         _barEditor = flyout;
         flyout.Opened += (_, _) => manager.FocusSearch();
         flyout.Closed += (_, _) => { if (ReferenceEquals(_barEditor, flyout)) _barEditor = null; };
