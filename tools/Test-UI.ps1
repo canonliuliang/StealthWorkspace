@@ -1,13 +1,14 @@
 param(
     [Parameter(Mandatory)][string]$AppDirectory,
-    [ValidateSet('Smoke','Render','Browser','Menu','Experience','Soak','Web')][string]$Mode = 'Smoke',
+    [ValidateSet('Smoke','Render','Browser','Menu','Experience','Soak','Web','Shield')][string]$Mode = 'Smoke',
     [string]$OutputDirectory,
     [ValidateSet('Dark','Light')][string]$Theme = 'Dark',
     [ValidateRange(480,2000)][int]$Width = 1100,
     [ValidateRange(480,1600)][int]$Height = 740,
     [ValidateRange(1,120)][int]$SoakMinutes = 3,
     [switch]$ReducedMotion,
-    [uri]$Url
+    [uri]$Url,
+    [string]$ShieldBookmarks
 )
 $ErrorActionPreference = 'Stop'
 if ($Mode -eq 'Web' -and (!$Url -or !$Url.IsAbsoluteUri -or $Url.Scheme -notin 'http','https' -or $Url.UserInfo)) {
@@ -16,11 +17,15 @@ if ($Mode -eq 'Web' -and (!$Url -or !$Url.IsAbsoluteUri -or $Url.Scheme -notin '
 $appRoot = (Resolve-Path -LiteralPath $AppDirectory).Path
 $exe = Join-Path $appRoot 'StealthWorkspace.exe'
 if (!(Test-Path -LiteralPath $exe)) { throw 'Application executable is missing.' }
-if (Get-Process StealthWorkspace -ErrorAction SilentlyContinue) { throw 'Close the existing Stealth window before running isolated UI tests.' }
+if ($Mode -ne 'Shield' -and (Get-Process StealthWorkspace -ErrorAction SilentlyContinue)) { throw 'Close the existing Stealth window before running isolated UI tests.' }
 if (!$OutputDirectory) { $OutputDirectory = Join-Path $PSScriptRoot ('../artifacts/ui-' + $Mode.ToLowerInvariant() + '-' + [Guid]::NewGuid().ToString('N')) }
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 if (Test-Path -LiteralPath $output) { throw 'Choose a new output directory; previous reports are preserved.' }
 New-Item -ItemType Directory -Path $output | Out-Null
+if ($Mode -eq 'Shield' -and $ShieldBookmarks) {
+    $data = New-Item -ItemType Directory -Path (Join-Path $output 'data')
+    Copy-Item -LiteralPath $ShieldBookmarks -Destination (Join-Path $data.FullName 'shield-fixture.html')
+}
 $report = Join-Path $output 'result.txt'
 $info = [Diagnostics.ProcessStartInfo]::new($exe)
 $info.UseShellExecute = $false
@@ -29,6 +34,7 @@ foreach ($argument in @('--ui-smoke',$report,'--data-root',(Join-Path $output 'd
 $marker = 'SMOKE RESULT: OK'
 if ($ReducedMotion) { $info.ArgumentList.Add('--ui-reduced-motion') }
 switch ($Mode) {
+    'Shield' { $info.ArgumentList.Add('--shield-visual-audit'); $marker = 'SHIELD VISUAL AUDIT: OK' }
     'Render' { $info.ArgumentList.Add('--browser-render-audit'); $marker = 'RENDER AUDIT: OK' }
     'Browser' { $info.ArgumentList.Add('--browser-audit'); $marker = 'AUDIT RESULT: OK' }
     'Menu' { $info.ArgumentList.Add('--browser-audit'); $info.ArgumentList.Add('--menu-actions-only'); $marker = 'menu actions audit complete' }

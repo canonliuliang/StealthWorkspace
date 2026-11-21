@@ -24,12 +24,13 @@ internal static class SafeShred
     // Inspect metadata first (also works for read-only files), then reopen that same
     // object exclusively for writing. Never clear attributes through an unchecked path.
     internal static bool OverwriteAndDelete(string path, int passes, FileIdentity? expected = null, byte[]? expectedDigest = null,
-        Func<bool>? authorize = null)
+        Func<bool>? authorize = null, bool workspace = false)
     {
         passes = Math.Clamp(passes, 1, 7);
-        if (!SafeFileSystem.IsPlainPath(path)) return false;
+        if (!SafeFileSystem.IsPlainPath(path, workspace)) return false;
         string fullPath = Path.GetFullPath(path);
-        using var metadata = CreateFileW(fullPath, 0x80 | 0x100, 7, IntPtr.Zero,
+        string nativePath = workspace ? WorkspaceFileName.ForWin32(fullPath) : fullPath;
+        using var metadata = CreateFileW(nativePath, 0x80 | 0x100, 7, IntPtr.Zero,
             3, 0x00200000, IntPtr.Zero); // Pin the named object without following it.
         if (metadata.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
         if (!GetFileInformationByHandle(metadata, out var info)) throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -49,11 +50,11 @@ internal static class SafeShred
             using var handle = ReOpenFile(metadata, access, 0, 0x80000000);
             if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
             if (!GetFileInformationByHandle(handle, out var writable)) throw new Win32Exception(Marshal.GetLastWin32Error());
-            if (!IsSingleRegularFile(handle, writable) || !SameFile(info, writable) || !SafeFileSystem.IsPlainPath(fullPath)) return false;
+            if (!IsSingleRegularFile(handle, writable) || !SameFile(info, writable) || !SafeFileSystem.IsPlainPath(fullPath, workspace)) return false;
             if (expected != null && expected.Value != IdentityOf(writable)) return false;
             // Compare identity, not spelling: SUBST and 8.3 names can refer to this same file.
             // Zero requested access permits a metadata identity probe beside the exclusive writer.
-            using (var probe = CreateFileW(fullPath, 0, 7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero))
+            using (var probe = CreateFileW(nativePath, 0, 7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero))
             {
                 if (probe.IsInvalid || !GetFileInformationByHandle(probe, out var named)
                     || !IsSingleRegularFile(probe, named) || !SameFile(writable, named)) return false;

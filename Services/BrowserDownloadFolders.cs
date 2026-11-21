@@ -62,10 +62,10 @@ internal static class BrowserDownloadFolders
                 {
                     string? ancestor = directory;
                     while (ancestor != null && !Directory.Exists(ancestor)) ancestor = Path.GetDirectoryName(ancestor);
-                    if (ancestor == null || !SafeFileSystem.IsPlainPath(ancestor))
+                    if (ancestor == null || !SafeFileSystem.IsPlainWorkspacePath(ancestor))
                         throw new UnauthorizedAccessException("下载目录含有重定向。");
                     Directory.CreateDirectory(directory);
-                    if (!SafeFileSystem.IsPlainPath(directory)) throw new UnauthorizedAccessException("下载目录含有重定向。");
+                    if (!SafeFileSystem.IsPlainWorkspacePath(directory)) throw new UnauthorizedAccessException("下载目录含有重定向。");
                     // An existing, readable folder may still deny new files to this process.
                     using (new FileStream(Path.Combine(directory, WriteProbePrefix + Guid.NewGuid().ToString("N")),
                         FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose)) { }
@@ -110,12 +110,12 @@ internal static class BrowserDownloadFolders
         if (!BrowserDownloadPath.IsCurrentWorkspace(workspace) || workspace!.Temporary) return null;
         string current = Current;
         return Homes().Select(home => PathFor(home, null)).FirstOrDefault(directory =>
-            !string.Equals(current, directory, StringComparison.OrdinalIgnoreCase) && Directory.Exists(directory) && SafeFileSystem.IsPlainPath(directory));
+            !string.Equals(current, directory, StringComparison.OrdinalIgnoreCase) && Directory.Exists(directory) && SafeFileSystem.IsPlainWorkspacePath(directory));
     }
 
     internal static async Task OpenAsync(string directory, Func<bool> isCurrent)
     {
-        if (!Directory.Exists(directory) || !SafeFileSystem.IsPlainPath(directory)) throw new DirectoryNotFoundException();
+        if (!Directory.Exists(directory) || !SafeFileSystem.IsPlainWorkspacePath(directory)) throw new DirectoryNotFoundException();
         try
         {
             var folder = await Windows.Storage.StorageFolder.GetFolderFromPathAsync(directory);
@@ -130,7 +130,7 @@ internal static class BrowserDownloadFolders
 
     internal static void SelectFile(string file)
     {
-        if (!File.Exists(file) || !SafeFileSystem.IsPlainPath(file)) throw new FileNotFoundException();
+        if (!File.Exists(file) || !SafeFileSystem.IsPlainWorkspacePath(file)) throw new FileNotFoundException();
         // With zero child IDs the Shell opens the parent folder and selects the item.
         Marshal.ThrowExceptionForHR(SHParseDisplayName(file, 0, out nint item, 0, out _));
         try { Marshal.ThrowExceptionForHR(SHOpenFolderAndSelectItems(item, 0, 0, 0)); }

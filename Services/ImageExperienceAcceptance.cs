@@ -34,8 +34,7 @@ internal static class ImageExperienceAcceptance
         Require(page.IsImageReady && page.ImageCount == 4 && page.NavigationEnabled == (false, true), "first image ready; previous disabled");
         Require(!page.HasPlaybackElement, "viewing an image leaves the native playback control uncreated");
         await page.SelectMediaAsync(1);
-        await Task.Delay(220);
-        byte[] expectedPixels = await page.CaptureImageViewportPixelsAsync();
+        var reference = await WaitForLongImageViewportAsync(page);
         Require(page.ImageDecodedSize == (800, 12000), "long image retains readable pixels within decode budget");
         Require(page.IsWidthReading && page.ImageZoom == 1, "long image starts in width reading without magnification limit");
         await UiCapture.SaveAsync(page, "r11-image-viewer.png");
@@ -58,15 +57,11 @@ internal static class ImageExperienceAcceptance
         Task middle = page.SelectMediaAsync(0);
         Task latest = page.SelectMediaAsync(1);
         await Task.WhenAll(slow, middle, latest);
-        await Task.Delay(220);
-        byte[] actualPixels = await page.CaptureImageViewportPixelsAsync();
+        await WaitForLongImageViewportAsync(page, reference);
         await UiCapture.SaveAsync(page, "r11-image-rapid.png");
-        double meanDifference = expectedPixels.Length == actualPixels.Length && actualPixels.Length > 0
-            ? expectedPixels.Zip(actualPixels, (a, b) => Math.Abs(a - b)).Average() : double.PositiveInfinity;
-        SmokeTest.Report($"image render diagnostic: ready={page.IsImageReady}; error={page.MediaError != null}; correctId={page.CurrentMediaId == items[1].Id}; bytes={expectedPixels.Length}/{actualPixels.Length}; mean difference={meanDifference:F4}");
-        Require(page.IsImageReady && page.MediaError == null && page.CurrentMediaId == items[1].Id && page.ImageZoom == 1 &&
-            meanDifference < 1, "rapid switching renders latest image pixels, no stale completion");
-        SmokeTest.Report($"image switching: rapid 3 requests including large image={watch.Elapsed.TotalMilliseconds:F0}ms (includes 220ms render settle)");
+        Require(page.IsImageReady && page.MediaError == null && page.CurrentMediaId == items[1].Id && page.ImageZoom == 1,
+            "rapid switching renders latest image pixels, no stale completion");
+        SmokeTest.Report($"image switching: rapid 3 requests including large image={watch.Elapsed.TotalMilliseconds:F0}ms (includes viewport verification and screenshot)");
         await page.SelectMediaAsync(3);
         Require(!page.IsImageReady && page.MediaError != null && page.NavigationEnabled == (true, false), "corrupt image reports error; navigation remains available");
         await page.SelectMediaAsync(2);
@@ -141,6 +136,88 @@ internal static class ImageExperienceAcceptance
         VaultService.Instance.Lock();
     }
 
+    private sealed record ViewportFrame(int Width, int Height, byte[] Pixels)
+    {
+        // The 800 × 12000 fixture fits to width. Both sampled rows should show
+        // its upper half. A prior landscape image shows its lower half here.
+        internal bool ShowsLongImage()
+        {
+            if (Width < 16 || Height < 16 || Pixels.LongLength != 4L * Width * Height) return false;
+            foreach (double y in new[] { .25, .80 })
+            {
+                if (!Matches(.25, y, 40, 150, 210) || !Matches(.75, y, 108, 71, 19)) return false;
+            }
+            return true;
+        }
+
+        private bool Matches(double x, double y, int red, int green, int blue)
+        {
+            int offset = 4 * ((int)(Height * y) * Width + (int)(Width * x));
+            // RenderTargetBitmap returns premultiplied BGRA. The fixture's
+            // orange half has alpha 120; the left half is opaque blue.
+            return Math.Abs(Pixels[offset] - blue) <= 10 && Math.Abs(Pixels[offset + 1] - green) <= 10 &&
+                   Math.Abs(Pixels[offset + 2] - red) <= 10;
+        }
+
+        internal double MeanDifference(ViewportFrame other)
+        {
+            if (Width != other.Width || Height != other.Height || other.Pixels.Length != Pixels.Length || Pixels.Length == 0)
+                return double.PositiveInfinity;
+            long sum = 0;
+            for (int i = 0; i < Pixels.Length; i++) sum += Math.Abs(Pixels[i] - other.Pixels[i]);
+            return (double)sum / Pixels.Length;
+        }
+
+        internal async Task SaveAsync(string name)
+        {
+            if (Pixels.Length == 0) return;
+            string path = Path.Combine(Path.GetDirectoryName(SmokeTest.OutputPath!)!, name);
+            using var file = File.Create(path);
+            using var stream = file.AsRandomAccessStream();
+            var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+            encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied,
+                (uint)Width, (uint)Height, 96, 96, Pixels);
+            await encoder.FlushAsync();
+        }
+    }
+
+    private static async Task<ViewportFrame> WaitForLongImageViewportAsync(PlayerPage page, ViewportFrame? reference = null)
+    {
+        var viewport = (ScrollViewer)page.FindName("ImageContainer");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        ViewportFrame? first = null, last = null;
+        double difference = double.PositiveInfinity;
+        int samples = 0;
+        while (!deadline.IsCancellationRequested)
+        {
+            var bitmap = new RenderTargetBitmap();
+            try
+            {
+                await bitmap.RenderAsync(viewport).AsTask(deadline.Token).WaitAsync(deadline.Token);
+                var buffer = await bitmap.GetPixelsAsync().AsTask(deadline.Token).WaitAsync(deadline.Token);
+                last = new(bitmap.PixelWidth, bitmap.PixelHeight, buffer.ToArray());
+            }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { break; }
+            first ??= last;
+            samples++;
+            if (last.ShowsLongImage())
+            {
+                difference = reference?.MeanDifference(last) ?? 0;
+                if (difference < 1)
+                {
+                    SmokeTest.Report($"image render diagnostic: long image painted; viewport={last.Width}x{last.Height}; samples={samples}; mean difference={difference:F4}");
+                    return last;
+                }
+            }
+            await Task.Delay(16);
+        }
+        var expected = reference ?? first;
+        if (expected != null) await expected.SaveAsync(reference == null ? "r11-reference-first.png" : "r11-reference.png");
+        if (last != null) await last.SaveAsync(reference == null ? "r11-reference-last.png" : "r11-actual.png");
+        if (reference != null && last != null) difference = reference.MeanDifference(last);
+        throw new InvalidOperationException($"Long image did not render within 5 s; samples={samples}; viewport={last?.Width}x{last?.Height}; expected colors={last?.ShowsLongImage()}; mean difference={difference:F4}");
+    }
+
     private static async Task DeleteAndCheckAsync(PlayerPage page, VaultItem item, VaultItem? expected)
     {
         Require(page.CurrentMediaId == item.Id, "delete targets current item " + item.OriginalFileName);
@@ -172,11 +249,12 @@ internal static class ImageExperienceAcceptance
     private static async Task CheckAnimationsAsync(string root, VaultPage gallery, Action<VaultItem> open, Func<PlayerPage?> current)
     {
         // Synthetic 8x8 GIF; 12x12 WebP with partial blue and transparent frames,
-        // durations 120/230/340 ms and a finite loop count of two.
+        // Dwell for 900/1200/1500 ms so a native screenshot can sample every
+        // composited frame on a busy machine. The file requests exactly two loops.
         foreach (var (name, data) in new[]
         {
             ("motion.gif", "R0lGODlhCAAIAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQAMAAAACwAAAAACAAIAAAIDwABCBxIsKDBgwgTKkwYEAAh+QQBMAABACwAAAAACAAIAIEAAP8AAAAAAAAAAAAIDwABCBxIsKDBgwgTKkwYEAA7"),
-            ("motion.webp", "UklGRrwAAABXRUJQVlA4WAoAAAASAAAACwAACwAAQU5JTQYAAAAAAAAAAgBBTk1GKAAAAAAAAAAAAAsAAAsAAHgAAAJWUDhMDwAAAC8LwAIABxD9j/4HIqL/AQBBTk1GKAAAAAIAAAIAAAIAAAIAAOYAAABWUDhMDwAAAC8CgAAABxDR//4HIqL/AQBBTk1GMAAAAAAAAAAAAAYAAAYAAFQBAAJWUDhMFwAAAC8GgAEQDxDzH/MfDIUAAqBIvInof8D/AA==")
+            ("motion.webp", "UklGRrwAAABXRUJQVlA4WAoAAAASAAAACwAACwAAQU5JTQYAAAAAAAAAAgBBTk1GKAAAAAAAAAAAAAsAAAsAAIQDAAJWUDhMDwAAAC8LwAIABxD9j/4HIqL/AQBBTk1GKAAAAAIAAAIAAAIAAAIAALAEAABWUDhMDwAAAC8CgAAABxDR//4HIqL/AQBBTk1GMAAAAAAAAAAAAAYAAAYAANwFAAJWUDhMFwAAAC8GgAEQDxDzH/MfDIUAAqBIvInof8D/AA==")
         })
         {
             string path = Path.Combine(root, name);
@@ -202,13 +280,20 @@ internal static class ImageExperienceAcceptance
     private static async Task CheckWebpPixelsAsync(Image view, PlayerPage page)
     {
         var observed = new List<int>();
+        var observedAt = new List<long>();
         var clock = Stopwatch.StartNew();
-        TimeSpan lastChange = TimeSpan.Zero;
-        while (clock.Elapsed < TimeSpan.FromSeconds(6))
+        var settled = TimeSpan.FromMilliseconds(2500);
+        TimeSpan lastChange = TimeSpan.Zero, lastSample = TimeSpan.Zero, largestGap = TimeSpan.Zero;
+        int lastFrame = 0;
+        while (clock.Elapsed < TimeSpan.FromSeconds(18))
         {
             var capture = new RenderTargetBitmap();
             await capture.RenderAsync(view, 24, 24);
             byte[] pixels = (await capture.GetPixelsAsync()).ToArray();
+            var elapsed = clock.Elapsed;
+            if (elapsed - lastSample > largestGap) largestGap = elapsed - lastSample;
+            lastSample = elapsed;
+            lastFrame = 0;
             if (capture.PixelWidth > 0 && capture.PixelHeight > 0 && pixels.Length == capture.PixelWidth * capture.PixelHeight * 4)
             {
                 int Offset(double position) => 4 * ((int)(position * capture.PixelHeight) * capture.PixelWidth + (int)(position * capture.PixelWidth));
@@ -218,18 +303,21 @@ internal static class ImageExperienceAcceptance
                 if (pixels[reference + 2] > 96 && pixels[reference + 2] > pixels[reference] * 2)
                 {
                     int frame = pixels[center] > pixels[center + 2] ? 2 : pixels[corner + 3] < pixels[reference + 3] / 2 ? 3 : 1;
+                    lastFrame = frame;
                     if (observed.Count == 0 || observed[^1] != frame)
                     {
                         observed.Add(frame);
-                        lastChange = clock.Elapsed;
+                        observedAt.Add((long)elapsed.TotalMilliseconds);
+                        lastChange = elapsed;
                     }
                 }
             }
-            if (observed.Count >= 6 && clock.Elapsed - lastChange >= TimeSpan.FromMilliseconds(850)) break;
+            if (observed.Count >= 6 && lastFrame == 3 && elapsed - lastChange >= settled) break;
             await Task.Delay(15);
         }
         SmokeTest.Report("animated WebP rendered pixel sequence: " + string.Join(",", observed));
-        Require(observed.SequenceEqual(new[] { 1, 2, 3, 1, 2, 3 }) && clock.Elapsed - lastChange >= TimeSpan.FromMilliseconds(850) &&
+        SmokeTest.Report($"animated WebP observed at ms: {string.Join(",", observedAt)}; largest sample gap={(long)largestGap.TotalMilliseconds}; final frame held={(long)(lastSample - lastChange).TotalMilliseconds}");
+        Require(observed.SequenceEqual(new[] { 1, 2, 3, 1, 2, 3 }) && lastFrame == 3 && lastSample - lastChange >= settled &&
             page.MediaError == null, "encrypted WebP displays all three frames twice and stops");
     }
 

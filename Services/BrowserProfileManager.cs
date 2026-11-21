@@ -396,7 +396,8 @@ public static partial class BrowserProfileManager
     {
         candidate = Path.GetFullPath(candidate);
         // Only direct children of the explicitly enumerated profile root qualify.
-        if (!IsSameDirectory(Path.GetDirectoryName(candidate), Path.GetFullPath(expectedRoot))) return false;
+        if (!IsSameDirectory(Path.GetDirectoryName(candidate), Path.GetFullPath(expectedRoot)) ||
+            !SafeFileSystem.IsPlainWorkspacePath(expectedRoot)) return false;
         string name = Path.GetFileName(Path.TrimEndingDirectorySeparator(candidate));
         if (!name.StartsWith(ProfileDirectoryPrefix, StringComparison.Ordinal) ||
             !Guid.TryParseExact(name[ProfileDirectoryPrefix.Length..], "N", out _) ||
@@ -419,7 +420,7 @@ public static partial class BrowserProfileManager
         FileAttributes attributes;
         try { attributes = File.GetAttributes(profile.FullName); }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return; }
-        if (!profile.Name.StartsWith(ProfileDirectoryPrefix, StringComparison.Ordinal) ||
+        if (!SafeFileSystem.IsPlainWorkspacePath(profile.FullName) || !profile.Name.StartsWith(ProfileDirectoryPrefix, StringComparison.Ordinal) ||
             !Guid.TryParseExact(profile.Name[ProfileDirectoryPrefix.Length..], "N", out _) ||
             attributes.HasFlag(FileAttributes.ReparsePoint))
             throw new IOException("Invalid browser profile directory.");

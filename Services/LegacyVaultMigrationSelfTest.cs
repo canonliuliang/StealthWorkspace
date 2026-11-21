@@ -139,6 +139,55 @@ internal static class LegacyVaultMigrationSelfTest
             SourceIntact(fixture);
         });
 
+        await Check("relocation publishes the complete staged directory after a short reader releases it", async () =>
+        {
+            string stage = Path.Combine(root, "publish-busy");
+            string target = Path.Combine(root, "publish-complete");
+            Directory.CreateDirectory(stage);
+            string payload = Path.Combine(stage, "sample.svault");
+            File.WriteAllBytes(payload, bytes);
+            File.WriteAllText(Path.Combine(stage, AppPaths.LegacyImportDisabledFileName), "1");
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Task publishing;
+            bool stayedUnpublished;
+            using (var reader = new FileStream(payload, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                publishing = Task.Run(() => { entered.SetResult(); AppPaths.PublishStagedVault(stage, target); });
+                await entered.Task;
+                await Task.Delay(100);
+                stayedUnpublished = !publishing.IsCompleted && !Directory.Exists(target);
+            }
+            await publishing;
+            Require(stayedUnpublished && !Directory.Exists(stage) && File.Exists(Path.Combine(target, AppPaths.LegacyImportDisabledFileName)));
+            Require(File.ReadAllBytes(Path.Combine(target, "sample.svault")).AsSpan().SequenceEqual(bytes));
+        });
+
+        await Check("relocation reports a persistent reader and preserves a competing destination", () =>
+        {
+            string stage = Path.Combine(root, "publish-persistent");
+            string target = Path.Combine(root, "publish-conflict");
+            Directory.CreateDirectory(stage);
+            string payload = Path.Combine(stage, "sample.svault");
+            File.WriteAllBytes(payload, bytes);
+            void ExpectFailure()
+            {
+                try { AppPaths.PublishStagedVault(stage, target); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return; }
+                throw new InvalidOperationException("A blocked migration unexpectedly published its stage.");
+            }
+            using (var reader = new FileStream(payload, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                ExpectFailure();
+                Require(!Directory.Exists(target));
+            }
+            Directory.CreateDirectory(target);
+            File.WriteAllText(Path.Combine(target, "existing.txt"), "other workspace");
+            ExpectFailure();
+            Require(File.ReadAllText(Path.Combine(target, "existing.txt")) == "other workspace");
+            Require(!File.Exists(Path.Combine(target, "sample.svault")) && File.ReadAllBytes(payload).AsSpan().SequenceEqual(bytes));
+            return Task.CompletedTask;
+        });
+
         await Check("reset never resurrects the preserved legacy source after reload or relocation", async () =>
         {
             Fixture fixture = await Create("reset-retained");

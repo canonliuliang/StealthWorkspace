@@ -4,7 +4,7 @@
 
 **R16.1 第二次预览支持从 Chrome 导入分层收藏，在主空间保留网站登录，并从下载目录查看以前保存的文件。** 提供 Windows 11 x64 和 ARM64 便携包。
 
-[官网](https://canonliuliang.github.io/StealthWorkspace/) · [第二次预览下载与 SHA-256](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview.2) · [安装和升级](docs/INSTALL.md) · [问题反馈](https://github.com/canonliuliang/StealthWorkspace/issues)
+[官网](https://canonliuliang.github.io/StealthWorkspace/) · [R16.1 维护版下载与 SHA-256](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview.2.1) · [安装和升级](docs/INSTALL.md) · [问题反馈](https://github.com/canonliuliang/StealthWorkspace/issues)
 
 > 当前渠道提供未签名预览版。WebView2 会话可能写入磁盘，普通下载按明文保存。保险箱备份依赖原 Windows 用户的 DPAPI。项目尚未接受独立安全审计。
 
@@ -13,6 +13,8 @@
 ## R16.1 第二次预览
 
 [日常浏览验收与性能测量](docs/R161-DAILY-BROWSING.md) · [网站数据和隐私边界](docs/PRIVACY.md)
+
+本次维护更新恢复了「更多 → 在 Edge 隐私窗口打开」、标签栏的「结束会话」和盾牌中的两种仅清 Cookie 操作。普通权限下可一键交给 Edge；受限权限下可按提示打开 InPrivate 并复制当前网址。地址栏与顶部的隐私入口使用同一款蓝青色盾牌。多层目录中的便携保险箱也有修复。可以在原安装位置覆盖更新。[前一份 R16.1 下载及发行记录](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview.2)
 
 主空间在退出时清除本地浏览记录，保留网站允许跨重启使用的账号状态。地址栏的盾牌分别管理账号、临时文件和网站权限。Chrome 收藏 HTML 可从新标签页导入，在收藏栏直接打开嵌套文件夹中的链接。可在应用内打开下载目录、切换原目录与备用目录，或将文件复制进加密媒体库。原始下载按明文保留。
 
@@ -50,7 +52,7 @@
 dotnet build
 dotnet run
 # 打包并执行核心自检
-./tools/Build-Release.ps1 -Runtime win-arm64 -Version 2026.11.21-r16.1-preview.2
+./tools/Build-Release.ps1 -Runtime win-arm64 -Version 2026.11.21-r16.1-preview.2.1
 # 官网本地预览
 node tools/site.mjs serve
 ```

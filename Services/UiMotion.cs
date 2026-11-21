@@ -19,7 +19,17 @@ internal static class UiMotion
     private static readonly Dictionary<FrameworkElement, OverlayExit> PendingExits = new();
     internal static bool AnimationsEnabled => Settings.AnimationsEnabled && !SmokeTest.ReduceMotion;
 
-    private sealed record OverlayExit(CompositionScopedBatch Batch, bool WasHitTestVisible);
+    private sealed record OverlayExit(CompositionScopedBatch Batch, bool WasHitTestVisible)
+    {
+        internal TaskCompletionSource? CompletionObserver { get; set; }
+    }
+
+    internal static Task ObserveOverlayExitAsync(FrameworkElement element)
+    {
+        if (!PendingExits.TryGetValue(element, out var exit)) return Task.CompletedTask;
+        exit.CompletionObserver ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        return exit.CompletionObserver.Task;
+    }
 
     private sealed class MotionResources
     {
@@ -115,6 +125,7 @@ internal static class UiMotion
                 CancelExit(element);
             }
             batch.Dispose();
+            exit.CompletionObserver?.TrySetResult();
         };
         visual.StartAnimation("Opacity", motion.FadeOut);
         batch.End();

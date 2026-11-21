@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using StealthWorkspace.Controls;
 using StealthWorkspace.Services;
 
@@ -23,6 +24,7 @@ public sealed partial class BrowserPage
         {
             var selected = (BrowserTabControl)((TabViewItem)BrowserTabView.SelectedItem).Content;
             await selected.CheckMenuActionsAuditAsync();
+            await CheckTabStripEndSessionAsync(selected);
             SmokeTest.Report("menu actions audit complete");
             return;
         }
@@ -71,6 +73,42 @@ public sealed partial class BrowserPage
         await CheckDownloadLifetimeAsync();
         await CheckRecoveryWorkflowAsync();
         SmokeTest.Report("audit complete");
+    }
+
+    private async Task CheckTabStripEndSessionAsync(BrowserTabControl selected)
+    {
+        await using var fixture = new BrowserHttpFixture();
+        string originalUrl = fixture.Address + "/page?before-session-end";
+        await selected.NavigateAuditAsync(originalUrl);
+        var originalTabs = BrowserTabView.TabItems.OfType<TabViewItem>().ToArray();
+        var originalSelection = BrowserTabView.SelectedItem;
+
+        Button? DialogButton(string name) => VisualTreeHelper.GetOpenPopupsForXamlRoot(XamlRoot)
+            .Select(popup => BrowserTabControl.FindFixtureButton(popup.Child, name)).FirstOrDefault(button => button != null);
+        async Task AnswerAsync(string name)
+        {
+            MediaAcceptance.Invoke(TabStripEndSession);
+            await WaitAuditAsync(() => _confirmingEnd && DialogButton(name) != null);
+            MediaAcceptance.Invoke(DialogButton(name)!);
+        }
+
+        await AnswerAsync("CloseButton");
+        await WaitAuditAsync(() => !_confirmingEnd && DialogButton("CloseButton") == null);
+        AuditRequire(ReferenceEquals(originalSelection, BrowserTabView.SelectedItem) &&
+            originalTabs.SequenceEqual(BrowserTabView.TabItems.OfType<TabViewItem>()) && selected.HasBrowserControl && selected.CurrentUrl == originalUrl,
+            "cancelling the tab-strip end-session dialog preserves all tabs and the loaded URL");
+
+        await AnswerAsync("PrimaryButton");
+        // The native profile cleanup is bounded separately and can take longer than an ordinary UI transition.
+        await WaitAuditAsync(() => !_isBurningAll && !_confirmingEnd && BrowserTabView.TabItems.Count == 1 &&
+            _selectedTab is { IsLoaded: true } fresh && !ReferenceEquals(selected, fresh), 30_000);
+        var blank = _selectedTab!;
+        AuditRequire(SmokeSessionIsEmpty && string.IsNullOrEmpty(blank.CurrentUrl) && !SessionNotice.IsOpen &&
+            BrowserProfileManager.LastPersonalHistoryCleanupSucceeded && TabStripEndSession.IsEnabled &&
+            BrowserTabView.IsAddTabButtonVisible, "confirming end-session clears native history and leaves one usable blank tab");
+        await blank.NavigateAuditAsync(fixture.Address + "/page?after-session-end");
+        AuditRequire(blank.CurrentUrl == fixture.Address + "/page?after-session-end" && BrowserTabView.TabItems.Count == 1,
+            "the replacement blank tab opens the next page normally");
     }
 
     private async Task CheckRecoveryWorkflowAsync()
@@ -184,9 +222,10 @@ public sealed partial class BrowserPage
         if (!wasMaximized) originalPresenter?.Restore();
     }
 
-    private static async Task WaitAuditAsync(Func<bool> condition)
+    private static async Task WaitAuditAsync(Func<bool> condition, int timeoutMs = 5000)
     {
-        for (int i = 0; i < 100 && !condition(); i++) await Task.Delay(50);
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+        while (elapsed.ElapsedMilliseconds < timeoutMs && !condition()) await Task.Delay(50);
         if (!condition()) throw new TimeoutException("Audit UI state not reached");
     }
 

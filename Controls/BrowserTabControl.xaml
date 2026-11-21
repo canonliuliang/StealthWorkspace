@@ -88,9 +88,9 @@
                                 CornerRadius="4"
                                 Style="{ThemeResource SubtleButtonStyle}"
                                 AutomationProperties.Name="站点隐私"
-                                ToolTipService.ToolTip="隐私保护 · 登录、浏览记录和网站权限" Background="{ThemeResource StealthBrandSubtleBrush}">
+                                ToolTipService.ToolTip="隐私保护 · 登录、浏览记录和网站权限">
                             <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
-                                <FontIcon Glyph="&#xEA18;" FontSize="19" Foreground="{ThemeResource StealthBrandBrush}" />
+                                <icons:PrivacyShield xmlns:icons="using:StealthWorkspace.Controls" x:Name="AddressPrivacyShield" Width="24" Height="24" />
                                 <Border x:Name="ShieldBlockedBadge" Background="{ThemeResource StealthBrandSubtleBrush}" CornerRadius="4" Padding="4,0" Visibility="Collapsed">
                                     <TextBlock x:Name="ShieldBlockedCountText" Text="0" FontSize="12" Foreground="{ThemeResource StealthBrandBrush}" FontWeight="SemiBold" />
                                 </Border>
@@ -131,13 +131,13 @@
                                                     <ColumnDefinition Width="Auto" />
                                                     <ColumnDefinition Width="Auto" />
                                                 </Grid.ColumnDefinitions>
-                                                <FontIcon Glyph="&#xEA18;" FontSize="20" Foreground="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Center" />
+                                                <icons:PrivacyShield xmlns:icons="using:StealthWorkspace.Controls" Width="24" Height="24" VerticalAlignment="Center" />
                                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                     <TextBlock x:Name="FlyoutDomainText" Text="站点隐私" FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis" />
                                                     <TextBlock x:Name="SessionStateText" Text="尚未打开网页" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                     <TextBlock x:Name="DefaultProtectionText" FontSize="12" TextWrapping="Wrap" />
                                                 </StackPanel>
-                                                <Button Grid.Column="3" Click="CloseFlyout_Click" Style="{ThemeResource SubtleButtonStyle}" Width="32" Height="32" Padding="0" AutomationProperties.Name="关闭站点隐私" ToolTipService.ToolTip="关闭">
+                                                <Button x:Name="ClosePrivacyButton" Grid.Column="3" Click="CloseFlyout_Click" Style="{ThemeResource SubtleButtonStyle}" Width="32" Height="32" Padding="0" AutomationProperties.Name="关闭站点隐私" ToolTipService.ToolTip="关闭">
                                                     <FontIcon Glyph="&#xE711;" FontSize="12" />
                                                 </Button>
                                             </Grid>
@@ -224,6 +224,17 @@
                                                     <TextBlock Text="网站登录" FontWeight="SemiBold" FontSize="16"/>
                                                     <TextBlock x:Name="AccountModeDescription" TextWrapping="Wrap"
                                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                                    <Grid ColumnSpacing="6">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                                        <Button x:Name="SiteCookiesOnlyButton" Click="ClearCookiesOnly_Click" AutomationProperties.Name="仅清除本站 Cookie"
+                                                                IsEnabled="False" HorizontalAlignment="Stretch">
+                                                            <TextBlock Text="仅清除本站 Cookie…" TextWrapping="Wrap"/>
+                                                        </Button>
+                                                        <Button x:Name="AllCookiesOnlyButton" Grid.Column="1" Click="ClearCookiesOnly_Click" AutomationProperties.Name="仅清除所有 Cookie"
+                                                                IsEnabled="False" HorizontalAlignment="Stretch">
+                                                            <TextBlock Text="仅清除所有 Cookie…" TextWrapping="Wrap"/>
+                                                        </Button>
+                                                    </Grid>
                                                     <Button x:Name="ForgetSiteButton" Click="ForgetSite_Click" Content="清除本站账号和数据…" HorizontalAlignment="Stretch" />
                                                     <Button x:Name="ClearAllAccountsBtn" Click="ClearAllAccounts_Click" Content="清除所有网站账号和数据…" HorizontalAlignment="Stretch" />
                                                     <Expander Header="查看 Cookie 详情" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
@@ -489,12 +500,13 @@
                                     <Button x:Name="ZoomMenuPlus" Grid.Column="3" Content="+" AutomationProperties.Name="放大" ToolTipService.ToolTip="放大 (Ctrl++)" Click="ZoomInBtn_Click" Style="{ThemeResource SubtleButtonStyle}" />
                                 </Grid>
                                 <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="4,3" />
+                                <Button x:Name="OpenInEdgeBtn" Content="在 Edge 隐私窗口打开" AutomationProperties.HelpText="打开独立的 Edge InPrivate 窗口。关闭 Stealth 不会关闭该窗口。" Click="OpenInEdge_Click" ToolTipService.ToolTip="新标签打开空白隐私窗口；网页打开当前地址。Edge 的窗口需要单独关闭。" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
                                 <StackPanel x:Name="PageActionsGroup" Spacing="2">
+                                    <TextBlock x:Name="PageActionsHint" Text="打开网页后可使用以下操作" TextWrapping="Wrap" Margin="10,5,8,2" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                     <Button x:Name="FindMenuButton" Content="页内查找    Ctrl+F" Click="FindInPageBtn_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
                                     <Button x:Name="PageImagesBtn" Content="查看网页图片" Click="PageImages_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
                                     <Button x:Name="CopyCleanLinkBtn" Content="复制净化链接" Click="CopyCleanLink_Click" AutomationProperties.HelpText="仅移除已知跟踪参数，保留网页地址和其他参数" ToolTipService.ToolTip="仅移除已知跟踪参数，保留其他参数" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
                                     <Button x:Name="HardReloadMenuButton" AutomationProperties.Name="重新获取此页资源，保留当前登录与其他标签页" Content="忽略缓存并刷新    Ctrl+Shift+R" Click="HardReload_Click" ToolTipService.ToolTip="重新获取此页资源，保留当前登录与其他标签页" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
-                                    <Button AutomationProperties.Name="转到独立的 Edge InPrivate 窗口；本应用的锁定和结束会话不会关闭它。" x:Name="OpenInEdgeBtn" Content="在 Edge 隐私窗口打开" Click="OpenInEdge_Click" ToolTipService.ToolTip="转到独立的 Edge InPrivate 窗口；本应用的锁定和结束会话不会关闭它。" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
                                     <Button x:Name="AudioMuteBtn" Content="静音标签页" Click="AudioMuteBtn_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{ThemeResource SubtleButtonStyle}" />
                                     <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="4,3" />
                                 </StackPanel>

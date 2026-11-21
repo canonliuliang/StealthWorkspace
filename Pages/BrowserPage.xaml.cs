@@ -554,7 +554,7 @@ public sealed partial class BrowserPage : Page
         _isBurningAll = true;
         CloseTabSearch();
         _tabOpeners.Clear();
-        EndSessionBtn.IsEnabled = false;
+        EndSessionBtn.IsEnabled = TabStripEndSession.IsEnabled = false;
         BrowserTabView.IsAddTabButtonVisible = false;
         SessionNotice.Title = "正在结束会话";
         SessionNotice.Message = "正在关闭标签并清除本次浏览数据。";
@@ -603,7 +603,7 @@ public sealed partial class BrowserPage : Page
                 MainWindow.Current?.SetFullScreenMode(false);
             }
             _isBurningAll = false;
-            EndSessionBtn.IsEnabled = true;
+            EndSessionBtn.IsEnabled = TabStripEndSession.IsEnabled = true;
             BrowserTabView.IsAddTabButtonVisible = true;
             EnsureTabExists();
         }
@@ -639,6 +639,10 @@ public sealed partial class BrowserPage : Page
     private async Task RequestEndSessionAsync()
     {
         if (_confirmingEnd || _confirmingCloseOthers || _isBurningAll || _isUnloading) return;
+        var session = SettingsService.Instance.ActiveBookmarkSession;
+        bool IsCurrent() => _isPageLoaded && !_isBurningAll && !_isUnloading && ReferenceEquals(Frame?.Content, this) &&
+            MainWindow.Current?.IsPrivacyCoverVisible == false && BrowserDownloadPath.IsCurrentWorkspace(session);
+        if (!IsCurrent()) return;
         int pending = BrowserDownloads.PendingCount;
         if (BrowserProfileManager.ActiveSessionDirectory != null || pending > 0 ||
             BrowserTabView.TabItems.OfType<TabViewItem>().Any(item => item.Content is BrowserTabControl { HasBrowserControl: true }))
@@ -649,18 +653,18 @@ public sealed partial class BrowserPage : Page
                 var dialog = new ContentDialog
                 {
                     XamlRoot = XamlRoot, Title = "结束本次浏览会话？",
-                    Content = (SettingsService.Instance.ActiveBookmarkSession?.Temporary == true
+                    Content = (session?.Temporary == true
                         ? "将关闭所有临时网页并清除浏览记录和登录状态。"
                         : "将关闭所有标签并清除本次浏览记录，网站登录会保留。未提交的表单会丢失。") +
                         (pending > 0 ? $"\n{pending} 个未完成下载也将取消。" : ""),
                     PrimaryButtonText = "结束会话", CloseButtonText = "继续浏览", DefaultButton = ContentDialogButton.Close
                 };
-                if (await WorkspaceDialogs.ShowAsync(dialog) != ContentDialogResult.Primary) return;
+                if (await WorkspaceDialogs.ShowAsync(dialog, IsCurrent) != ContentDialogResult.Primary) return;
             }
             catch (Exception ex) { AppLog.Warn("Confirm end session: " + ex.GetType().Name); return; }
             finally { _confirmingEnd = false; }
         }
-        if (VaultService.Instance.IsUnlocked && MainWindow.Current?.IsPrivacyCoverVisible != true) await BurnAllTabsAsync();
+        if (IsCurrent()) await BurnAllTabsAsync();
     }
 
     #endregion

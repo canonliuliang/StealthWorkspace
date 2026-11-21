@@ -130,7 +130,7 @@ public partial class VaultService
             {
                 string path = Path.Combine(_mediaFolder, files[i]);
                 // Failure is retained in the index, even if another item succeeded.
-                if (!IsDefinitelyMissing(path) && !CryptoService.ShredFile(path, 1))
+                if (!IsDefinitelyMissing(path) && !CryptoService.ShredWorkspaceFile(path, 1))
                     AppLog.Warn("保险箱删除未完成，已保留索引和重试记录");
                 progress?.Report((i + 1.0) / files.Count);
             }
@@ -214,8 +214,8 @@ public partial class VaultService
     private void PersistLegacyImportDisabled()
     {
         string marker = Path.Combine(_vaultRoot, AppPaths.LegacyImportDisabledFileName);
-        if (!SafeFileSystem.IsPlainPath(_vaultRoot) ||
-            (!IsDefinitelyMissing(marker) && !SafeFileSystem.IsPlainPath(marker)))
+        if (!SafeFileSystem.IsPlainWorkspacePath(_vaultRoot) ||
+            (!IsDefinitelyMissing(marker) && !SafeFileSystem.IsPlainWorkspacePath(marker)))
             throw new IOException("无法安全保存重置状态，保险箱内容尚未移除。");
         // This tombstone intentionally survives reset and migration of the data root.
         // Persist it before deleting anything so a preserved legacy copy cannot return.
@@ -229,9 +229,9 @@ public partial class VaultService
     {
         // Reset is explicit authorization to remove all files in this vault's media root,
         // including preserved orphan ciphertext. Never recurse into unexpected directories.
-        if (!SafeFileSystem.IsPlainPath(_mediaFolder)) throw new IOException("媒体目录不可安全访问，重置未执行。");
+        if (!SafeFileSystem.IsPlainWorkspacePath(_mediaFolder)) throw new IOException("媒体目录不可安全访问，重置未执行。");
         string[] entries = Directory.GetFileSystemEntries(_mediaFolder);
-        if (entries.Any(path => !SafeFileSystem.IsPlainPath(path) || (File.GetAttributes(path) & FileAttributes.Directory) != 0))
+        if (entries.Any(path => !SafeFileSystem.IsPlainWorkspacePath(path) || (File.GetAttributes(path) & FileAttributes.Directory) != 0))
             throw new IOException("媒体目录包含链接或子目录，重置未执行。请先检查目录。");
         WriteRemovalJournal(new RemovalJournal { Operation = "reset", Files = entries.Select(Path.GetFileName).Select(name => name!).ToList() });
         MarkResetIncomplete();
@@ -243,13 +243,13 @@ public partial class VaultService
             {
                 PersistLegacyImportDisabled();
                 foreach (string file in entries)
-                    if (!IsDefinitelyMissing(file) && !CryptoService.ShredFile(file, 1))
+                    if (!IsDefinitelyMissing(file) && !CryptoService.ShredWorkspaceFile(file, 1))
                         throw new IOException("重置未完成：媒体文件仍被占用或无法移除。关闭占用程序后可再次重置。");
                 if (Directory.EnumerateFileSystemEntries(_mediaFolder).Any())
                     throw new IOException("重置未完成：媒体目录仍非空。");
                 foreach (string path in new[] { _configBackupPath, _configPath, _rotationJournalPath,
                     _configPath + ".tmp", _rotationJournalPath + ".tmp", RemovalJournalPath + ".tmp" })
-                    if (!IsDefinitelyMissing(path) && !CryptoService.ShredFile(path, 1))
+                    if (!IsDefinitelyMissing(path) && !CryptoService.ShredWorkspaceFile(path, 1))
                         throw new IOException("重置未完成：保险箱配置仍被占用或无法移除。请稍后重试。");
                 File.Delete(RemovalJournalPath); // Last: until this succeeds, reset is visibly incomplete.
             });

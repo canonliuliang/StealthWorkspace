@@ -46,16 +46,7 @@ internal static class BrowserAccountDirectory
 
     private static FileStream AcquireOwnedDirectory(string directory, string markerFile, string expected)
     {
-        string parent = directory;
-        while (true)
-        {
-            try { _ = File.GetAttributes(parent); break; }
-            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
-            { parent = Path.GetDirectoryName(parent) ?? throw new IOException("无法定位网站账户目录。"); }
-        }
-        if (!SafeFileSystem.IsPlainPath(parent)) throw new IOException("网站账户目录包含重定向。");
-        Directory.CreateDirectory(directory);
-        if (!SafeFileSystem.IsPlainPath(directory)) throw new IOException("网站账户目录不可用。");
+        SafeFileSystem.EnsureWorkspaceDirectory(directory);
         string marker = Path.Combine(directory, markerFile);
         if (!File.Exists(marker))
         {
@@ -64,7 +55,7 @@ internal static class BrowserAccountDirectory
             created.Write(Encoding.ASCII.GetBytes(expected));
             created.Flush(true);
         }
-        if (!SafeFileSystem.IsPlainPath(marker)) throw new IOException("网站账户目录的所有权标记不可用。");
+        if (!SafeFileSystem.IsPlainWorkspacePath(marker)) throw new IOException("网站账户目录的所有权标记不可用。");
         var lease = new FileStream(marker, FileMode.Open, FileAccess.Read, FileShare.None);
         try
         {
@@ -97,11 +88,11 @@ internal static class BrowserAccountDirectory
             {
                 try
                 {
-                    if (!SafeFileSystem.IsPlainPath(directory)) throw new IOException("网站账户目录包含重定向，无法安全清理。");
+                    if (!SafeFileSystem.IsPlainWorkspacePath(directory)) throw new IOException("网站账户目录包含重定向，无法安全清理。");
                     var root = new DirectoryInfo(directory);
                     using var group = AcquireOwnedDirectory(GroupForVault(vaultRoot), OwnerFile, RootKey(vaultRoot));
                     string marker = Path.Combine(directory, IdentityFile);
-                    if (!SafeFileSystem.IsPlainPath(marker)) throw new IOException("无法验证网站账户目录所有权。");
+                    if (!SafeFileSystem.IsPlainWorkspacePath(marker)) throw new IOException("无法验证网站账户目录所有权。");
                     // Always preserve the sentinel when a child remains locked. A failed
                     // reset must be resumable without ever adopting an unrelated folder.
                     using (var owned = new FileStream(marker, FileMode.Open, FileAccess.Read, FileShare.Delete))
@@ -119,7 +110,7 @@ internal static class BrowserAccountDirectory
                     try { root.Delete(); }
                     catch
                     {
-                        if (root.Exists && SafeFileSystem.IsPlainPath(directory))
+                        if (root.Exists && SafeFileSystem.IsPlainWorkspacePath(directory))
                         {
                             using var repaired = new FileStream(marker, FileMode.CreateNew, FileAccess.Write, FileShare.None);
                             repaired.Write(Encoding.ASCII.GetBytes(identity));

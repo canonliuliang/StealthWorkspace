@@ -212,8 +212,13 @@ public sealed partial class BrowserTabControl
         await Task.Delay(75);
         if (id == "fullscreen")
             Services.SmokeTest.Report($"fullscreen gesture: windowForeground={Services.BrowserZoomInput.IsOwnerForeground(MainWindow.CurrentHandle)}; loaded={_browserControl?.IsLoaded}; xamlFocus={_browserControl?.FocusState}; addressPending={_focusAddressOnLoad}; selected={_isSelected}; pageFocused={await core.ExecuteScriptAsync("document.hasFocus()")}");
-        // Record the simulated modifier at the click, after the control has loaded and obtained focus.
-        if (background) _backgroundClickAt = Environment.TickCount64;
+        // Replay a slow release/renderer after a background press. A previously
+        // used 750 ms cutoff lost the user's choice before WebView2 requested a tab.
+        if (background)
+        {
+            _pointerPopupInBackground = true;
+            await Task.Delay(900);
+        }
         await core.CallDevToolsProtocolMethodAsync("Runtime.evaluate", JsonSerializer.Serialize(new
         {
             expression = "document.getElementById(" + JsonSerializer.Serialize(id) + ").click()",

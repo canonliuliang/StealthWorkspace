@@ -605,10 +605,14 @@ public static class CryptoService
     /// Reparse points and hard links are retained. Failed overwrite never falls back
     /// to ordinary deletion. Physical erasure remains best-effort on SSD/COW storage.
     /// </summary>
-    public static bool ShredFile(string filePath, int? passCount = null)
+    public static bool ShredFile(string filePath, int? passCount = null) => ShredFile(filePath, passCount, workspace: false);
+
+    internal static bool ShredWorkspaceFile(string filePath, int passCount) => ShredFile(filePath, passCount, workspace: true);
+
+    private static bool ShredFile(string filePath, int? passCount, bool workspace)
     {
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath)) return false;
-        try { return SafeShred.OverwriteAndDelete(filePath, Math.Clamp(passCount ?? GetConfiguredPasses(), 1, 7)); }
+        try { return SafeShred.OverwriteAndDelete(filePath, Math.Clamp(passCount ?? GetConfiguredPasses(), 1, 7), workspace: workspace); }
         catch (Exception ex)
         {
             AppLog.Warn($"粉碎文件失败，未执行普通删除: {ex.GetType().Name}");
@@ -617,9 +621,9 @@ public static class CryptoService
     }
 
     internal static bool ShredImportedFile(string filePath, SafeShred.FileIdentity expected, byte[] digest,
-        Func<bool>? authorize = null)
+        Func<bool>? authorize = null, bool workspace = false)
     {
-        try { return SafeShred.OverwriteAndDelete(filePath, GetConfiguredPasses(), expected, digest, authorize); }
+        try { return SafeShred.OverwriteAndDelete(filePath, GetConfiguredPasses(), expected, digest, authorize, workspace); }
         catch (Exception ex)
         {
             AppLog.Warn($"导入后的原件已改变或无法安全粉碎，原件已保留: {ex.GetType().Name}");

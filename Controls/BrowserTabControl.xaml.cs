@@ -246,6 +246,7 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void UpdateBrowserVisibility()
     {
+        if (!IsForegroundTab) _pointerPopupInBackground = null;
         // TabView unloading and window minimisation do not always propagate native
         // WebView visibility. TrySuspend requires an actually hidden controller.
         if (_browserControl is { } browser)
@@ -523,6 +524,7 @@ public sealed partial class BrowserTabControl : UserControl
                     browser.NavigationStarting -= BrowserControl_NavigationStarting;
                     browser.NavigationCompleted -= BrowserControl_NavigationCompleted;
                     browser.RemoveHandler(PointerPressedEvent, new PointerEventHandler(BrowserPointerPressed));
+                    browser.RemoveHandler(PointerReleasedEvent, new PointerEventHandler(BrowserPointerReleased));
                     if (_isInitialized || browser.CoreWebView2 != null) browser.Close();
                     BrowserHost.Children.Remove(browser);
                     _browserControl = null;
@@ -658,6 +660,7 @@ public sealed partial class BrowserTabControl : UserControl
                 failedBrowser.NavigationStarting -= BrowserControl_NavigationStarting;
                 failedBrowser.NavigationCompleted -= BrowserControl_NavigationCompleted;
                 failedBrowser.RemoveHandler(PointerPressedEvent, new PointerEventHandler(BrowserPointerPressed));
+                failedBrowser.RemoveHandler(PointerReleasedEvent, new PointerEventHandler(BrowserPointerReleased));
                 try { failedBrowser.Close(); } catch { }
                 BrowserHost.Children.Remove(failedBrowser);
                 _browserControl = null;
@@ -762,6 +765,7 @@ public sealed partial class BrowserTabControl : UserControl
         browser.NavigationCompleted += BrowserControl_NavigationCompleted;
         BrowserHost.Children.Add(browser);
         browser.AddHandler(PointerPressedEvent, new PointerEventHandler(BrowserPointerPressed), true);
+        browser.AddHandler(PointerReleasedEvent, new PointerEventHandler(BrowserPointerReleased), true);
         return _browserControl = browser;
     }
 
@@ -1648,6 +1652,7 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void BrowserTabControl_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
     {
+        _pointerPopupInBackground = null;
         if (_isDisposed) return;
         if (_nativeFindDispatching && (e.Key is VirtualKey.F or VirtualKey.F3)) return;
 
@@ -1802,7 +1807,11 @@ public sealed partial class BrowserTabControl : UserControl
         PrivacyPanels.Children[_privacySectionIndex].Visibility = Visibility.Collapsed;
         _privacySectionIndex = index;
         UiMotion.SetVisible((FrameworkElement)PrivacyPanels.Children[index], true, fromRight ? MotionCue.FromRight : MotionCue.FromLeft);
-        if (selection == CookiesSection) _ = RefreshCookiesAsync();
+        if (selection == CookiesSection)
+        {
+            UpdateAccountActionAvailability();
+            _ = RefreshCookiesAsync();
+        }
         else ClearCookieRows();
         SetHistorySearchActive(selection == HistorySection && PrivacyFlyout.IsOpen);
     }
@@ -1830,8 +1839,7 @@ public sealed partial class BrowserTabControl : UserControl
         CurrentSiteScope.IsEnabled = _tabPermissions.Origin != null;
         ClearSiteStorageBtn.IsEnabled = CurrentSiteScope.IsEnabled;
         ReloadSiteFilesBtn.IsEnabled = CurrentSiteScope.IsEnabled;
-        ForgetSiteButton.IsEnabled = CurrentSiteScope.IsEnabled && _hookedCore != null;
-        ClearAllAccountsBtn.IsEnabled = !_isDisposed && _workspace != null && !_isInitializing;
+        UpdateAccountActionAvailability();
         AccountModeDescription.Text = PrivacyModeExplanation;
         DefaultProtectionText.Text = _workspace?.Temporary == true ? "临时空间 · 退出后清除登录和记录" : "主空间 · 退出后清记录，保留登录";
         PermissionScope.SelectedIndex = CurrentSiteScope.IsEnabled ? 0 : 1;
@@ -2241,9 +2249,10 @@ public sealed partial class BrowserTabControl : UserControl
         UpdateAudioIcon();
         bool start = StartSurface.Visibility == Visibility.Visible;
         bool webPage = !start && _documentReady && _hookedCore != null;
-        PageActionsGroup.Visibility = webPage ? Visibility.Visible : Visibility.Collapsed;
+        PageActionsHint.Visibility = webPage ? Visibility.Collapsed : Visibility.Visible;
+        FindMenuButton.IsEnabled = PageImagesBtn.IsEnabled = HardReloadMenuButton.IsEnabled = AudioMuteBtn.IsEnabled = webPage;
         bool transferable = webPage && TryCreateWebUri(_hookedCore!.Source, out var page) && string.IsNullOrEmpty(page?.UserInfo);
-        OpenInEdgeBtn.IsEnabled = transferable;
+        OpenInEdgeBtn.IsEnabled = BrowserDownloadPath.IsCurrentWorkspace(_workspace);
         CopyCleanLinkBtn.IsEnabled = transferable;
         foreach (var button in ZoomMenuRow.Children.OfType<Button>()) button.IsEnabled = start || _hookedCore != null;
         ZoomMenuLabel.Text = start ? "首页缩放" : "网页缩放";
@@ -2271,18 +2280,35 @@ public sealed partial class BrowserTabControl : UserControl
         }
     }
 
-    private async void OpenDownloadsFolder_Click(object sender, RoutedEventArgs e)
+    private async void OpenDownloadsFolder_Click(object sender, RoutedEventArgs e) =>
+        await ShowDownloadsFolderAsync(MoreActionsFlyout);
+
+    private async Task ShowDownloadsFolderAsync(Flyout source)
     {
-        MoreActionsFlyout.Hide();
-        if (!CanAccessDownloads) return;
+        bool CanShow() => CanAccessDownloads && IsForegroundTab && IsLoaded;
+        if (!CanShow()) return;
         try
         {
-            await DownloadFolderDialog.ShowFolderAsync(XamlRoot, _workspace);
+            if (source.IsOpen)
+            {
+                // WinUI is still dismantling the popup inside Closed. Resume on the UI
+                // queue after that native callback returns, including for the More menu.
+                var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                void OnClosed(object? sender, object args) => closed.TrySetResult();
+                source.Closed += OnClosed;
+                try
+                {
+                    source.Hide();
+                    await closed.Task.WaitAsync(TimeSpan.FromSeconds(6));
+                }
+                finally { source.Closed -= OnClosed; }
+            }
+            if (CanShow()) await DownloadFolderDialog.ShowFolderAsync(XamlRoot, _workspace, CanShow);
         }
         catch (Exception ex)
         {
             AppLog.Warn($"Open downloads folder: {ex.GetType().Name} (0x{ex.HResult:X8})");
-            ShowBrowserError("无法打开下载文件夹", BrowserDownloadFolders.FailureMessage(ex));
+            if (CanShow()) ShowBrowserError("无法打开下载文件夹", BrowserDownloadFolders.FailureMessage(ex));
         }
     }
 
@@ -2304,15 +2330,7 @@ public sealed partial class BrowserTabControl : UserControl
         if (_downloadsFlyout != null) return _downloadsFlyout;
         var list = new DownloadListControl();
         var flyout = new Flyout { Content = list, Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight };
-        bool folderRequested = false;
-        list.OpenFolderRequested += () => { folderRequested = true; flyout.Hide(); };
-        flyout.Closed += (_, _) =>
-        {
-            if (!folderRequested) return;
-            folderRequested = false;
-            if (SmokeTest.BrowserAudit) SmokeTest.Report($"downloads folder transition: current={CanAccessDownloads}, foreground={IsForegroundTab}, loaded={IsLoaded}");
-            if (CanAccessDownloads && IsForegroundTab && IsLoaded) OpenDownloadsFolder_Click(this, new RoutedEventArgs());
-        };
+        list.OpenFolderRequested += async () => await ShowDownloadsFolderAsync(flyout);
         return _downloadsFlyout = flyout;
     }
 
@@ -2621,6 +2639,7 @@ public sealed partial class BrowserTabControl : UserControl
     private void BrowserControl_NavigationStarting(WebView2 sender, CoreWebView2NavigationStartingEventArgs args)
     {
         if (_isDisposed) return;
+        _pointerPopupInBackground = null;
         _imageDocumentId = args.NavigationId;
         _contextImageDocument = _contextImageSource = _readerTicket = null;
         CancelResponseProbe();

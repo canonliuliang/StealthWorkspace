@@ -10,9 +10,9 @@ Stealth 是 Windows 桌面应用，当前提供预览版本。建议使用 Windo
 
 从仓库 Releases 下载 ZIP，完整解压到固定且可写的目录，然后打开 `StealthWorkspace.exe`。不要只复制 EXE，也不要直接在 ZIP 中运行。发布包包含 .NET 和 Windows App SDK；网页需要 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。
 
-便携版建议解压到简短、固定且可写的目录，例如用户目录下的 `Stealth`。使用程序旁的 `WorkspaceData` 时，多层解压目录也会加长保险箱内的文件路径。在未启用 Windows 长路径支持的机器上，过长的资料目录可能导致清理或重置失败。已有保险箱请先在设置中创建并验证加密备份，保留原目录，确认新位置可以打开、导出样本文件后再处理旧副本。[已验证的路径限制](VALIDATION.md)
+便携版建议解压到简短、固定且可写的目录，例如用户目录下的 `Stealth`。旧版在 Windows 未启用长路径支持时，放在多层目录中的 `WorkspaceData` 可能无法完成部分清理或重置。已有保险箱请先在设置中创建并验证加密备份，保留原目录，确认能打开并导出样本文件后再处理旧副本。[旧版路径复测](VALIDATION.md)
 
-当前版本为 `2026.11.21-r16.1-preview.2`。便携包使用手动更新；WebView2 Evergreen 运行时由 Microsoft 独立维护。[下载 R16.1 第二次预览和 SHA-256 清单](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview.2)
+当前版本为 `2026.11.21-r16.1-preview.2.1`。便携包使用手动更新，WebView2 Evergreen 运行时由 Microsoft 独立维护。[下载 R16.1 维护版和 SHA-256 清单](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview.2.1)
 
 当前预览包未使用受信任发布者证书签名，Windows 可能显示 SmartScreen 提示。校验值只能检查下载内容是否一致，不能代替发布者签名。由使用者判断是否信任；不要关闭系统保护。参见 [Microsoft 应用声誉说明](https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation)。
 

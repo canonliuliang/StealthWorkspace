@@ -76,32 +76,39 @@ public partial class VaultService
     /// <summary>Explicit legacy source used only by isolated migration fixtures.</summary>
     internal VaultService(string? dataRootOverride, string? legacyStore)
     {
-        _vaultRoot = string.IsNullOrWhiteSpace(dataRootOverride) ? AppPaths.EnsureDataRoot() : dataRootOverride!;
+        _vaultRoot = string.IsNullOrWhiteSpace(dataRootOverride) ? AppPaths.EnsureDataRoot() : WorkspaceFileName.FullPath(dataRootOverride);
         _mediaFolder = Path.Combine(_vaultRoot, "MediaVault");
         _configPath = string.IsNullOrWhiteSpace(dataRootOverride) ? AppPaths.VaultConfigPath : Path.Combine(_vaultRoot, "system_catalog.dat");
         _configBackupPath = _configPath + ".bak";
         _rotationJournalPath = Path.Combine(_vaultRoot, "rotate.dat");
 
-        try
-        {
-            Directory.CreateDirectory(_vaultRoot);
-            Directory.CreateDirectory(_mediaFolder);
-            if (string.IsNullOrWhiteSpace(dataRootOverride))
-            {
-                AppPaths.Hide(_vaultRoot);
-                AppPaths.Hide(_mediaFolder);
-            }
-        }
-        catch (Exception ex)
-        {
-            AppLog.Error("初始化保险箱目录失败", ex);
-        }
-
         if (legacyStore == null && string.IsNullOrWhiteSpace(dataRootOverride) && !AppPaths.HasDataRootOverride)
             legacyStore = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "StealthVault_Store");
         _legacyMigrationSource = legacyStore;
+        if (!PrepareWorkspaceDirectory()) return;
+        if (string.IsNullOrWhiteSpace(dataRootOverride))
+        {
+            AppPaths.Hide(_vaultRoot);
+            AppPaths.Hide(_mediaFolder);
+        }
         LoadConfigWithLegacyMigration();
         RecoverPendingOperations();
+    }
+
+    private bool PrepareWorkspaceDirectory()
+    {
+        try { SafeFileSystem.EnsureWorkspaceDirectory(_mediaFolder); return true; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            lock (_sync)
+            {
+                _config = null;
+                _corrupted = true;
+                _loadError = "保险箱目录不可安全访问。请检查目录权限或选择未被重定向的目录。";
+            }
+            AppLog.Error("初始化保险箱目录失败", ex);
+            return false;
+        }
     }
 
     #region Public state
@@ -150,7 +157,12 @@ public partial class VaultService
     {
         Lock();
         if (!_mutationGate.Wait(0)) return;
-        try { LoadConfigWithLegacyMigration(); RecoverPendingOperations(); }
+        try
+        {
+            if (!PrepareWorkspaceDirectory()) return;
+            LoadConfigWithLegacyMigration();
+            RecoverPendingOperations();
+        }
         finally { _mutationGate.Release(); }
     }
 
@@ -400,7 +412,7 @@ public partial class VaultService
             if (!BrowserDownloadPath.IsCurrentWorkspace(workspace) || !ReferenceEquals(this, Instance)
                 || !BrowserDownloadFolders.Homes().Any(home => string.Equals(Path.GetDirectoryName(fullSourcePath),
                     BrowserDownloadFolders.PathFor(home, workspace!.DownloadDirectoryName), StringComparison.OrdinalIgnoreCase))
-                || !SafeFileSystem.IsPlainPath(fullSourcePath))
+                || !SafeFileSystem.IsPlainWorkspacePath(fullSourcePath))
                 throw new InvalidOperationException("下载文件位置已改变。");
         }
         else if (IsInsideVault(fullSourcePath)) throw new InvalidOperationException("不能把保险箱自身的文件再次导入。");
@@ -424,7 +436,7 @@ public partial class VaultService
             {
                 bool CanRemove() => !cancellationToken.IsCancellationRequested && IsCurrentUnlockSession(epoch, item.IsDecoy);
                 bool removed = CanRemove() && await Task.Run(() =>
-                    CryptoService.ShredImportedFile(fullSourcePath, identity.Value, hash, CanRemove));
+                    CryptoService.ShredImportedFile(fullSourcePath, identity.Value, hash, CanRemove, workspace: downloadIdentity.HasValue));
                 reportOriginalRemoval?.Invoke(removed);
             }
             finally { CryptographicOperations.ZeroMemory(hash); }
@@ -549,9 +561,7 @@ public partial class VaultService
         try
         {
             ValidateStoredLength(item, CryptoService.ReadHeader(sourcePath).PlainLength);
-            Directory.CreateDirectory(directory);
-            if (!SafeFileSystem.IsPlainPath(directory))
-                throw new InvalidOperationException("导出目录包含链接或无法访问，请选择普通文件夹。");
+            SafeFileSystem.EnsureWorkspaceDirectory(directory);
             progress?.Report(0);
             await Task.Run(() => CryptoService.DecryptToFile(sourcePath, tempTarget, key, progress, cancellationToken), cancellationToken);
 
@@ -560,7 +570,7 @@ public partial class VaultService
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!_isUnlocked || _unlockEpoch != epoch)
                     throw new InvalidOperationException("保险箱状态已改变，导出已取消。");
-                if (!SafeFileSystem.IsPlainPath(directory) || IsInsideVault(target))
+                if (!SafeFileSystem.IsPlainWorkspacePath(directory) || IsInsideVault(target))
                     throw new InvalidOperationException("导出位置已改变，请重新选择保险箱以外的位置。");
                 if (useUniqueName) PublishUniqueExport(tempTarget, target);
                 else File.Move(tempTarget, target, overwrite: true);
@@ -701,7 +711,7 @@ public partial class VaultService
 
                     if (referenced.Contains(name)) continue;
                     if (!staleTemp || !staleAge) continue;
-                    if (!SafeFileSystem.IsPlainPath(file)) continue;
+                    if (!SafeFileSystem.IsPlainWorkspacePath(file)) continue;
 
                     File.Delete(file);
                     removed++;
@@ -874,7 +884,7 @@ public partial class VaultService
                 try
                 {
                     string oldPath = Path.Combine(_mediaFolder, oldName);
-                    if (File.Exists(oldPath) && !CryptoService.ShredFile(oldPath, 1)) cleanupComplete = false;
+                    if (File.Exists(oldPath) && !CryptoService.ShredWorkspaceFile(oldPath, 1)) cleanupComplete = false;
                 }
                 catch (Exception ex)
                 {
@@ -966,7 +976,7 @@ public partial class VaultService
                     string keep = committed ? pair.NewName : pair.OldName;
                     string discard = committed ? pair.OldName : pair.NewName;
                     if (!references.Contains(keep) || references.Contains(discard)
-                        || !SafeFileSystem.IsPlainPath(Path.Combine(_mediaFolder, keep))) return;
+                        || !SafeFileSystem.IsPlainWorkspacePath(Path.Combine(_mediaFolder, keep))) return;
                 }
                 if (_loadedFromBackup)
                 {
@@ -988,7 +998,7 @@ public partial class VaultService
             {
                 string discard = Path.Combine(_mediaFolder, committed ? pair.OldName : pair.NewName);
                 if (IsDefinitelyMissing(discard)) continue;
-                if (!SafeFileSystem.IsPlainPath(discard)) return;
+                if (!SafeFileSystem.IsPlainWorkspacePath(discard)) return;
                 File.Delete(discard); // A failure retains the journal for the next recovery attempt.
             }
 
@@ -1047,7 +1057,7 @@ public partial class VaultService
                 throw new InvalidDataException("备份索引中存在冲突的媒体记录。");
             string path = Path.Combine(_mediaFolder, item.StoredFileName);
             if (optional.Contains(item.StoredFileName) && IsDefinitelyMissing(path)) continue;
-            if (!SafeFileSystem.IsPlainPath(path)) throw new InvalidDataException("备份索引引用的媒体不可用。");
+            if (!SafeFileSystem.IsPlainWorkspacePath(path)) throw new InvalidDataException("备份索引引用的媒体不可用。");
             ValidateStoredLength(item, CryptoService.ReadHeader(path).PlainLength);
         }
         if (Directory.EnumerateFiles(_mediaFolder, "*.svault").Any(path => !expected.Contains(Path.GetFileName(path))))
@@ -1243,11 +1253,11 @@ public partial class VaultService
             // An established destination is authoritative. Never merge another vault's
             // ciphertext into it, and never remove the untouched legacy source.
             if (HasTargetMetadata()) return retained;
-            if (!SafeFileSystem.IsPlainPath(_vaultRoot) || !SafeFileSystem.IsPlainPath(_mediaFolder))
+            if (!SafeFileSystem.IsPlainWorkspacePath(_vaultRoot) || !SafeFileSystem.IsPlainWorkspacePath(_mediaFolder))
                 throw new IOException("迁移目标包含目录链接，原文件已保留。");
             if (Directory.EnumerateFileSystemEntries(_mediaFolder).Any())
                 throw new IOException("目标媒体目录非空，不能合并旧保险箱。");
-            if (!SafeFileSystem.IsPlainPath(oldConfig)) throw new IOException("旧版索引路径不安全。");
+            if (!SafeFileSystem.IsPlainWorkspacePath(oldConfig)) throw new IOException("旧版索引路径不安全。");
             using var catalogInput = new FileStream(oldConfig, FileMode.Open, FileAccess.Read, FileShare.Read);
             var migrated = JsonSerializer.Deserialize<VaultConfig>(catalogInput)
                 ?? throw new InvalidDataException("旧版索引无效。");
@@ -1268,7 +1278,7 @@ public partial class VaultService
             foreach (var item in items)
             {
                 string source = Path.Combine(oldStore, "EncryptedMedia", item.StoredFileName);
-                if (!SafeFileSystem.IsPlainPath(source)) throw new IOException("旧版媒体无法安全读取。");
+                if (!SafeFileSystem.IsPlainWorkspacePath(source)) throw new IOException("旧版媒体无法安全读取。");
                 string target = Path.Combine(stagedMedia, item.StoredFileName);
                 File.Copy(source, target, overwrite: false);
                 File.SetAttributes(target, File.GetAttributes(target) & ~FileAttributes.ReadOnly);
@@ -1329,9 +1339,8 @@ public partial class VaultService
 
     private void EnsureMediaDirectory()
     {
-        if (!SafeFileSystem.IsPlainPath(_vaultRoot)) throw new IOException("保险箱目录不可安全访问。");
-        Directory.CreateDirectory(_mediaFolder);
-        if (!SafeFileSystem.IsPlainPath(_mediaFolder)) throw new IOException("媒体目录不可安全访问。");
+        if (!SafeFileSystem.IsPlainWorkspacePath(_vaultRoot)) throw new IOException("保险箱目录不可安全访问。");
+        SafeFileSystem.EnsureWorkspaceDirectory(_mediaFolder);
     }
 
     private void ReplaceCurrentKey(byte[] newKey)

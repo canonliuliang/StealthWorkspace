@@ -97,6 +97,7 @@ public sealed partial class MainWindow
                 case "forget":
                     await tab.VerifyLoginFixtureAsync(false, "read", false, true);
                     await tab.VerifyLoginFixtureAsync(false, "login", true, true);
+                    await tab.VerifyCookieOnlyActionsAsync();
                     await tab.VerifyLoginFixtureAsync(false, "read", true, true);
                     await tab.ForgetLoginFixtureSiteAsync();
                     await tab.VerifyLoginFixtureAsync(false, "read", false, false);

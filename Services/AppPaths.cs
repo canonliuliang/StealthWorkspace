@@ -41,7 +41,7 @@ public static class AppPaths
         if (string.IsNullOrWhiteSpace(root)) return;
         lock (Gate)
         {
-            _overrideRoot = Path.GetFullPath(root);
+            _overrideRoot = WorkspaceFileName.FullPath(root);
         }
     }
 
@@ -109,7 +109,7 @@ public static class AppPaths
         try
         {
             string media = Path.Combine(root, "MediaVault");
-            Directory.CreateDirectory(media);
+            SafeFileSystem.EnsureWorkspaceDirectory(media);
             foreach (string folder in new[] { root, media })
             {
                 string probe = Path.Combine(folder, ".write-" + Guid.NewGuid().ToString("N"));
@@ -164,22 +164,43 @@ public static class AppPaths
 
             // Only expose a complete copy to subsequent starts.
             File.WriteAllText(Path.Combine(stage, ".migrated"), "1");
-            Directory.Move(stage, target);
+            PublishStagedVault(stage, target);
             return true;
         }
         finally
         {
             // Only our unpublished staging directory is removed, never the source or target.
-            if (Directory.Exists(stage) && SafeFileSystem.IsPlainPath(stage))
+            if (Directory.Exists(stage) && SafeFileSystem.IsPlainWorkspacePath(stage))
             {
                 try
                 {
-                    foreach (string file in SafeFileSystem.EnumerateFiles(stage, true, out _)) File.Delete(file);
+                    foreach (string file in SafeFileSystem.EnumerateFiles(stage, true, out _, workspace: true)) File.Delete(file);
                     string media = Path.Combine(stage, "MediaVault");
-                    if (Directory.Exists(media) && SafeFileSystem.IsPlainPath(media)) Directory.Delete(media, false);
+                    if (Directory.Exists(media) && SafeFileSystem.IsPlainWorkspacePath(media)) Directory.Delete(media, false);
                     Directory.Delete(stage, false);
                 }
                 catch (Exception ex) { AppLog.Warn("迁移暂存目录清理失败: " + ex.GetType().Name); }
+            }
+        }
+    }
+
+    internal static void PublishStagedVault(string stage, string target)
+    {
+        // Windows can deny a parent directory rename while a reader briefly holds
+        // a copied file without delete sharing. Reuse the completed copy in place.
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                Directory.Move(stage, target);
+                return;
+            }
+            catch (Exception ex) when (attempt < 5 && ex is IOException or UnauthorizedAccessException
+                && (ex.HResult & 0xffff) is 5 or 32 or 33
+                && !Directory.Exists(target) && !File.Exists(target)
+                && SafeFileSystem.IsPlainWorkspacePath(stage))
+            {
+                Thread.Sleep(25 << attempt); // At most 775 ms across all retries.
             }
         }
     }
@@ -220,7 +241,7 @@ public static class AppPaths
 
     private static void SweepDecoyDownloads(string root)
     {
-        if (!Directory.Exists(root) || !SafeFileSystem.IsPlainPath(root)) return;
+        if (!Directory.Exists(root) || !SafeFileSystem.IsPlainWorkspacePath(root)) return;
         try
         {
             foreach (string directory in Directory.EnumerateDirectories(root, "session-*"))
@@ -241,12 +262,12 @@ public static class AppPaths
     {
         try
         {
-            if (!Directory.Exists(dir) || !SafeFileSystem.IsPlainPath(dir)) return;
-            foreach (string file in SafeFileSystem.EnumerateFiles(dir, false, out _))
+            if (!Directory.Exists(dir) || !SafeFileSystem.IsPlainWorkspacePath(dir)) return;
+            foreach (string file in SafeFileSystem.EnumerateFiles(dir, false, out _, workspace: true))
             {
                 try
                 {
-                    SafeFileSystem.DeleteReadOnlyFile(file);
+                    SafeFileSystem.DeleteReadOnlyFile(file, workspace: true);
                 }
                 catch (Exception ex) { AppLog.Warn("临时下载尚未移除：" + ex.GetType().Name); }
             }
@@ -266,7 +287,7 @@ public static class AppPaths
         string root = DataRoot;
         try
         {
-            Directory.CreateDirectory(root);
+            SafeFileSystem.EnsureWorkspaceDirectory(root);
             Hide(root);
         }
         catch

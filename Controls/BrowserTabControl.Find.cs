@@ -86,6 +86,13 @@ public sealed partial class BrowserTabControl
 
     private void MoreActionsFlyout_Closed(object sender, object args)
     {
+        if (_edgeDocumentAfterMenuClose is { } document)
+        {
+            _edgeDocumentAfterMenuClose = null;
+            // The dialog and the menu have separate native popups. Let the menu
+            // finish releasing its input surface before presenting the handoff.
+            DispatcherQueue.TryEnqueue(() => { _ = OpenInEdgeAsync(document); });
+        }
         if (_historyAfterMenuClose && !_isDisposed)
         {
             _historyAfterMenuClose = false;

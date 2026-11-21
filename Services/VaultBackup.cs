@@ -76,7 +76,7 @@ public partial class VaultService
                     cancellationToken.ThrowIfCancellationRequested();
                     if (!IsCurrentUnlockSession(epoch, decoy: false)) throw new OperationCanceledException("保险箱会话已改变，备份已取消。");
                     string path = Path.Combine(_mediaFolder, item.StoredFileName);
-                    if (!SafeFileSystem.IsPlainPath(path)) throw new InvalidDataException("保险箱媒体不可安全读取。");
+                    if (!SafeFileSystem.IsPlainWorkspacePath(path)) throw new InvalidDataException("保险箱媒体不可安全读取。");
                     pinned.Add((item, new FileStream(path, FileMode.Open,
                         FileAccess.Read, FileShare.Read, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan)));
                 }
@@ -155,7 +155,7 @@ public partial class VaultService
             foreach (string existing in Directory.EnumerateFileSystemEntries(_mediaFolder))
             {
                 string name = Path.GetFileName(existing);
-                if (!media.TryGetValue(name, out var entry) || !SafeFileSystem.IsPlainPath(existing) || Directory.Exists(existing))
+                if (!media.TryGetValue(name, out var entry) || !SafeFileSystem.IsPlainWorkspacePath(existing) || Directory.Exists(existing))
                     throw new InvalidOperationException("媒体目录含有本备份之外的内容，恢复已停止。请保留原件并检查目录。");
                 var held = new FileStream(existing, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, true);
                 if (!matching.TryAdd(name, held))
