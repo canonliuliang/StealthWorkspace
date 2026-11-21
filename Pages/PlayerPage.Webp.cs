@@ -37,12 +37,11 @@ public sealed partial class PlayerPage
                     index = 0;
                 }
                 frame = await decoder.GetFrameAsync(index).AsTask(token);
-                using var pixels = await frame.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied,
+                var pixels = await frame.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied,
                     transform, ExifOrientationMode.RespectExifOrientation, ColorManagementMode.ColorManageToSRgb).AsTask(token);
-                var next = new SoftwareBitmapSource();
+                var next = await VaultImageDecoder.CreateSourceAsync(pixels, token);
                 try
                 {
-                    await next.SetBitmapAsync(pixels).AsTask(token);
                     if (token.IsCancellationRequested || version != _loadVersion || _cleanedUp || !VaultService.Instance.IsUnlocked) return;
                     var previous = ImageViewer.Source as IDisposable;
                     ImageViewer.Source = next;

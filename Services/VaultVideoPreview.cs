@@ -37,16 +37,6 @@ internal static class VaultVideoPreview
                 .AsTask(token);
             return (bitmap, session.NaturalDuration);
         }, token);
-        using (pixels)
-        {
-            token.ThrowIfCancellationRequested();
-            var source = new SoftwareBitmapSource();
-            try
-            {
-                await source.SetBitmapAsync(pixels).AsTask(token);
-                return (source, duration);
-            }
-            catch { source.Dispose(); throw; }
-        }
+        return (await VaultImageDecoder.CreateSourceAsync(pixels, token), duration);
     }
 }

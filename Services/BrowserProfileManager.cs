@@ -528,6 +528,7 @@ public static partial class BrowserProfileManager
                     _sharedUserDataDirectory = null;
                     _environmentWorkspace = null;
                     _entryCleanup = null;
+                    _entryBrowserProcess = 0;
                     _ownerDispatcher = null;
                     _profileOwnerLease?.Dispose();
                     _profileOwnerLease = null;

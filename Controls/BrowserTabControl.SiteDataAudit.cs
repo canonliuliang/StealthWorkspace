@@ -12,6 +12,9 @@ public sealed partial class BrowserTabControl
         await using var neighbor = new BrowserHttpFixture();
         await NavigateAuditAsync(site.Address + "/page");
         var core = _hookedCore ?? throw new InvalidOperationException("Site data fixture requires WebView2");
+        if (core.Profile.PreferredTrackingPreventionLevel != CoreWebView2TrackingPreventionLevel.Balanced)
+            throw new InvalidOperationException("The active browser profile did not apply balanced tracking prevention");
+        SmokeTest.Report("site data: active WebView2 profile reports balanced tracking prevention");
         if (!SameDownloadUrl(site.Address + "/file[2].zip#section", site.Address + "/file%5B2%5D.zip") ||
             SameDownloadUrl(site.Address + "/one%2Ftwo", site.Address + "/one/two") ||
             SameDownloadUrl(site.Address + "/?x=a%26b", site.Address + "/?x=a&b"))

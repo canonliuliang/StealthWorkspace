@@ -1029,6 +1029,14 @@ public sealed partial class BrowserTabControl : UserControl
         _isBrowserFullScreen = false;
         if (browserExited)
         {
+            // The tab object survives until the user retries or closes it.
+            // The native controller does not. Counting a dead controller can
+            // skip the live controller handoff when several tabs shared it.
+            if (_environmentAcquired)
+            {
+                _environmentAcquired = false;
+                BrowserProfileManager.ReleaseEnvironmentUse();
+            }
             // These native operations cannot resume after their browser process
             // has gone. Release hidden download owners and show a terminal state.
             foreach (var download in _activeDownloads.ToArray())

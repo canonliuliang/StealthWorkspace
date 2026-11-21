@@ -9,9 +9,12 @@ public static partial class BrowserProfileManager
 {
     internal const CoreWebView2BrowsingDataKinds SessionHistoryKinds =
         CoreWebView2BrowsingDataKinds.BrowsingHistory | CoreWebView2BrowsingDataKinds.DownloadHistory | CoreWebView2BrowsingDataKinds.DiskCache;
+    private const CoreWebView2BrowsingDataKinds VisitAndDownloadHistory =
+        CoreWebView2BrowsingDataKinds.BrowsingHistory | CoreWebView2BrowsingDataKinds.DownloadHistory;
     private static SettingsService.BookmarkSession? _environmentWorkspace;
     private static DispatcherQueue? _ownerDispatcher;
     private static Task? _entryCleanup;
+    private static uint _entryBrowserProcess;
     private static readonly ConcurrentDictionary<string, Task<bool>> PendingAccountCleanup = new(StringComparer.OrdinalIgnoreCase);
     internal static bool LastPersonalHistoryCleanupSucceeded { get; private set; } = true;
 
@@ -30,13 +33,19 @@ public static partial class BrowserProfileManager
         core.Profile.PreferredTrackingPreventionLevel = CoreWebView2TrackingPreventionLevel.Balanced;
         if (!session!.Temporary)
         {
-            // Crash recovery and ordinary startup share one operation per environment;
-            // every tab waits for it before submitting the first navigation.
+            // An environment can outlive its crashed browser process. Each new
+            // native writer must finish recovery before any tab navigates.
+            uint process = core.BrowserProcessId;
+            if (process != _entryBrowserProcess)
+            {
+                _entryBrowserProcess = process;
+                _entryCleanup = null;
+            }
             var cleanup = _entryCleanup ??= core.Profile.ClearBrowsingDataAsync(SessionHistoryKinds).AsTask();
             try { await cleanup; }
             catch { if (ReferenceEquals(_entryCleanup, cleanup)) _entryCleanup = null; throw; }
             RequireCurrentWorkspace(session);
-            if (_sessionEnding != null || !ReferenceEquals(_sharedEnvironment, environment) || !ReferenceEquals(session, _environmentWorkspace))
+            if (_sessionEnding != null || process != _entryBrowserProcess || !ReferenceEquals(_sharedEnvironment, environment) || !ReferenceEquals(session, _environmentWorkspace))
                 throw new OperationCanceledException("浏览空间正在关闭。");
             LastPersonalHistoryCleanupSucceeded = true;
         }
@@ -65,6 +74,7 @@ public static partial class BrowserProfileManager
             (_sessionEnding == null && ReferenceEquals(SettingsService.Instance.ActiveBookmarkSession, workspace) && VaultService.Instance.IsUnlocked))
             return;
         try { core.Stop(); core.IsMuted = true; } catch { }
+        if (SmokeTest.Enabled) SmokeTest.Report("history cleanup: handing off last live browser tab");
         var finalizer = _preparedFinalizer ??= new HistoryFinalizer(environment);
         try { await finalizer.ControllerReady.Task.WaitAsync(TimeSpan.FromSeconds(2)); }
         catch (TimeoutException) { AppLog.Warn("浏览内核正在交接清理操作，已继续释放网页。"); }
@@ -143,7 +153,13 @@ public static partial class BrowserProfileManager
                 if (SmokeTest.Enabled) SmokeTest.Report("history cleanup: maintenance controller ready");
                 await finalizer.UserTabsClosed.Task;
                 token.ThrowIfCancellationRequested();
-                var clear = maintenance.CoreWebView2.Profile.ClearBrowsingDataAsync(SessionHistoryKinds);
+                var profile = maintenance.CoreWebView2.Profile;
+                var clear = profile.ClearBrowsingDataAsync(VisitAndDownloadHistory);
+                nativeWork = clear;
+                await clear;
+                if (SmokeTest.Enabled) SmokeTest.Report("history cleanup: native visit and download records cleared");
+                token.ThrowIfCancellationRequested();
+                clear = profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache);
                 nativeWork = clear;
                 await clear;
                 cleared = true;
