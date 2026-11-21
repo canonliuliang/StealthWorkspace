@@ -147,6 +147,25 @@ public sealed partial class BrowserTabControl
         }
     }
 
+    internal async Task CheckWebDownloadShortcutAuditAsync()
+    {
+        var core = _hookedCore ?? throw new InvalidOperationException("Missing focused document for Ctrl+J");
+        var flyout = EnsureDownloadsFlyout();
+        if (flyout.IsOpen || _browserControl?.Focus(Microsoft.UI.Xaml.FocusState.Keyboard) != true)
+            throw new InvalidOperationException("Could not focus the webpage before Ctrl+J");
+        for (int i = 0; i < 40 && await core.ExecuteScriptAsync("document.hasFocus()") != "true"; i++) await Task.Delay(25);
+        if (await core.ExecuteScriptAsync("document.hasFocus()") != "true" || !Services.BrowserZoomInput.SendDownloadsForAudit(MainWindow.CurrentHandle))
+            throw new InvalidOperationException("Could not send Ctrl+J while the document had keyboard focus");
+        try
+        {
+            for (int i = 0; i < 80 && !flyout.IsOpen; i++) await Task.Delay(25);
+            if (!flyout.IsOpen || core.IsDefaultDownloadDialogOpen || flyout.Content is not DownloadListControl)
+                throw new InvalidOperationException("Webpage Ctrl+J failed to show only the workspace downloads");
+            Services.SmokeTest.Report("download flyout: native Ctrl+J on the focused webpage opened only the workspace download list");
+        }
+        finally { flyout.Hide(); }
+    }
+
     internal async Task<CoreWebView2DownloadOperation> BeginDownloadAuditAsync(string address)
     {
         var core = _hookedCore ?? throw new InvalidOperationException("Audit core missing");

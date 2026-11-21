@@ -243,6 +243,7 @@ public sealed partial class BrowserPage
         byte[] bytes = await File.ReadAllBytesAsync(path);
         AuditRequire(bytes.Length == 4194304 && bytes.All(b => b == 0x5A), "closed-tab download completes with exact content and releases controller");
         await blank.NavigateAuditAsync(fixture.Address + "/page");
+        await blank.CheckWebDownloadShortcutAuditAsync();
         var first = await blank.BeginDownloadAuditAsync(fixture.Address + "/download-slow?first");
         var survivor = await blank.BeginDownloadAuditAsync(fixture.Address + "/download-slow?second");
         var cancelled = BrowserDownloads.Items.Single(entry => entry.FilePath == first.ResultFilePath);

@@ -935,6 +935,7 @@ public sealed partial class BrowserTabControl : UserControl
             core.IsDocumentPlayingAudioChanged += CoreWebView2_IsDocumentPlayingAudioChanged;
             _downloadStartingHandler = (_, args) => CoreWebView2_DownloadStarting(core, args);
             core.DownloadStarting += _downloadStartingHandler;
+            core.IsDefaultDownloadDialogOpenChanged += OnEngineDownloadDialogChanged;
             core.ContainsFullScreenElementChanged += CoreWebView2_ContainsFullScreenElementChanged;
             core.NewWindowRequested += CoreWebView2_NewWindowRequested;
             core.ContextMenuRequested += CoreWebView2_ContextMenuRequested;
@@ -976,6 +977,7 @@ public sealed partial class BrowserTabControl : UserControl
             core.IsDocumentPlayingAudioChanged -= CoreWebView2_IsDocumentPlayingAudioChanged;
             if (_downloadStartingHandler != null) core.DownloadStarting -= _downloadStartingHandler;
             _downloadStartingHandler = null;
+            core.IsDefaultDownloadDialogOpenChanged -= OnEngineDownloadDialogChanged;
             core.ContainsFullScreenElementChanged -= CoreWebView2_ContainsFullScreenElementChanged;
             core.NewWindowRequested -= CoreWebView2_NewWindowRequested;
             core.ContextMenuRequested -= CoreWebView2_ContextMenuRequested;
@@ -1606,6 +1608,15 @@ public sealed partial class BrowserTabControl : UserControl
     }
 
     internal void OpenDownloadsFromShortcut() => ShowDownloads_Click(this, new RoutedEventArgs());
+
+    private void OnEngineDownloadDialogChanged(CoreWebView2 sender, object args)
+    {
+        // A focused WebView can consume Ctrl+J in its own download UI before XAML sees the key.
+        if (!sender.IsDefaultDownloadDialogOpen) return;
+        sender.CloseDefaultDownloadDialog();
+        if (IsLoaded && IsForegroundTab && MainWindow.Current?.IsPrivacyCoverVisible == false)
+            OpenDownloadsFromShortcut();
+    }
 
     #endregion
 
