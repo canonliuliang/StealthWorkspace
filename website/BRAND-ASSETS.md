@@ -4,6 +4,8 @@ The Stealth website is a buildless static site hosted with the project's existin
 
 ## Stealth identity and screenshots
 
+- `assets/r161-favorites-sidebar.png` is a 2174 × 1466 capture from `artifacts/favorites-panel/wide/bookmark-bar.png`. It shows the new tab page and the open favorites pane with a folder of synthetic links.
+
 - `assets/r161-daily.png` is a 2138 × 1477 capture of the R16.1 second preview. It shows the running Windows app, its new-tab page and a bookmark bar populated with synthetic links.
 
 - `assets/r161-bookmarks.png` is a 2178 × 1469 WinApp CLI capture of the r16.1 window after importing a synthetic HTML file through the native file picker. The settings page reports two added bookmarks, one duplicate and one unsupported URL.
@@ -25,5 +27,5 @@ Third-party marks are secondary to the Stealth brand. No affiliation or endorsem
 
 ## Release and claims
 
-Both architecture links target the versioned x64 and ARM64 archives in `v2026.11.21-r16.1-preview.2.1`. The Pages workflow checks for both ZIPs and the checksum manifest before deploying the download page.
+Both architecture links target the versioned x64 and ARM64 archives in `v2026.11.21-r16.1-preview.2.2`. The Pages workflow checks for both ZIPs and the checksum manifest before deploying the download page.
 r161-site-storage.png 是 r16.1 的真实 WinUI 站点面板，来自隔离的本机测试来源。

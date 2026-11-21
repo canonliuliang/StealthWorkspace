@@ -12,7 +12,7 @@ Stealth 是 Windows 桌面应用，当前提供预览版本。建议使用 Windo
 
 便携版建议解压到简短、固定且可写的目录，例如用户目录下的 `Stealth`。旧版在 Windows 未启用长路径支持时，放在多层目录中的 `WorkspaceData` 可能无法完成部分清理或重置。已有保险箱请先在设置中创建并验证加密备份，保留原目录，确认能打开并导出样本文件后再处理旧副本。[旧版路径复测](VALIDATION.md)
 
-当前版本为 `2026.11.21-r16.1-preview.2.1`。便携包使用手动更新，WebView2 Evergreen 运行时由 Microsoft 独立维护。[下载 R16.1 维护版和 SHA-256 清单](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview.2.1)
+当前版本为 `2026.11.21-r16.1-preview.2.2`。便携包使用手动更新，WebView2 Evergreen 运行时由 Microsoft 独立维护。[下载 R16.1 维护版和 SHA-256 清单](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview.2.2)
 
 当前预览包未使用受信任发布者证书签名，Windows 可能显示 SmartScreen 提示。校验值只能检查下载内容是否一致，不能代替发布者签名。由使用者判断是否信任；不要关闭系统保护。参见 [Microsoft 应用声誉说明](https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation)。
 
@@ -37,7 +37,9 @@ Stealth 是 Windows 桌面应用，当前提供预览版本。建议使用 Windo
 
 同一个 Windows 用户继续使用原位置的同一保险箱时，R16.1 第二次预览会沿用自己保存的网站登录。换电脑、还原备份，或把便携保险箱移到另一个目录后，可能需要重新登录网站。第一次从旧预览升级时，旧版已经清除的登录也需要重新建立一次。
 
-从其他浏览器迁入收藏时，先在原浏览器将书签导出为 HTML。公开的维护预览版从主空间首页导入。使用新版右侧收藏夹时，点网页右边缘的收藏夹图标，在栏顶的「… → 从 Chrome 导入」选择 HTML 文件。空收藏夹也会直接显示导入按钮。支持最多 32 MiB 的单个文件和 HTTP(S) 网页地址。收藏栏会保留文件夹层级，同一文件夹内的相同网址只添加一次。导出 HTML 可用于转移收藏，不能用于恢复保险箱。
+从其他浏览器迁入收藏时，先在原浏览器将书签导出为 HTML。在 Stealth 的主空间点击网页右缘的「展开收藏夹」，选择栏顶「… → 从 Chrome 导入…」。空收藏夹也提供导入按钮。支持 32 MiB 以内的 HTML 和 HTTP(S) 地址。文件夹层级会保留，同一文件夹内的相同网址只添加一次。
+
+在收藏夹内选择子文件夹可查看其中的链接。搜索框可跨文件夹查找，右击条目可编辑或移动。需要导出时，在栏顶「… → 导出为 HTML…」中选择位置。导出的明文含网页标题和网址，保险箱数据仍需单独备份。
 
 希望沿用桌面图标、原保险箱和本机网站登录时，请使用原来的安装位置。
 
