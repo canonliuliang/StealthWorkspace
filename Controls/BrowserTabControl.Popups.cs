@@ -12,16 +12,47 @@ public sealed partial class BrowserTabControl
     private readonly List<string> _blockedPopupUrls = new();
     private int _blockedPopupCount;
     private bool _popupPending;
-    private long _backgroundClickAt;
+    private bool? _pointerPopupInBackground;
+    private ulong _popupPointerSequence;
 
     private static bool IsKeyPressed(VirtualKey key) => Microsoft.UI.Input.InputKeyboardSource
         .GetKeyStateForCurrentThread(key).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
 
     private void BrowserPointerPressed(object sender, PointerRoutedEventArgs args)
     {
+        _popupPointerSequence++;
         var properties = args.GetCurrentPoint(_browserControl).Properties;
-        _backgroundClickAt = !IsKeyPressed(VirtualKey.Shift) && (properties.IsMiddleButtonPressed || IsKeyPressed(VirtualKey.Control))
-            ? Environment.TickCount64 : 0;
+        _pointerPopupInBackground = !args.KeyModifiers.HasFlag(VirtualKeyModifiers.Shift) &&
+            (properties.IsMiddleButtonPressed || args.KeyModifiers.HasFlag(VirtualKeyModifiers.Control));
+    }
+
+    private async void BrowserPointerReleased(object sender, PointerRoutedEventArgs args)
+    {
+        if (_pointerPopupInBackground != true || _hookedCore is not { } core) return;
+        ulong sequence = _popupPointerSequence;
+        using var keyboard = new PopupGestureKeyboard(MainWindow.CurrentHandle, () =>
+        {
+            if (_popupPointerSequence == sequence) _pointerPopupInBackground = null;
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            // Let WinUI finish forwarding the release. A synchronous no-op may
+            // run before the link action even if the C# release handler ran first.
+            await Task.Yield();
+            if (_pointerPopupInBackground != true || sequence != _popupPointerSequence || _hookedCore != core) return;
+            const string afterFrame = """{"expression":"new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)))","awaitPromise":true,"userGesture":false,"silent":true,"returnByValue":true}""";
+            await core.CallDevToolsProtocolMethodAsync("Runtime.evaluate", afterFrame).AsTask(timeout.Token).WaitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (!_isDisposed && _hookedCore == core) AppLog.Warn("Pointer release acknowledgement failed: " + ex.GetType().Name);
+        }
+        finally
+        {
+            if (_popupPointerSequence == sequence) _pointerPopupInBackground = null;
+        }
     }
 
     private string? PopupOrigin => Uri.TryCreate(CurrentUrl, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https"
@@ -33,9 +64,18 @@ public sealed partial class BrowserTabControl
     private void CoreWebView2_NewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs args)
     {
         args.Handled = true;
-        if (_isDisposed || PopupRequested == null || !IsSupportedPopup(args.Uri)) return;
-        string? frameAddress = null;
+        if (_isDisposed || PopupRequested == null) return;
         bool userInitiated = args.IsUserInitiated;
+        bool background = false;
+        if (userInitiated)
+        {
+            // WebView2 supplies no tab disposition. Preserve the flags from the
+            // original press even if the renderer or the user takes time to release.
+            background = _pointerPopupInBackground ?? (IsKeyPressed(VirtualKey.Control) && !IsKeyPressed(VirtualKey.Shift));
+            _pointerPopupInBackground = null;
+        }
+        if (!IsSupportedPopup(args.Uri)) return;
+        string? frameAddress = null;
         if (!userInitiated && _tabPermissions.AutomaticPopupsAllowed)
         {
             // Source is the requesting frame's URL at the moment of the request.
@@ -56,9 +96,6 @@ public sealed partial class BrowserTabControl
         // windows and window.close. Navigating a copied URL loses that context.
         var deferral = args.GetDeferral();
         _popupPending = true;
-        bool background = userInitiated && !IsKeyPressed(VirtualKey.Shift) &&
-            (IsKeyPressed(VirtualKey.Control) || (_backgroundClickAt != 0 && Environment.TickCount64 - _backgroundClickAt < 750));
-        _backgroundClickAt = 0;
         if (!DispatcherQueue.TryEnqueue(async () =>
         {
             BrowserTabControl? child = null;

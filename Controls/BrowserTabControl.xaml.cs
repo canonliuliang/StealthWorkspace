@@ -246,6 +246,7 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void UpdateBrowserVisibility()
     {
+        if (!IsForegroundTab) _pointerPopupInBackground = null;
         // TabView unloading and window minimisation do not always propagate native
         // WebView visibility. TrySuspend requires an actually hidden controller.
         if (_browserControl is { } browser)
@@ -523,6 +524,7 @@ public sealed partial class BrowserTabControl : UserControl
                     browser.NavigationStarting -= BrowserControl_NavigationStarting;
                     browser.NavigationCompleted -= BrowserControl_NavigationCompleted;
                     browser.RemoveHandler(PointerPressedEvent, new PointerEventHandler(BrowserPointerPressed));
+                    browser.RemoveHandler(PointerReleasedEvent, new PointerEventHandler(BrowserPointerReleased));
                     if (_isInitialized || browser.CoreWebView2 != null) browser.Close();
                     BrowserHost.Children.Remove(browser);
                     _browserControl = null;
@@ -658,6 +660,7 @@ public sealed partial class BrowserTabControl : UserControl
                 failedBrowser.NavigationStarting -= BrowserControl_NavigationStarting;
                 failedBrowser.NavigationCompleted -= BrowserControl_NavigationCompleted;
                 failedBrowser.RemoveHandler(PointerPressedEvent, new PointerEventHandler(BrowserPointerPressed));
+                failedBrowser.RemoveHandler(PointerReleasedEvent, new PointerEventHandler(BrowserPointerReleased));
                 try { failedBrowser.Close(); } catch { }
                 BrowserHost.Children.Remove(failedBrowser);
                 _browserControl = null;
@@ -762,6 +765,7 @@ public sealed partial class BrowserTabControl : UserControl
         browser.NavigationCompleted += BrowserControl_NavigationCompleted;
         BrowserHost.Children.Add(browser);
         browser.AddHandler(PointerPressedEvent, new PointerEventHandler(BrowserPointerPressed), true);
+        browser.AddHandler(PointerReleasedEvent, new PointerEventHandler(BrowserPointerReleased), true);
         return _browserControl = browser;
     }
 
@@ -1648,6 +1652,7 @@ public sealed partial class BrowserTabControl : UserControl
 
     private void BrowserTabControl_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
     {
+        _pointerPopupInBackground = null;
         if (_isDisposed) return;
         if (_nativeFindDispatching && (e.Key is VirtualKey.F or VirtualKey.F3)) return;
 
@@ -2634,6 +2639,7 @@ public sealed partial class BrowserTabControl : UserControl
     private void BrowserControl_NavigationStarting(WebView2 sender, CoreWebView2NavigationStartingEventArgs args)
     {
         if (_isDisposed) return;
+        _pointerPopupInBackground = null;
         _imageDocumentId = args.NavigationId;
         _contextImageDocument = _contextImageSource = _readerTicket = null;
         CancelResponseProbe();
