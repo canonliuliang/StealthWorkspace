@@ -249,11 +249,12 @@ internal static class ImageExperienceAcceptance
     private static async Task CheckAnimationsAsync(string root, VaultPage gallery, Action<VaultItem> open, Func<PlayerPage?> current)
     {
         // Synthetic 8x8 GIF; 12x12 WebP with partial blue and transparent frames,
-        // durations 120/230/340 ms and a finite loop count of two.
+        // Dwell for 900/1200/1500 ms so a native screenshot can sample every
+        // composited frame on a busy machine. The file requests exactly two loops.
         foreach (var (name, data) in new[]
         {
             ("motion.gif", "R0lGODlhCAAIAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQAMAAAACwAAAAACAAIAAAIDwABCBxIsKDBgwgTKkwYEAAh+QQBMAABACwAAAAACAAIAIEAAP8AAAAAAAAAAAAIDwABCBxIsKDBgwgTKkwYEAA7"),
-            ("motion.webp", "UklGRrwAAABXRUJQVlA4WAoAAAASAAAACwAACwAAQU5JTQYAAAAAAAAAAgBBTk1GKAAAAAAAAAAAAAsAAAsAAHgAAAJWUDhMDwAAAC8LwAIABxD9j/4HIqL/AQBBTk1GKAAAAAIAAAIAAAIAAAIAAOYAAABWUDhMDwAAAC8CgAAABxDR//4HIqL/AQBBTk1GMAAAAAAAAAAAAAYAAAYAAFQBAAJWUDhMFwAAAC8GgAEQDxDzH/MfDIUAAqBIvInof8D/AA==")
+            ("motion.webp", "UklGRrwAAABXRUJQVlA4WAoAAAASAAAACwAACwAAQU5JTQYAAAAAAAAAAgBBTk1GKAAAAAAAAAAAAAsAAAsAAIQDAAJWUDhMDwAAAC8LwAIABxD9j/4HIqL/AQBBTk1GKAAAAAIAAAIAAAIAAAIAALAEAABWUDhMDwAAAC8CgAAABxDR//4HIqL/AQBBTk1GMAAAAAAAAAAAAAYAAAYAANwFAAJWUDhMFwAAAC8GgAEQDxDzH/MfDIUAAqBIvInof8D/AA==")
         })
         {
             string path = Path.Combine(root, name);
@@ -279,13 +280,20 @@ internal static class ImageExperienceAcceptance
     private static async Task CheckWebpPixelsAsync(Image view, PlayerPage page)
     {
         var observed = new List<int>();
+        var observedAt = new List<long>();
         var clock = Stopwatch.StartNew();
-        TimeSpan lastChange = TimeSpan.Zero;
-        while (clock.Elapsed < TimeSpan.FromSeconds(6))
+        var settled = TimeSpan.FromMilliseconds(2500);
+        TimeSpan lastChange = TimeSpan.Zero, lastSample = TimeSpan.Zero, largestGap = TimeSpan.Zero;
+        int lastFrame = 0;
+        while (clock.Elapsed < TimeSpan.FromSeconds(18))
         {
             var capture = new RenderTargetBitmap();
             await capture.RenderAsync(view, 24, 24);
             byte[] pixels = (await capture.GetPixelsAsync()).ToArray();
+            var elapsed = clock.Elapsed;
+            if (elapsed - lastSample > largestGap) largestGap = elapsed - lastSample;
+            lastSample = elapsed;
+            lastFrame = 0;
             if (capture.PixelWidth > 0 && capture.PixelHeight > 0 && pixels.Length == capture.PixelWidth * capture.PixelHeight * 4)
             {
                 int Offset(double position) => 4 * ((int)(position * capture.PixelHeight) * capture.PixelWidth + (int)(position * capture.PixelWidth));
@@ -295,18 +303,21 @@ internal static class ImageExperienceAcceptance
                 if (pixels[reference + 2] > 96 && pixels[reference + 2] > pixels[reference] * 2)
                 {
                     int frame = pixels[center] > pixels[center + 2] ? 2 : pixels[corner + 3] < pixels[reference + 3] / 2 ? 3 : 1;
+                    lastFrame = frame;
                     if (observed.Count == 0 || observed[^1] != frame)
                     {
                         observed.Add(frame);
-                        lastChange = clock.Elapsed;
+                        observedAt.Add((long)elapsed.TotalMilliseconds);
+                        lastChange = elapsed;
                     }
                 }
             }
-            if (observed.Count >= 6 && clock.Elapsed - lastChange >= TimeSpan.FromMilliseconds(850)) break;
+            if (observed.Count >= 6 && lastFrame == 3 && elapsed - lastChange >= settled) break;
             await Task.Delay(15);
         }
         SmokeTest.Report("animated WebP rendered pixel sequence: " + string.Join(",", observed));
-        Require(observed.SequenceEqual(new[] { 1, 2, 3, 1, 2, 3 }) && clock.Elapsed - lastChange >= TimeSpan.FromMilliseconds(850) &&
+        SmokeTest.Report($"animated WebP observed at ms: {string.Join(",", observedAt)}; largest sample gap={(long)largestGap.TotalMilliseconds}; final frame held={(long)(lastSample - lastChange).TotalMilliseconds}");
+        Require(observed.SequenceEqual(new[] { 1, 2, 3, 1, 2, 3 }) && lastFrame == 3 && lastSample - lastChange >= settled &&
             page.MediaError == null, "encrypted WebP displays all three frames twice and stops");
     }
 
