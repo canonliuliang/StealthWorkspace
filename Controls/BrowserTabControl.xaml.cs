@@ -1802,7 +1802,11 @@ public sealed partial class BrowserTabControl : UserControl
         PrivacyPanels.Children[_privacySectionIndex].Visibility = Visibility.Collapsed;
         _privacySectionIndex = index;
         UiMotion.SetVisible((FrameworkElement)PrivacyPanels.Children[index], true, fromRight ? MotionCue.FromRight : MotionCue.FromLeft);
-        if (selection == CookiesSection) _ = RefreshCookiesAsync();
+        if (selection == CookiesSection)
+        {
+            UpdateAccountActionAvailability();
+            _ = RefreshCookiesAsync();
+        }
         else ClearCookieRows();
         SetHistorySearchActive(selection == HistorySection && PrivacyFlyout.IsOpen);
     }
@@ -1830,8 +1834,7 @@ public sealed partial class BrowserTabControl : UserControl
         CurrentSiteScope.IsEnabled = _tabPermissions.Origin != null;
         ClearSiteStorageBtn.IsEnabled = CurrentSiteScope.IsEnabled;
         ReloadSiteFilesBtn.IsEnabled = CurrentSiteScope.IsEnabled;
-        ForgetSiteButton.IsEnabled = CurrentSiteScope.IsEnabled && _hookedCore != null;
-        ClearAllAccountsBtn.IsEnabled = !_isDisposed && _workspace != null && !_isInitializing;
+        UpdateAccountActionAvailability();
         AccountModeDescription.Text = PrivacyModeExplanation;
         DefaultProtectionText.Text = _workspace?.Temporary == true ? "临时空间 · 退出后清除登录和记录" : "主空间 · 退出后清记录，保留登录";
         PermissionScope.SelectedIndex = CurrentSiteScope.IsEnabled ? 0 : 1;
@@ -2241,9 +2244,10 @@ public sealed partial class BrowserTabControl : UserControl
         UpdateAudioIcon();
         bool start = StartSurface.Visibility == Visibility.Visible;
         bool webPage = !start && _documentReady && _hookedCore != null;
-        PageActionsGroup.Visibility = webPage ? Visibility.Visible : Visibility.Collapsed;
+        PageActionsHint.Visibility = webPage ? Visibility.Collapsed : Visibility.Visible;
+        FindMenuButton.IsEnabled = PageImagesBtn.IsEnabled = HardReloadMenuButton.IsEnabled = AudioMuteBtn.IsEnabled = webPage;
         bool transferable = webPage && TryCreateWebUri(_hookedCore!.Source, out var page) && string.IsNullOrEmpty(page?.UserInfo);
-        OpenInEdgeBtn.IsEnabled = transferable;
+        OpenInEdgeBtn.IsEnabled = BrowserDownloadPath.IsCurrentWorkspace(_workspace);
         CopyCleanLinkBtn.IsEnabled = transferable;
         foreach (var button in ZoomMenuRow.Children.OfType<Button>()) button.IsEnabled = start || _hookedCore != null;
         ZoomMenuLabel.Text = start ? "首页缩放" : "网页缩放";

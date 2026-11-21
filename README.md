@@ -14,7 +14,7 @@
 
 [日常浏览验收与性能测量](docs/R161-DAILY-BROWSING.md) · [网站数据和隐私边界](docs/PRIVACY.md)
 
-本次维护更新针对把便携保险箱放在多层目录中的 Windows 用户，改进了长路径下的保险箱重置、媒体批量移除和临时下载目录释放。可在原安装位置覆盖更新。[前一份 R16.1 下载及发行记录](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview.2)
+本次维护更新恢复了「更多 → 在 Edge 隐私窗口打开」、标签栏的「结束会话」和盾牌中的两种仅清 Cookie 操作。普通权限下可一键交给 Edge；受限权限下可按提示打开 InPrivate 并复制当前网址。地址栏与顶部的隐私入口使用同一款蓝青色盾牌。多层目录中的便携保险箱也有修复。可以在原安装位置覆盖更新。[前一份 R16.1 下载及发行记录](https://github.com/canonliuliang/StealthWorkspace/releases/tag/v2026.11.21-r16.1-preview.2)
 
 主空间在退出时清除本地浏览记录，保留网站允许跨重启使用的账号状态。地址栏的盾牌分别管理账号、临时文件和网站权限。Chrome 收藏 HTML 可从新标签页导入，在收藏栏直接打开嵌套文件夹中的链接。可在应用内打开下载目录、切换原目录与备用目录，或将文件复制进加密媒体库。原始下载按明文保留。
 

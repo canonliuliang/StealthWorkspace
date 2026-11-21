@@ -37,7 +37,11 @@ public sealed partial class BrowserTabControl
         if (!Environment.GetCommandLineArgs().Contains("--folder-locations-only"))
         {
             await MenuAsync();
-            if (PageActionsGroup.Visibility != Visibility.Collapsed || HasBrowserControl) throw new InvalidOperationException("New tab exposed unavailable webpage commands");
+            if (PageActionsGroup.Visibility != Visibility.Visible || PageActionsHint.Visibility != Visibility.Visible ||
+                !OpenInEdgeBtn.IsEnabled || FindMenuButton.IsEnabled || PageImagesBtn.IsEnabled || CopyCleanLinkBtn.IsEnabled ||
+                HardReloadMenuButton.IsEnabled || AudioMuteBtn.IsEnabled || HasBrowserControl)
+                throw new InvalidOperationException("New tab lost its Edge shortcut or displayed incorrect page actions");
+            if (Environment.GetCommandLineArgs().Contains("--verify-edge-inprivate")) await VerifyEdgeMenuAsync(OpenInEdgeBtn, null);
             Click(ZoomMenuPlus);
             await WaitAsync(() => StartPageScroller.ZoomFactor > 1.09 && Equals(ZoomResetBtn.Content, "110%"), "new-tab plus enlarged the native start surface");
             Click(ZoomMenuMinus);
@@ -52,7 +56,21 @@ public sealed partial class BrowserTabControl
 
             await NavigateAuditAsync(fixture.Address + "/page");
             await MenuAsync();
-            if (PageActionsGroup.Visibility != Visibility.Visible) throw new InvalidOperationException("Website commands missing");
+            if (PageActionsHint.Visibility != Visibility.Collapsed || !OpenInEdgeBtn.IsEnabled || !FindMenuButton.IsEnabled ||
+                !PageImagesBtn.IsEnabled || !HardReloadMenuButton.IsEnabled || !AudioMuteBtn.IsEnabled || !CopyCleanLinkBtn.IsEnabled)
+                throw new InvalidOperationException("Website commands missing");
+            if (Environment.GetCommandLineArgs().Contains("--verify-edge-inprivate"))
+            {
+                int beforeEdge = fixture.CountRequests("/page");
+                await VerifyEdgeMenuAsync(OpenInEdgeBtn, fixture.Address + "/page");
+                if (!CleanerAccess.IsRestricted)
+                {
+                    if (fixture.CountRequests("/page") <= beforeEdge) throw new InvalidOperationException("External Edge never fetched the test page");
+                    SmokeTest.Report("menu UI: new Edge InPrivate window requested the actual page from the HTTP server");
+                }
+                else if (fixture.CountRequests("/page") != beforeEdge)
+                    throw new InvalidOperationException("Restricted handoff sent the page without the user opening Edge");
+            }
             Click(ZoomMenuPlus);
             await WaitAsync(() => ZoomPanel.Visibility == Visibility.Visible && !Equals(ZoomPanelReset.Content, "100%"), "web plus changed the engine zoom and displayed the measured value");
             Click(ZoomPanelMinus);

@@ -1,5 +1,5 @@
 // node tools/Test-LoginRetention.mjs <app-directory> <new-output-directory> [--exercise-crash] [--exercise-clear-all] [--exercise-last-tab]
-// Use --only-clear-all or --only-last-tab for a focused regression run.
+// Use --only-clear-all, --only-last-tab or --only-cookie-controls for a focused regression run.
 // Requires Node 22.13+ with node:sqlite and the Windows desktop WebView2 runtime.
 import http from 'node:http';
 import path from 'node:path';
@@ -11,7 +11,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
 
 const [appDirectory, target, ...options] = process.argv.slice(2);
-if (options.some(option => !['--exercise-crash', '--exercise-clear-all', '--exercise-last-tab', '--only-clear-all', '--only-last-tab'].includes(option))) throw new Error('Unknown login test option.');
+if (options.some(option => !['--exercise-crash', '--exercise-clear-all', '--exercise-last-tab', '--only-clear-all', '--only-last-tab', '--only-cookie-controls'].includes(option))) throw new Error('Unknown login test option.');
 if (options.some(option => option.startsWith('--only-')) && options.length !== 1) throw new Error('Run a focused regression by itself.');
 if (!appDirectory || !target) throw new Error('Pass a built application directory and a new test output directory.');
 const executable = path.resolve(appDirectory, 'StealthWorkspace.exe');
@@ -22,7 +22,8 @@ const runId = randomUUID().replaceAll('-', '');
 const logs = [];
 function report(message) { logs.push(message); console.log(message); }
 const tags = { '127.0.0.1': 'A', localhost: 'B' };
-const testCache = options.includes('--exercise-crash');
+const testHttpCache = options.includes('--exercise-crash');
+const testCache = testHttpCache || options.includes('--only-cookie-controls');
 let assetGets = 0;
 const observations = [];
 let currentPhase;
@@ -62,10 +63,10 @@ function handler(req, res) {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.end('<!doctype html><html><meta charset=utf-8><title>Membership fixture ' + site +
     '</title><main>Local membership fixture</main><script>(' + fixturePage.toString() + ')(' +
-    [runId, site, op, match[3] ?? currentPhase, testCache].map(v => JSON.stringify(v)).join(',') + ')</script></html>');
+    [runId, site, op, match[3] ?? currentPhase, testCache, testHttpCache].map(v => JSON.stringify(v)).join(',') + ')</script></html>');
 }
 
-async function fixturePage(id, site, action, phase, checkCache) {
+async function fixturePage(id, site, action, phase, checkCache, checkHttpCache) {
   let step = 'localStorage';
   try {
     const value = id + site;
@@ -105,7 +106,7 @@ async function fixturePage(id, site, action, phase, checkCache) {
       let counts = 'none';
       // Seed runs this after its lock/unlock. Crash is the next fresh app
       // process, before the controller requests an abrupt exit.
-      if (site === 'A' && action === 'read' && (phase === 'seed' || phase === 'crash')) {
+      if (checkHttpCache && site === 'A' && action === 'read' && (phase === 'seed' || phase === 'crash')) {
         step = 'ordinary HTTP GET reuse';
         const count = async () => Number(await (await fetch('/' + id + '/asset-count', { cache: 'no-store' })).text());
         const url = '/' + id + '/asset';
@@ -277,6 +278,9 @@ async function run(phase) {
       return;
     }
     const result = await fs.readFile(evidence, 'utf8');
+    if (phase === 'forget' && (!result.includes('confirmed removing site A cookies; A signed out with stored data intact and B stayed signed in') ||
+        !result.includes('confirmed removing all cookies; both sites signed out with their stored data intact')))
+      throw new Error('The two Cookie-only controls were not validated: ' + evidence);
     await requireHistory(evidence, phase + ' after process exit');
     if (code !== 0 || signal || !result.includes('LOGIN RETENTION: OK') ||
         !result.includes('closing: vault locked=True') || !result.includes('closing: browser session cleanup completed=True') ||
@@ -289,10 +293,11 @@ async function run(phase) {
 try {
   const phases = options.includes('--only-clear-all') ? ['seed', 'clearall', 'checkall'] :
     options.includes('--only-last-tab') ? ['seed', 'lasttab', 'logout'] :
+    options.includes('--only-cookie-controls') ? ['seed', 'logout', 'forget'] :
     ['seed', ...(options.includes('--exercise-crash') ? ['crash', 'recover'] : []), ...(options.includes('--exercise-last-tab') ? ['lasttab'] : []),
     'logout', 'forget', 'decoy', 'other', 'verify', ...(options.includes('--exercise-clear-all') ? ['clearall', 'checkall'] : [])];
   for (const phase of phases) await run(phase);
-  if (testCache) {
+  if (testHttpCache) {
     const seed = observations.find(o => o.phase === 'seed' && o.site === 'A' && o.counts === '0-1-1');
     const restart = observations.find(o => o.phase === 'crash' && o.site === 'A' && o.counts === '1-2-2');
     if (!seed || !restart || seed.serverGets !== 1 || restart.serverGets !== 2 || assetGets !== 2)
@@ -306,8 +311,10 @@ try {
     report('CacheStorage offline entries survived lock and process restart; single-site removal preserved B.' +
       (options.includes('--exercise-clear-all') ? ' Both entries remained absent after all-site removal and another restart.' : ''));
   }
+  if (options.includes('--only-cookie-controls')) report('PASS both Cookie-only scopes: cancellation, server sessions, localStorage, IndexedDB and CacheStorage were checked on two origins.');
   report(options.includes('--only-clear-all') ? 'PASS two-origin account and site data removal from a blank tab and after restart' :
     options.includes('--only-last-tab') ? 'PASS last website closed, native blank tab exited, and both site accounts survived restart' :
+    options.includes('--only-cookie-controls') ? 'PASS focused Cookie-only controls and storage preservation' :
     'PASS complete cross-process login, logout, origin removal, isolation and history checks');
 } catch (e) {
   report('FAIL ' + e.message); process.exitCode = 1;

@@ -12,6 +12,12 @@ SmartScreen 与代码签名属于发布信任问题，不能用关闭保护或�
 
 刷新当前页；需要绕过缓存时使用 Ctrl+Shift+R。检查系统网络和 WebView2 版本。不要在 Issue 中上传 Cookie、完整网络日志或私密 URL。第三方站点可以拒绝嵌入式浏览器，应用无法保证验证通过。外部 Edge 入口有独立会话，也不随本应用锁定关闭。
 
+## 如何在 Edge 的隐私窗口继续浏览
+
+在 Stealth 的新标签页或已经打开的网页点击右上角「…」，选择「在 Edge 隐私窗口打开」。在新标签页操作会打开空白的 InPrivate 窗口。在网页操作会使用当前网址，外部窗口有自己的登录状态。
+
+如果看到 Windows 权限受限的提示，切换到 Edge，按 Ctrl+Shift+N。也可以右键任务栏上的 Edge 图标，选择「新建 InPrivate 窗口」。在 Stealth 点击「复制当前网页地址」，再到带有 InPrivate 标记的窗口粘贴。关闭 Stealth 后还可继续使用这个窗口。如果组织策略关闭了 InPrivate，Stealth 会显示相应提示。[Edge 键盘快捷键](https://support.microsoft.com/en-us/edge/keyboard-shortcuts-in-microsoft-edge)
+
 ## 媒体导入或播放失败
 
 先用非重要的本地小图片验证。确保保险箱已解锁、源文件可读取、目标磁盘有空间。云盘占位文件需要先下载到本机。锁定会取消导入；确认成功后再处理原文件。格式支持依赖 Windows 解码器，部分 HEVC/MKV/AV1 文件可能需要系统扩展。

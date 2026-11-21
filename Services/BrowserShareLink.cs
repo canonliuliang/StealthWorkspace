@@ -88,17 +88,22 @@ internal static class BrowserShareLink
     {
         var result = Prepare(address, out var share);
         if (share == null) return result;
+        return TryWritePrivateClipboard(share, write) ? result : ShareLinkResult.ClipboardBusy;
+    }
+
+    internal static bool TryWritePrivateClipboard(string text, Func<DataPackage, ClipboardContentOptions, bool> write)
+    {
         try
         {
             var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
-            package.SetText(share);
+            package.SetText(text);
             var options = new ClipboardContentOptions { IsAllowedInHistory = false, IsRoamable = false };
-            return write(package, options) ? result : ShareLinkResult.ClipboardBusy;
+            return write(package, options);
         }
         catch (Exception ex)
         {
             AppLog.Warn("复制网页链接失败: " + ex.GetType().Name);
-            return ShareLinkResult.ClipboardBusy;
+            return false;
         }
     }
 }
